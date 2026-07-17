@@ -6,6 +6,8 @@ The GUI is responsible for calling :meth:`ConfigApi.save` to persist.
 
 from __future__ import annotations
 
+from pydantic import HttpUrl
+
 from radio_ripper.api.config_api import ConfigApi
 from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.infra.errors import ConfigurationError
@@ -22,10 +24,7 @@ class StationApi:
     def list_stations(self) -> list[dict[str, str]]:
         """Return stations as a list of ``{"name": ..., "url": ...}`` dicts."""
         settings = self._config_api.settings()
-        return [
-            {"name": s.name, "url": str(s.url)}
-            for s in settings.streams
-        ]
+        return [{"name": s.name, "url": str(s.url)} for s in settings.streams]
 
     def add_station(self, name: str, url: str) -> Settings:
         """Create a new :class:`StreamConfig`, append it, return updated settings."""
@@ -36,10 +35,8 @@ class StationApi:
         existing = {s.name.lower() for s in settings.streams}
         if name.lower() in existing:
             raise ConfigurationError(f"Station '{name}' already exists.")
-        new_stream = StreamConfig(name=name, url=url)
-        return settings.model_copy(
-            update={"streams": [*settings.streams, new_stream]}
-        )
+        new_stream = StreamConfig(name=name, url=HttpUrl(url))
+        return settings.model_copy(update={"streams": [*settings.streams, new_stream]})
 
     def edit_station(self, old_name: str, new_name: str, new_url: str) -> Settings:
         """Rename / re-URL an existing station. Returns updated settings."""
@@ -54,7 +51,7 @@ class StationApi:
         found = False
         for s in settings.streams:
             if s.name == old_name:
-                streams.append(StreamConfig(name=new_name, url=new_url))
+                streams.append(StreamConfig(name=new_name, url=HttpUrl(new_url)))
                 found = True
             else:
                 streams.append(s)

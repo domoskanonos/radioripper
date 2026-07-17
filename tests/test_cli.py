@@ -71,6 +71,7 @@ class TestFindConfigPath:
 def _find_config_path_with_cwd(cwd: Path, arg: str | None) -> str | None:
     """Helper to test config lookup within a specific cwd."""
     import os
+
     orig = os.getcwd()
     os.chdir(cwd)
     try:
@@ -99,6 +100,7 @@ class TestMain:
     async def test_main_runs_and_stops_with_valid_config(self, tmp_path):
         """Verify main() starts the app but returns quickly on a fake shutdown."""
         import json
+
         cfg = {
             "destination": str(tmp_path / "recordings"),
             "database": str(tmp_path / "ripper.db"),
@@ -116,8 +118,8 @@ class TestMain:
 
         # Mock app.start to just set an event
         import asyncio
-        started = asyncio.Event()
 
+        started = asyncio.Event()
 
         with patch("radio_ripper.cli.RadioRipperApp.from_settings") as mock_factory:
             mock_app = mock_factory.return_value

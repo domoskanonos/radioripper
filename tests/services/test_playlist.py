@@ -33,12 +33,7 @@ class TestParseM3u:
 
 class TestParsePls:
     def test_basic(self):
-        text = (
-            "[playlist]\n"
-            "File1=http://a.com/s\n"
-            "Title1=Station A\n"
-            "File2=http://b.com/s\n"
-        )
+        text = "[playlist]\nFile1=http://a.com/s\nTitle1=Station A\nFile2=http://b.com/s\n"
         assert parse_pls(text) == ["http://a.com/s", "http://b.com/s"]
 
     def test_skips_non_file_lines(self):

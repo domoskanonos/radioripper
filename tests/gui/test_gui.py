@@ -22,14 +22,19 @@ from radio_ripper.gui.gui import build_app  # noqa: E402  # after importorskip
 @pytest.fixture
 def tmp_config(tmp_path: Path) -> Path:
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({
-        "destination": str(tmp_path / "recordings"),
-        "database": str(tmp_path / "songs.db"),
-        "streams": [
-            {"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"},
-            {"name": "Rock", "url": "http://rock.radiomonster.fm/listen.m3u"},
-        ],
-    }), encoding="utf-8")
+    cfg.write_text(
+        json.dumps(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "songs.db"),
+                "streams": [
+                    {"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"},
+                    {"name": "Rock", "url": "http://rock.radiomonster.fm/listen.m3u"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     return cfg
 
 

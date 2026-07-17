@@ -113,5 +113,6 @@ warn_unused_ignores = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["mutagen.*", "respx.*", "gradio.*", "huggingface_hub.*"]
+module = ["mutagen.*", "respx.*", "gradio.*", "huggingface_hub.*", "numpy.*", "pandas.*", "gradio_client.*", "fastapi.*", "starlette.*", "pydub.*", "typer.*"]
 ignore_missing_imports = true
+follow_imports = "skip"

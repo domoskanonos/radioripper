@@ -77,9 +77,7 @@ class StreamRecorder:
             await self._task
 
     def start(self) -> asyncio.Task[None]:
-        self._task = asyncio.create_task(
-            self._run_forever(), name=f"Recorder-{self.station_name}"
-        )
+        self._task = asyncio.create_task(self._run_forever(), name=f"Recorder-{self.station_name}")
         return self._task
 
     # ------------------------------------------------------------------ core loop
@@ -87,7 +85,8 @@ class StreamRecorder:
     async def _run_forever(self) -> None:
         self._log.info(
             "Starting recorder '%s' for playlist '%s'",
-            self.station_name, self.playlist_url,
+            self.station_name,
+            self.playlist_url,
         )
         delay = self.settings.reconnect_base_delay
         while not self._stop_event.is_set():
@@ -103,7 +102,9 @@ class StreamRecorder:
             else:
                 self._log.info(
                     "[%s] Reconnect in %.1fs (max %.1fs)",
-                    self.station_name, delay, self.settings.reconnect_max_delay,
+                    self.station_name,
+                    delay,
+                    self.settings.reconnect_max_delay,
                 )
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
@@ -189,7 +190,9 @@ class StreamRecorder:
                     self._log.warning("[%s] db-register: %s", self.station_name, exc)
                 self._log.info(
                     "[%s] Completed: %s (%d bytes)",
-                    self.station_name, final_path.name, final_path.stat().st_size,
+                    self.station_name,
+                    final_path.name,
+                    final_path.stat().st_size,
                 )
                 # Kick off async enrichment (non-blocking)
                 if self._metadata and self.settings.enrich_metadata:
@@ -202,7 +205,9 @@ class StreamRecorder:
                 writer.discard()
                 self._log.info(
                     "[%s] Discarded incomplete: %s (%d bytes)",
-                    self.station_name, writer.final_path.name, writer.size,
+                    self.station_name,
+                    writer.final_path.name,
+                    writer.size,
                 )
             writer = None
             current_title = None
@@ -234,7 +239,8 @@ class StreamRecorder:
                             current_title = new_title
                             self._log.info(
                                 "[%s] Joined mid-song '%s' - waiting for next boundary.",
-                                self.station_name, new_title,
+                                self.station_name,
+                                new_title,
                             )
                             continue
                         if new_title == current_title:
@@ -251,7 +257,8 @@ class StreamRecorder:
                         if await self._repo.exists(self.station_name, clean):
                             self._log.info(
                                 "[%s] Skipping duplicate: %s",
-                                self.station_name, clean,
+                                self.station_name,
+                                clean,
                             )
                             recording = False
                             continue
@@ -266,7 +273,8 @@ class StreamRecorder:
                         if file_path.exists() and not self.settings.overwrite_existing_files:
                             self._log.info(
                                 "[%s] File exists (no db record) - registering & skip: %s",
-                                self.station_name, file_path.name,
+                                self.station_name,
+                                file_path.name,
                             )
                             try:
                                 await self._repo.register(
@@ -282,7 +290,8 @@ class StreamRecorder:
                             except Exception as exc:
                                 self._log.warning(
                                     "[%s] failed to register existing file: %s",
-                                    self.station_name, exc,
+                                    self.station_name,
+                                    exc,
                                 )
                             recording = False
                             continue
@@ -294,12 +303,15 @@ class StreamRecorder:
                             recording = True
                             self._log.info(
                                 "[%s] Recording -> %s",
-                                self.station_name, file_path.name,
+                                self.station_name,
+                                file_path.name,
                             )
                         except OSError as exc:
                             self._log.error(
                                 "[%s] cannot open %s: %s",
-                                self.station_name, file_path, exc,
+                                self.station_name,
+                                file_path,
+                                exc,
                             )
                             recording = False
                             writer = None
@@ -331,9 +343,7 @@ class StreamRecorder:
                 await sem.acquire()
             await self._enrich_song_inner(file_path, track, provenance)
         except Exception:
-            self._log.exception(
-                "[%s] enrichment failed for %s", self.station_name, file_path.name
-            )
+            self._log.exception("[%s] enrichment failed for %s", self.station_name, file_path.name)
         finally:
             if sem is not None:
                 sem.release()
@@ -349,12 +359,16 @@ class StreamRecorder:
         if info is None:
             self._log.info(
                 "[%s] no enrichment hit for: %s - %s",
-                self.station_name, track.artist, track.title,
+                self.station_name,
+                track.artist,
+                track.title,
             )
             try:
                 await self._repo.update_enrichment(
-                    self.station_name, track.stream_title,
-                    artist=track.artist, title=track.title,
+                    self.station_name,
+                    track.stream_title,
+                    artist=track.artist,
+                    title=track.title,
                     enrichment="miss",
                 )
             except Exception as exc:
@@ -368,17 +382,22 @@ class StreamRecorder:
         except Exception as exc:
             self._log.warning(
                 "[%s] tag-enrichment failed %s: %s",
-                self.station_name, file_path.name, exc,
+                self.station_name,
+                file_path.name,
+                exc,
             )
         self._log.info(
             "[%s] Enriched: %s | album=%s year=%s cover=%s",
-            self.station_name, file_path.name,
-            info.album or "-", info.year or "-",
+            self.station_name,
+            file_path.name,
+            info.album or "-",
+            info.year or "-",
             "yes" if cover else "no",
         )
         try:
             await self._repo.update_enrichment(
-                self.station_name, track.stream_title,
+                self.station_name,
+                track.stream_title,
                 artist=info.artist or track.artist,
                 title=info.title or track.title,
                 album=info.album,

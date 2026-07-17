@@ -84,9 +84,9 @@ class ITunesMetadataProvider(MetadataProvider):
         """Bump iTunes thumbnail to a higher resolution URL."""
         return (
             url.replace("100x100bb", "600x600bb")
-               .replace("60x60bb", "600x600bb")
-               .replace("100x100", "600x600")
-               .replace("60x60", "600x600")
+            .replace("60x60bb", "600x600bb")
+            .replace("100x100", "600x600")
+            .replace("60x60", "600x600")
         )
 
 

@@ -18,13 +18,18 @@ from radio_ripper.api.ripper_api import RipperApi, RipperStatus
 @pytest.fixture
 def tmp_config(tmp_path: Path) -> Path:
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({
-        "destination": str(tmp_path / "recordings"),
-        "database": str(tmp_path / "songs.db"),
-        "streams": [
-            {"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"},
-        ],
-    }), encoding="utf-8")
+    cfg.write_text(
+        json.dumps(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "songs.db"),
+                "streams": [
+                    {"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     return cfg
 
 
@@ -40,6 +45,7 @@ class TestRipperApi:
 
     def test_start_sets_starting(self, tmp_config: Path) -> None:
         from radio_ripper.infra.config import load_settings
+
         settings = load_settings(tmp_config)
         api = RipperApi()
         msg = api.start(settings)
@@ -53,6 +59,7 @@ class TestRipperApi:
 
     def test_cannot_start_twice(self, tmp_config: Path) -> None:
         from radio_ripper.infra.config import load_settings
+
         settings = load_settings(tmp_config)
         api = RipperApi()
         api.start(settings)

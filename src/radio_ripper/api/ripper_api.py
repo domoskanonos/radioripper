@@ -21,6 +21,7 @@ __all__ = ["RipperApi", "RipperStatus"]
 
 class RipperStatus(Enum):
     """Lifecycle state of the background ripper."""
+
     STOPPED = "stopped"
     STARTING = "starting"
     RUNNING = "running"

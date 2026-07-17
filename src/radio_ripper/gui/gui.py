@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from radio_ripper.api import ConfigApi, LibraryApi, RipperApi, StationApi
-from radio_ripper.api.ripper_api import RipperStatus
 from radio_ripper.infra.config import Settings, load_settings
 from radio_ripper.infra.errors import ConfigurationError
 
@@ -34,6 +33,7 @@ __all__ = ["build_app", "main"]
 # Helpers
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _settings_to_dataframe_rows(settings: Settings) -> list[list[str]]:
     """Convert ``settings.streams`` to Gradio DataFrame rows."""
     return [[s.name, str(s.url)] for s in settings.streams]
@@ -48,7 +48,8 @@ def _settings_to_config_dict(settings: Settings) -> dict[str, Any]:
 # App builder
 # ──────────────────────────────────────────────────────────────────────
 
-def build_app(config_path: str | Path) -> "gr.Blocks":
+
+def build_app(config_path: str | Path) -> gr.Blocks:
     """Build and return the Gradio ``Blocks`` application.
 
     Args:
@@ -86,19 +87,19 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
             with gr.Accordion("Sender hinzufügen", open=True):
                 new_name = gr.Textbox(label="Name", placeholder="z.B. TopHits")
                 new_url = gr.Textbox(label="URL", placeholder="http://…/listen.m3u")
-                add_btn = gr.Button("➕ Hinzufügen", variant="primary")
+                add_btn = gr.Button("+ Hinzufügen", variant="primary")
                 add_status = gr.Textbox(label="Status", interactive=False)
 
             with gr.Accordion("Sender bearbeiten", open=False):
                 edit_old_name = gr.Textbox(label="Aktueller Name")
                 edit_new_name = gr.Textbox(label="Neuer Name")
                 edit_new_url = gr.Textbox(label="Neue URL")
-                edit_btn = gr.Button("✏️ Speichern")
+                edit_btn = gr.Button("Speichern")
                 edit_status = gr.Textbox(label="Status", interactive=False)
 
             with gr.Accordion("Sender entfernen", open=False):
                 del_name = gr.Textbox(label="Name des zu löschenden Senders")
-                del_btn = gr.Button("🗑️ Entfernen", variant="stop")
+                del_btn = gr.Button("Entfernen", variant="stop")
                 del_status = gr.Textbox(label="Status", interactive=False)
 
             def cb_add(name: str, url: str) -> tuple[list[list[str]], str]:
@@ -115,11 +116,15 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
                 outputs=[stations_df, add_status],
             )
 
-            def cb_edit_old(old_name: str, new_name: str, new_url: str) -> tuple[list[list[str]], str]:
+            def cb_edit_old(
+                old_name: str, new_name: str, new_url: str
+            ) -> tuple[list[list[str]], str]:
                 try:
                     new_settings = station_api.edit_station(old_name, new_name, new_url)
                     config_api.save(new_settings)
-                    return _settings_to_dataframe_rows(new_settings), f"✅ '{old_name}' → '{new_name}'."
+                    return _settings_to_dataframe_rows(
+                        new_settings
+                    ), f"✅ '{old_name}' → '{new_name}'."
                 except ConfigurationError as exc:
                     return _settings_to_dataframe_rows(config_api.settings()), f"❌ {exc}"
 
@@ -147,15 +152,35 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
         with gr.Tab("Konfiguration"):
             cfg_data = _settings_to_config_dict(settings)
 
-            cfg_destination = gr.Textbox(label="Destination", value=str(cfg_data.get("destination", "./recordings")))
-            cfg_database = gr.Textbox(label="Datenbank-Pfad", value=str(cfg_data.get("database", "./recordings/ripper.db")))
-            cfg_request_timeout = gr.Number(label="Request Timeout (s)", value=cfg_data.get("request_timeout", 30))
-            cfg_read_chunk = gr.Number(label="Read Chunk (bytes)", value=cfg_data.get("read_chunk", 4096))
-            cfg_reconnect_base = gr.Number(label="Reconnect Base Delay (s)", value=cfg_data.get("reconnect_base_delay", 1.0))
-            cfg_reconnect_max = gr.Number(label="Reconnect Max Delay (s)", value=cfg_data.get("reconnect_max_delay", 60.0))
-            cfg_user_agent = gr.Textbox(label="User Agent", value=cfg_data.get("user_agent", "Radio-Ripper/2.0"))
-            cfg_overwrite = gr.Checkbox(label="Existing Files Overwrite", value=cfg_data.get("overwrite_existing_files", False))
-            cfg_min_size = gr.Number(label="Min File Size (bytes)", value=cfg_data.get("min_file_size_bytes", 1024))
+            cfg_destination = gr.Textbox(
+                label="Destination", value=str(cfg_data.get("destination", "./recordings"))
+            )
+            cfg_database = gr.Textbox(
+                label="Datenbank-Pfad",
+                value=str(cfg_data.get("database", "./recordings/ripper.db")),
+            )
+            cfg_request_timeout = gr.Number(
+                label="Request Timeout (s)", value=cfg_data.get("request_timeout", 30)
+            )
+            cfg_read_chunk = gr.Number(
+                label="Read Chunk (bytes)", value=cfg_data.get("read_chunk", 4096)
+            )
+            cfg_reconnect_base = gr.Number(
+                label="Reconnect Base Delay (s)", value=cfg_data.get("reconnect_base_delay", 1.0)
+            )
+            cfg_reconnect_max = gr.Number(
+                label="Reconnect Max Delay (s)", value=cfg_data.get("reconnect_max_delay", 60.0)
+            )
+            cfg_user_agent = gr.Textbox(
+                label="User Agent", value=cfg_data.get("user_agent", "Radio-Ripper/2.0")
+            )
+            cfg_overwrite = gr.Checkbox(
+                label="Existing Files Overwrite",
+                value=cfg_data.get("overwrite_existing_files", False),
+            )
+            cfg_min_size = gr.Number(
+                label="Min File Size (bytes)", value=cfg_data.get("min_file_size_bytes", 1024)
+            )
             cfg_log_level = gr.Dropdown(
                 label="Log Level",
                 choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -164,43 +189,65 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
             cfg_log_file = gr.Textbox(label="Log File", value=str(cfg_data.get("log_file", "")))
 
             with gr.Row():
-                cfg_enrich = gr.Checkbox(label="iTunes Enrichment", value=cfg_data.get("enrich_metadata", True))
-                cfg_cover = gr.Checkbox(label="Cover Art embed", value=cfg_data.get("embed_cover_art", True))
-                cfg_workers = gr.Number(label="Enrichment Workers", value=cfg_data.get("enrichment_workers", 4))
-            cfg_metadata_timeout = gr.Number(label="Metadata Timeout (s)", value=cfg_data.get("metadata_timeout", 8.0))
-            cfg_cover_timeout = gr.Number(label="Cover Timeout (s)", value=cfg_data.get("cover_timeout", 15.0))
+                cfg_enrich = gr.Checkbox(
+                    label="iTunes Enrichment", value=cfg_data.get("enrich_metadata", True)
+                )
+                cfg_cover = gr.Checkbox(
+                    label="Cover Art embed", value=cfg_data.get("embed_cover_art", True)
+                )
+                cfg_workers = gr.Number(
+                    label="Enrichment Workers", value=cfg_data.get("enrichment_workers", 4)
+                )
+            cfg_metadata_timeout = gr.Number(
+                label="Metadata Timeout (s)", value=cfg_data.get("metadata_timeout", 8.0)
+            )
+            cfg_cover_timeout = gr.Number(
+                label="Cover Timeout (s)", value=cfg_data.get("cover_timeout", 15.0)
+            )
 
-            save_btn = gr.Button("💾 Konfiguration speichern", variant="primary")
+            save_btn = gr.Button("Konfiguration speichern", variant="primary")
             cfg_status = gr.Textbox(label="Status", interactive=False)
 
             def cb_save_config(
-                destination: str, database: str, request_timeout: float,
-                read_chunk: int, reconnect_base: float, reconnect_max: float,
-                user_agent: str, overwrite: bool, min_size: int,
-                log_level: str, log_file: str,
-                enrich: bool, cover: bool, workers: int,
-                metadata_timeout: float, cover_timeout: float,
+                destination: str,
+                database: str,
+                request_timeout: float,
+                read_chunk: int,
+                reconnect_base: float,
+                reconnect_max: float,
+                user_agent: str,
+                overwrite: bool,
+                min_size: int,
+                log_level: str,
+                log_file: str,
+                enrich: bool,
+                cover: bool,
+                workers: int,
+                metadata_timeout: float,
+                cover_timeout: float,
             ) -> str:
                 try:
                     current = config_api.settings()
-                    new_settings = current.model_copy(update={
-                        "destination": Path(destination),
-                        "database": Path(database),
-                        "request_timeout": request_timeout,
-                        "read_chunk": read_chunk,
-                        "reconnect_base_delay": reconnect_base,
-                        "reconnect_max_delay": reconnect_max,
-                        "user_agent": user_agent,
-                        "overwrite_existing_files": overwrite,
-                        "min_file_size_bytes": min_size,
-                        "log_level": log_level,
-                        "log_file": Path(log_file) if log_file else None,
-                        "enrich_metadata": enrich,
-                        "embed_cover_art": cover,
-                        "enrichment_workers": workers,
-                        "metadata_timeout": metadata_timeout,
-                        "cover_timeout": cover_timeout,
-                    })
+                    new_settings = current.model_copy(
+                        update={
+                            "destination": Path(destination),
+                            "database": Path(database),
+                            "request_timeout": request_timeout,
+                            "read_chunk": read_chunk,
+                            "reconnect_base_delay": reconnect_base,
+                            "reconnect_max_delay": reconnect_max,
+                            "user_agent": user_agent,
+                            "overwrite_existing_files": overwrite,
+                            "min_file_size_bytes": min_size,
+                            "log_level": log_level,
+                            "log_file": Path(log_file) if log_file else None,
+                            "enrich_metadata": enrich,
+                            "embed_cover_art": cover,
+                            "enrichment_workers": workers,
+                            "metadata_timeout": metadata_timeout,
+                            "cover_timeout": cover_timeout,
+                        }
+                    )
                     config_api.save(new_settings)
                     return "✅ Konfiguration gespeichert."
                 except (ConfigurationError, ValueError) as exc:
@@ -211,12 +258,22 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
             save_btn.click(
                 cb_save_config,
                 inputs=[
-                    cfg_destination, cfg_database, cfg_request_timeout,
-                    cfg_read_chunk, cfg_reconnect_base, cfg_reconnect_max,
-                    cfg_user_agent, cfg_overwrite, cfg_min_size,
-                    cfg_log_level, cfg_log_file,
-                    cfg_enrich, cfg_cover, cfg_workers,
-                    cfg_metadata_timeout, cfg_cover_timeout,
+                    cfg_destination,
+                    cfg_database,
+                    cfg_request_timeout,
+                    cfg_read_chunk,
+                    cfg_reconnect_base,
+                    cfg_reconnect_max,
+                    cfg_user_agent,
+                    cfg_overwrite,
+                    cfg_min_size,
+                    cfg_log_level,
+                    cfg_log_file,
+                    cfg_enrich,
+                    cfg_cover,
+                    cfg_workers,
+                    cfg_metadata_timeout,
+                    cfg_cover_timeout,
                 ],
                 outputs=[cfg_status],
             )
@@ -225,21 +282,52 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
         with gr.Tab("Bibliothek"):
             library_api = LibraryApi(settings)
 
-            search_box = gr.Textbox(label="Suche (Artist, Titel, Sender)", placeholder="Adele Hello…")
-            search_btn = gr.Button("🔍 Suchen")
+            search_box = gr.Textbox(
+                label="Suche (Artist, Titel, Sender)", placeholder="Adele Hello…"
+            )
+            search_btn = gr.Button("Suchen")
 
-            _initial_songs = [[
-                s.id, s.station_name, s.stream_title, s.artist, s.title,
-                s.album or "", s.year or "", round(s.file_size / 1024, 1),
-                s.has_cover, s.created_at,
-            ] for s in library_api.list_songs()] or [[]]
+            _initial_songs = [
+                [
+                    s.id,
+                    s.station_name,
+                    s.stream_title,
+                    s.artist,
+                    s.title,
+                    s.album or "",
+                    s.year or "",
+                    round(s.file_size / 1024, 1),
+                    s.has_cover,
+                    s.created_at,
+                ]
+                for s in library_api.list_songs()
+            ] or [[]]
 
             songs_df = gr.Dataframe(
                 headers=[
-                    "ID", "Sender", "StreamTitle", "Artist", "Titel",
-                    "Album", "Jahr", "Größe (KB)", "Cover", "Aufgenommen",
+                    "ID",
+                    "Sender",
+                    "StreamTitle",
+                    "Artist",
+                    "Titel",
+                    "Album",
+                    "Jahr",
+                    "Größe (KB)",
+                    "Cover",
+                    "Aufgenommen",
                 ],
-                datatype=["number", "str", "str", "str", "str", "str", "str", "number", "bool", "str"],
+                datatype=[
+                    "number",
+                    "str",
+                    "str",
+                    "str",
+                    "str",
+                    "str",
+                    "str",
+                    "number",
+                    "bool",
+                    "str",
+                ],
                 value=_initial_songs,
                 interactive=False,
                 wrap=True,
@@ -249,8 +337,8 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
             audio_player = gr.Audio(label="Player", interactive=False)
             action_btn_row = gr.Row()
             with action_btn_row:
-                play_btn = gr.Button("▶️ Abspielen")
-                del_btn2 = gr.Button("🗑️ Löschen", variant="stop")
+                play_btn = gr.Button("Abspielen")
+                del_btn2 = gr.Button("Löschen", variant="stop")
             lib_status = gr.Textbox(label="Status", interactive=False)
 
             def cb_search(query: str) -> list[list[Any]]:
@@ -258,9 +346,16 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
                 songs = lib.search_songs(query) if query.strip() else lib.list_songs()
                 return [
                     [
-                        s.id, s.station_name, s.stream_title, s.artist, s.title,
-                        s.album or "", s.year or "", round(s.file_size / 1024, 1),
-                        s.has_cover, s.created_at,
+                        s.id,
+                        s.station_name,
+                        s.stream_title,
+                        s.artist,
+                        s.title,
+                        s.album or "",
+                        s.year or "",
+                        round(s.file_size / 1024, 1),
+                        s.has_cover,
+                        s.created_at,
                     ]
                     for s in songs
                 ]
@@ -298,8 +393,8 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
                 interactive=False,
             )
             with gr.Row():
-                start_btn = gr.Button("▶️ Ripper starten", variant="primary")
-                stop_btn = gr.Button("⏹️ Ripper stoppen", variant="stop")
+                start_btn = gr.Button("Ripper starten", variant="primary")
+                stop_btn = gr.Button("Ripper stoppen", variant="stop")
 
             def cb_start_ripper() -> str:
                 try:
@@ -323,6 +418,7 @@ def build_app(config_path: str | Path) -> "gr.Blocks":
 # ──────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Launch the Gradio GUI.  Entry point for ``radio-ripper-gui``."""

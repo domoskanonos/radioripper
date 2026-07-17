@@ -58,17 +58,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "-c", "--config", default=None,
+        "-c",
+        "--config",
+        default=None,
         help="Pfad zur config.json (default: ./config.json, "
-             "alternativ ~/.config/radio_ripper/config.json, /etc/radio_ripper/config.json).",
+        "alternativ ~/.config/radio_ripper/config.json, /etc/radio_ripper/config.json).",
     )
     parser.add_argument(
-        "--log-level", default=None,
+        "--log-level",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Ueberschreibt log_level aus der config.json.",
     )
     parser.add_argument(
-        "--no-enrich", action="store_true",
+        "--no-enrich",
+        action="store_true",
         help="Schaltet iTunes-Enrichment & Cover-Download ab (override config).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -109,10 +113,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.log_level:
         settings = settings.model_copy(update={"log_level": args.log_level})
     if args.no_enrich:
-        settings = settings.model_copy(update={
-            "enrich_metadata": False,
-            "embed_cover_art": False,
-        })
+        settings = settings.model_copy(
+            update={
+                "enrich_metadata": False,
+                "embed_cover_art": False,
+            }
+        )
 
     logger = configure_logging(settings.log_level, settings.log_file)
     logger.info("=== Radio-Ripper %s starting up ===", __version__)
@@ -122,7 +128,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     logger.info("Streams     : %d", len(settings.streams))
     logger.info(
         "Enrichment  : metadata=%s cover_art=%s workers=%d",
-        settings.enrich_metadata, settings.embed_cover_art, settings.enrichment_workers,
+        settings.enrich_metadata,
+        settings.embed_cover_art,
+        settings.enrichment_workers,
     )
     try:
         return asyncio.run(_run_async(settings, logger))

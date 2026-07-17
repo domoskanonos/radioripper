@@ -74,6 +74,7 @@ class TestRetryAsync:
         sleeps: list[float] = []
 
         import radio_ripper.infra.resilience as R
+
         orig_sleep = R.asyncio.sleep
 
         async def fake_sleep(t):
@@ -81,6 +82,7 @@ class TestRetryAsync:
 
         R.asyncio.sleep = fake_sleep
         try:
+
             @retry_async(max_attempts=4, base_delay=0.001, max_delay=0.005)
             async def fn():
                 raise ValueError("x")

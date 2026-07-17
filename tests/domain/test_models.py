@@ -60,9 +60,15 @@ class TestSavedTrack:
 
     def test_with_enrichment(self):
         s = SavedTrack(
-            stream_title="A - B", artist="A", title="B",
-            file_path="x", file_size=10, album="alb",
-            year="2020", has_cover=True, enrichment="itunes",
+            stream_title="A - B",
+            artist="A",
+            title="B",
+            file_path="x",
+            file_size=10,
+            album="alb",
+            year="2020",
+            has_cover=True,
+            enrichment="itunes",
         )
         assert s.album == "alb"
         assert s.has_cover is True

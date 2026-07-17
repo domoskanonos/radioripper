@@ -55,9 +55,7 @@ class TestComputeFilePath:
         first = compute_file_path(tmp_path, "Rock", "A", "T", "A - T")
         first.parent.mkdir(parents=True, exist_ok=True)
         first.write_bytes(b"")
-        second = compute_file_path(
-            tmp_path, "Rock", "A", "T", "A - T", overwrite=True
-        )
+        second = compute_file_path(tmp_path, "Rock", "A", "T", "A - T", overwrite=True)
         assert second == first
 
 

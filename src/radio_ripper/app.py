@@ -57,7 +57,9 @@ class RadioRipperApp:
         self._recorders: list[StreamRecorder] = []
 
     @classmethod
-    def from_settings(cls, settings: Settings, *, logger: logging.Logger | None = None) -> RadioRipperApp:
+    def from_settings(
+        cls, settings: Settings, *, logger: logging.Logger | None = None
+    ) -> RadioRipperApp:
         """Construct a fully-wired :class:`RadioRipperApp` from settings."""
         log = logger or _LOGGER
         client = HttpxAsyncClient(user_agent=settings.user_agent)
@@ -120,7 +122,8 @@ class RadioRipperApp:
                 self.logger.warning("Recorder %s did not stop in time.", rec.station_name)
         # Drain enrichment tasks; they're short-lived.
         pending = [
-            t for t in asyncio.all_tasks()
+            t
+            for t in asyncio.all_tasks()
             if t is not asyncio.current_task() and "enrich" in t.get_name()
         ]
         for task in pending:

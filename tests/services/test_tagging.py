@@ -47,7 +47,11 @@ class TestID3Tagger:
         tagger = ID3Tagger()
         track = TrackInfo(stream_title="Adele - Hello", artist="Adele", title="Hello")
         enriched = EnrichedInfo(
-            artist="Adele", title="Hello", album="25", year="2015", genre="Pop",
+            artist="Adele",
+            title="Hello",
+            album="25",
+            year="2015",
+            genre="Pop",
         )
         cover = b"\xff\xd8\xff\xe0" + b"\x00" * 100
         tagger.write_full(f, track, enriched, cover, "Rock@url")
@@ -95,18 +99,22 @@ class TestID3Tagger:
 
     def test_guess_image_mime_jpeg(self):
         from radio_ripper.services.tagging import _guess_image_mime
+
         assert _guess_image_mime(b"\xff\xd8\xff\xe0") == "image/jpeg"
 
     def test_guess_image_mime_png(self):
         from radio_ripper.services.tagging import _guess_image_mime
+
         assert _guess_image_mime(b"\x89PNG\r\n\x1a\n") == "image/png"
 
     def test_guess_image_mime_gif(self):
         from radio_ripper.services.tagging import _guess_image_mime
+
         assert _guess_image_mime(b"GIF8") == "image/gif"
 
     def test_guess_image_mime_defaults_jpeg(self):
         from radio_ripper.services.tagging import _guess_image_mime
+
         assert _guess_image_mime(b"\x00\x01\x02") == "image/jpeg"
 
     def test_write_to_nonexistent_file_raises_tagging_error(self, tmp_path: Path):

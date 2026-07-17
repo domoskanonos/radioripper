@@ -18,3 +18,4 @@ recordings/
 !README.md
 LICENSE
 docs/
+.env

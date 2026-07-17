@@ -27,6 +27,7 @@ def _make_settings(tmp_path, **overrides) -> Settings:
 
 class FakeRepo(TrackRepository):
     """Minimal in-memory repo stub for app tests."""
+
     async def exists(self, station_name: str, stream_title: str) -> bool:
         return False
 
@@ -84,16 +85,18 @@ class TestRadioRipperApp:
         repo.aclose.assert_awaited_once()
 
     async def test_multiple_streams(self, tmp_path):
-        settings = Settings.model_validate({
-            "destination": str(tmp_path / "recordings"),
-            "database": str(tmp_path / "ripper.db"),
-            "streams": [
-                {"name": "Station1", "url": "http://example.com/1.m3u"},
-                {"name": "Station2", "url": "http://example.com/2.m3u"},
-                {"name": "Station3", "url": "http://example.com/3.m3u"},
-            ],
-            "enrich_metadata": False,
-        })
+        settings = Settings.model_validate(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "ripper.db"),
+                "streams": [
+                    {"name": "Station1", "url": "http://example.com/1.m3u"},
+                    {"name": "Station2", "url": "http://example.com/2.m3u"},
+                    {"name": "Station3", "url": "http://example.com/3.m3u"},
+                ],
+                "enrich_metadata": False,
+            }
+        )
         client = AsyncMock()
         client.aclose = AsyncMock()
         repo = FakeRepo()
@@ -111,20 +114,25 @@ class TestRadioRipperApp:
         await app.stop()
 
     async def test_no_streams_logs_error(self, tmp_path):
-        settings = Settings.model_validate({
-            "destination": str(tmp_path / "recordings"),
-            "database": str(tmp_path / "ripper.db"),
-            "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
-            "enrich_metadata": False,
-        })
+        settings = Settings.model_validate(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "ripper.db"),
+                "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
+                "enrich_metadata": False,
+            }
+        )
         # Empty streams list — need to use model_validate with override
         from radio_ripper.infra.config import Settings as S
-        settings = S.model_validate({
-            "destination": str(tmp_path / "recordings"),
-            "database": str(tmp_path / "ripper.db"),
-            "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
-            "enrich_metadata": False,
-        })
+
+        settings = S.model_validate(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "ripper.db"),
+                "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
+                "enrich_metadata": False,
+            }
+        )
         client = AsyncMock()
         repo = FakeRepo()
 

@@ -127,9 +127,16 @@ class SQLiteTrackRepository(TrackRepository):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    station_name, track.stream_title, track.artist, track.title,
-                    track.album, track.year, track.file_path, track.file_size,
-                    1 if track.has_cover else 0, track.enrichment,
+                    station_name,
+                    track.stream_title,
+                    track.artist,
+                    track.title,
+                    track.album,
+                    track.year,
+                    track.file_path,
+                    track.file_size,
+                    1 if track.has_cover else 0,
+                    track.enrichment,
                 ),
             )
         except sqlite3.Error as exc:
@@ -151,9 +158,15 @@ class SQLiteTrackRepository(TrackRepository):
         async with self._lock:
             await asyncio.to_thread(
                 self._update_enrichment_sync,
-                station_name, stream_title,
-                artist, title, album, year, file_size,
-                has_cover, enrichment,
+                station_name,
+                stream_title,
+                artist,
+                title,
+                album,
+                year,
+                file_size,
+                has_cover,
+                enrichment,
             )
 
     def _update_enrichment_sync(
@@ -182,9 +195,15 @@ class SQLiteTrackRepository(TrackRepository):
                 WHERE station_name=? AND LOWER(stream_title)=LOWER(?)
                 """,
                 (
-                    artist, title, album, year, file_size,
-                    1 if has_cover else 0, enrichment,
-                    station_name, stream_title,
+                    artist,
+                    title,
+                    album,
+                    year,
+                    file_size,
+                    1 if has_cover else 0,
+                    enrichment,
+                    station_name,
+                    stream_title,
                 ),
             )
         except sqlite3.Error as exc:

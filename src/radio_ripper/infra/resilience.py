@@ -39,6 +39,7 @@ def retry_async(
     Returns:
         The decorated async callable.
     """
+
     def decorator(fn: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
@@ -56,13 +57,19 @@ def retry_async(
                     else:
                         _logger.debug(
                             "retry %s/%s for %s in %.1fs: %s",
-                            attempt, max_attempts - 1, fn.__qualname__, delay, exc,
+                            attempt,
+                            max_attempts - 1,
+                            fn.__qualname__,
+                            delay,
+                            exc,
                         )
                     await asyncio.sleep(delay)
                     delay = min(delay * 2.0, max_delay)
             assert last_exc is not None  # pragma: no cover
             raise last_exc
+
         return wrapper
+
     return decorator
 
 

@@ -95,7 +95,7 @@ class TestIcyParserStreaming:
         stream = b"\x01" * metaint + _make_meta_block("A - B")
         p = IcyParser(metaint)
         for i in range(0, len(stream), 37):
-            p.feed(stream[i:i + 37])
+            p.feed(stream[i : i + 37])
         events = list(p.events())
         titles = [e.title for e in events if isinstance(e, TitleChanged)]
         assert titles == ["A - B"]

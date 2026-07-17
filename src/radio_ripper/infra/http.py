@@ -22,8 +22,9 @@ class AsyncHttpClient(ABC):
         """Fetch a URL and return its body as text."""
 
     @abstractmethod
-    async def get_json(self, url: str, *, params: dict[str, Any] | None = None,
-                       timeout: float | None = None) -> Any:
+    async def get_json(
+        self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> Any:
         """Fetch a URL and return parsed JSON."""
 
     @abstractmethod
@@ -32,7 +33,10 @@ class AsyncHttpClient(ABC):
 
     @abstractmethod
     def stream_binary(
-        self, url: str, *, headers: dict[str, str] | None = None,
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> AsyncIterator[bytes]:
         """Stream binary chunks from ``url``.
@@ -67,8 +71,9 @@ class HttpxAsyncClient(AsyncHttpClient):
         resp.raise_for_status()
         return resp.text
 
-    async def get_json(self, url: str, *, params: dict[str, Any] | None = None,
-                       timeout: float | None = None) -> Any:
+    async def get_json(
+        self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> Any:
         resp = await self._client.get(url, params=params, timeout=timeout)
         resp.raise_for_status()
         return resp.json()
@@ -79,11 +84,17 @@ class HttpxAsyncClient(AsyncHttpClient):
         return resp.content
 
     async def stream_binary(
-        self, url: str, *, headers: dict[str, str] | None = None,
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> AsyncIterator[bytes]:
         async with self._client.stream(
-            "GET", url, headers=headers, timeout=timeout,
+            "GET",
+            url,
+            headers=headers,
+            timeout=timeout,
         ) as resp:
             resp.raise_for_status()
             self._last_headers = dict(resp.headers)

@@ -48,22 +48,26 @@ class FakeHttpClient:
     async def get_text(self, url: str, *, timeout: float | None = None) -> str:
         return ""
 
-    async def get_json(self, url: str, *, params: dict[str, Any] | None = None,
-                       timeout: float | None = None) -> Any:
+    async def get_json(
+        self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> Any:
         return {}
 
     async def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:
         return b""
 
     async def stream_binary(
-        self, url: str, *, headers: dict[str, str] | None = None,
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> AsyncIterator[bytes]:
         self._last_headers = dict(self._headers)
         # Stream in small chunks to simulate real streaming
         chunk_size = 64
         for i in range(0, len(self._stream_bytes), chunk_size):
-            chunk = self._stream_bytes[i:i + chunk_size]
+            chunk = self._stream_bytes[i : i + chunk_size]
             yield chunk
             await asyncio.sleep(0)
 
@@ -173,6 +177,7 @@ def _make_recorder(
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestParseMetaint:
     def test_standard(self):
         assert _parse_metaint({"icy-metaint": "16000"}) == 16000
@@ -198,8 +203,9 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path)
         repo = FakeRepoFresh()
-        rec = _make_recorder(settings=settings, http_client=client, repo=repo,
-                             destination=settings.destination)
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -221,8 +227,9 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path)
         repo = FakeRepoFresh()
-        rec = _make_recorder(settings=settings, http_client=client, repo=repo,
-                             destination=settings.destination)
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -239,8 +246,9 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path)
         repo = FakeRepoThatSaysExisting()
-        rec = _make_recorder(settings=settings, http_client=client, repo=repo,
-                             destination=settings.destination)
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -254,8 +262,9 @@ class TestStreamRecorder:
         client = FakeHttpClientNoMeta(stream)
         settings = _make_settings(tmp_path)
         repo = FakeRepoFresh()
-        rec = _make_recorder(settings=settings, http_client=client, repo=repo,
-                             destination=settings.destination)
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
         task = asyncio.create_task(rec._run_forever())
         await asyncio.sleep(0.3)
         rec.stop()
@@ -268,8 +277,9 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path)
         repo = FakeRepoFresh()
-        rec = _make_recorder(settings=settings, http_client=client, repo=repo,
-                             destination=settings.destination)
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
         rec.start()
         await asyncio.sleep(0.1)
         rec.stop()
@@ -305,8 +315,9 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
         repo = FakeRepoFresh()
-        rec = _make_recorder(settings=settings, http_client=client, repo=repo,
-                             destination=settings.destination)
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()

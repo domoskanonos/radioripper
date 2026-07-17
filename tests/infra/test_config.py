@@ -94,6 +94,7 @@ class TestStreamConfig:
 
     def test_rejects_empty_name(self):
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             StreamConfig(name="  ", url="http://x/listen.m3u")
 

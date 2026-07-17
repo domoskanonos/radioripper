@@ -12,8 +12,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pydantic import HttpUrl
+
 from radio_ripper.infra.config import Settings, StreamConfig, load_settings
-from radio_ripper.infra.errors import ConfigurationError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class ConfigApi:
     @staticmethod
     def make_stream(name: str, url: str) -> StreamConfig:
         """Create and validate a single :class:`StreamConfig`."""
-        return StreamConfig(name=name, url=url)
+        return StreamConfig(name=name, url=HttpUrl(url))
 
     @staticmethod
     def default_settings() -> Settings:
@@ -79,5 +80,7 @@ class ConfigApi:
         return Settings(
             destination=Path("./recordings"),
             database=Path("./recordings/ripper.db"),
-            streams=[StreamConfig(name="TopHits", url="http://tophits.radiomonster.fm/listen.m3u")],
+            streams=[
+                StreamConfig(name="TopHits", url=HttpUrl("http://tophits.radiomonster.fm/listen.m3u")),
+            ],
         )

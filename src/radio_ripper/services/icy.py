@@ -131,6 +131,7 @@ class IcyParser:
             del self._buffer[:1]
             if meta_len > self.max_meta_len:
                 from radio_ripper.infra.errors import StreamProtocolError
+
                 raise StreamProtocolError(
                     f"metadata length {meta_len} exceeds bound {self.max_meta_len}"
                 )
@@ -141,8 +142,8 @@ class IcyParser:
         if self._state == _State.READ_META:
             if len(self._buffer) < self._meta_len_remaining:
                 return False
-            meta_bytes = bytes(self._buffer[:self._meta_len_remaining])
-            del self._buffer[:self._meta_len_remaining]
+            meta_bytes = bytes(self._buffer[: self._meta_len_remaining])
+            del self._buffer[: self._meta_len_remaining]
             self._meta_len_remaining = 0
             self._bytes_until_meta = self.metaint
             self._state = _State.WAIT_AUDIO

@@ -15,14 +15,19 @@ from radio_ripper.infra.errors import ConfigurationError
 @pytest.fixture
 def config_api(tmp_path: Path) -> ConfigApi:
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({
-        "destination": str(tmp_path / "recordings"),
-        "database": str(tmp_path / "songs.db"),
-        "streams": [
-            {"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"},
-            {"name": "Rock", "url": "http://rock.radiomonster.fm/listen.m3u"},
-        ],
-    }), encoding="utf-8")
+    cfg.write_text(
+        json.dumps(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "songs.db"),
+                "streams": [
+                    {"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"},
+                    {"name": "Rock", "url": "http://rock.radiomonster.fm/listen.m3u"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     api = ConfigApi(cfg)
     api.load()
     return api

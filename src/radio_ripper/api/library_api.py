@@ -48,9 +48,7 @@ class LibraryApi:
     @staticmethod
     def _table_exists(conn: sqlite3.Connection) -> bool:
         """Return True if the ``songs`` table exists in the database."""
-        cur = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='songs'"
-        )
+        cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='songs'")
         return cur.fetchone() is not None
 
     def list_songs(self, limit: int = 500) -> list[SongInfo]:
