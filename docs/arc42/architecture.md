@@ -143,6 +143,11 @@ Siehe Kontextdiagramm (Section 3.1).
 | `services/repository.py` | Service | `TrackRepository` ABC, `SQLiteTrackRepository` |
 | `services/metadata.py` | Service | `MetadataProvider` ABC, `ITunesMetadataProvider` |
 | `services/stream.py` | Service | `StreamRecorder` (Orchestrierungs-Coroutine) |
+| `api/config_api.py` | API | `ConfigApi`: Config laden/speichern/editieren |
+| `api/station_api.py` | API | `StationApi`: Stationen CRUD |
+| `api/library_api.py` | API | `LibraryApi`: Songs-Bibliothek durchsuchen |
+| `api/ripper_api.py` | API | `RipperApi`: Ripper in bg-Thread starten/stoppen |
+| `gui/gui.py` | GUI | `build_app()`: Gradio-Blocks (4 Tabs), `main()`: Entry-Point |
 
 ### 5.3 Level 3: StreamRecorder (Schlüsselkomponente)
 
