@@ -422,8 +422,19 @@ def build_app(config_path: str | Path) -> gr.Blocks:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Launch the Gradio GUI.  Entry point for ``radio-ripper-gui``."""
-    args = argv if argv is not None else sys.argv[1:]
-    config_path = args[0] if args else "./config.json"
+    args = list(argv if argv is not None else sys.argv[1:])
+    if not args:
+        config_path = "./config.json"
+    elif args[0] == "--config" and len(args) >= 2:
+        config_path = args[1]
+    elif args[0] == "--config":
+        print("Fehler: --config erwartet einen Pfad", file=sys.stderr)
+        return 2
+    elif args[0].startswith("--"):
+        print(f"Unbekannte Option: {args[0]}", file=sys.stderr)
+        return 2
+    else:
+        config_path = args[0]
 
     if not Path(config_path).is_file():
         print(f"Config nicht gefunden: {config_path}", file=sys.stderr)
