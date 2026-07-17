@@ -21,10 +21,10 @@ from mutagen.id3 import (
     COMM,
     ID3,
     TALB,
+    TDRC,
     TIT2,
     TPE1,
     TXXX,
-    TYER,
     ID3NoHeaderError,
 )
 
@@ -61,14 +61,27 @@ class TrackTagger(ABC):
         """Write enriched tags including album/year/genre and cover art."""
 
 
+def _load_or_create(file_path: Path) -> ID3:
+    """Load an existing ID3 tag or create a fresh one.
+
+    Raises the underlying mutagen error (e.g. ``MutagenError``) if the file
+    exists but cannot be read, or the file does not exist and the parent
+    directory is missing.
+    """
+    try:
+        return ID3(file_path)
+    except ID3NoHeaderError:
+        return ID3()
+
+
 class ID3Tagger(TrackTagger):
     """mutagen-backed ID3 tagger."""
 
     def write_basic(self, file_path: Path, track: TrackInfo, provenance: str) -> None:
         try:
-            audio = ID3(file_path)
-        except ID3NoHeaderError:
-            audio = ID3()
+            audio = _load_or_create(file_path)
+        except Exception as exc:
+            raise TaggingError(f"failed to load {file_path}: {exc}") from exc
         audio.delall("TPE1")
         audio.delall("TIT2")
         audio.delall("COMM")
@@ -93,13 +106,13 @@ class ID3Tagger(TrackTagger):
         provenance: str,
     ) -> None:
         try:
-            audio = ID3(file_path)
-        except ID3NoHeaderError:
-            audio = ID3()
+            audio = _load_or_create(file_path)
+        except Exception as exc:
+            raise TaggingError(f"failed to load {file_path}: {exc}") from exc
         audio.delall("TPE1")
         audio.delall("TIT2")
         audio.delall("TALB")
-        audio.delall("TYER")
+        audio.delall("TDRC")
         audio.delall("COMM")
         audio.delall("APIC")
         audio.delall("TXXX:RIPPEDBY")
@@ -113,7 +126,7 @@ class ID3Tagger(TrackTagger):
         if enriched.album:
             audio.add(TALB(encoding=3, text=enriched.album))
         if enriched.year:
-            audio.add(TYER(encoding=3, text=enriched.year))
+            audio.add(TDRC(encoding=3, text=enriched.year))
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
         if cover_bytes:

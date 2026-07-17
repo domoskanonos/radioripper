@@ -107,7 +107,7 @@ class SQLiteTrackRepository(TrackRepository):
         try:
             cur = self._conn.execute(
                 "SELECT 1 FROM songs "
-                "WHERE station_name=? AND LOWER(stream_title)=LOWER(?) LIMIT 1",
+                "WHERE LOWER(station_name)=LOWER(?) AND LOWER(stream_title)=LOWER(?) LIMIT 1",
                 (station_name, stream_title),
             )
             return cur.fetchone() is not None
