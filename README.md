@@ -26,6 +26,7 @@ Gebaut mit [`requests`](https://docs.python-requests.org/) und [`mutagen`](https
 radioripper/
 ├── radio_ripper.py      # Hauptprogramm (Single-File Module)
 ├── config.json          # Konfiguration (Streams, Pfade, Parameter)
+├── run.sh               # Start-Skript (uv sync + Vordergrund + Live-Log)
 ├── pyproject.toml       # uv / hatchling Build-Konfiguration & Metadaten
 ├── .python-version      # Pinning: 3.12
 ├── requirements.txt     # Legacy-Requirements (für plain pip)
@@ -102,7 +103,28 @@ Alle Einstellungen liegen in `config.json`:
 
 ## Start
 
-### Mit `uv` (empfohlen)
+### Komfortabel via `run.sh` (empfohlen)
+
+Das Skript übernimmt alles: prüft `uv`, führt `uv sync` aus, startet den Ripper
+im **Vordergrund mit Live-Log auf der Konsole** und leitet `Strg+C` sauber an
+den Python-Prozess weiter (Graceful Shutdown). Zusätzlich gibt es einen
+Doppelstart-Schutz via `radio_ripper.pid`-Lockfile.
+
+```bash
+./run.sh                              # Standard mit ./config.json
+CONFIG=/pfad/zur/cfg.json ./run.sh    # andere Config-Datei
+Strg+C                                # beenden -> Graceful Shutdown
+```
+
+Features von `run.sh`:
+- Pre-Checks (`uv` vorhanden? `config.json` vorhanden?)
+- Doppelstart-Schutz über PID-Lockfile (`radio_ripper.pid`)
+- `uv sync` vor jedem Start (idempotent)
+- Signal-Forwarding: `SIGINT` / `SIGTERM` -> Python -> offene MP3-Files werden
+  finalisiert & getaggt, SQLite-DB sauber geschlossen
+- Exit-Code des Python-Prozesses wird weitergereicht
+
+### Mit `uv` direkt
 
 ```bash
 # Vordergrund (Log auf Console):
