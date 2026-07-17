@@ -47,7 +47,7 @@ def retry_async(
             for attempt in range(1, max_attempts + 1):
                 try:
                     return await fn(*args, **kwargs)
-                except exceptions as exc:  # noqa: PERF203
+                except exceptions as exc:
                     last_exc = exc
                     if attempt >= max_attempts:
                         raise

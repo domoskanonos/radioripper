@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-
-import pytest
 
 from radio_ripper.app import RadioRipperApp
 from radio_ripper.infra.config import Settings, StreamConfig
@@ -17,13 +14,13 @@ from radio_ripper.services.tagging import NullTagger
 
 
 def _make_settings(tmp_path, **overrides) -> Settings:
-    base = dict(
-        destination=tmp_path / "recordings",
-        database=tmp_path / "ripper.db",
-        streams=[StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
-        enrich_metadata=False,
-        enrichment_workers=2,
-    )
+    base = {
+        "destination": tmp_path / "recordings",
+        "database": tmp_path / "ripper.db",
+        "streams": [StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
+        "enrich_metadata": False,
+        "enrichment_workers": 2,
+    }
     base.update(overrides)
     return Settings.model_validate(base)
 

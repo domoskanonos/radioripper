@@ -98,9 +98,8 @@ class TestTrackWriter:
 
     def test_context_manager_exception_discards(self, tmp_path: Path):
         target = tmp_path / "ctx-err.mp3"
-        with pytest.raises(RuntimeError):
-            with TrackWriter(target, min_size=10) as w:
-                w.write(b"y" * 20)
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError), TrackWriter(target, min_size=10) as w:
+            w.write(b"y" * 20)
+            raise RuntimeError("boom")
         assert not target.exists()
         assert not target.with_suffix(".mp3.tmp").exists()

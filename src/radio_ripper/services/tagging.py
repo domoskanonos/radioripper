@@ -141,16 +141,16 @@ class ID3Tagger(TrackTagger):
 class NullTagger(TrackTagger):
     """No-op tagger (used when tagging is disabled)."""
 
-    def write_basic(self, file_path: Path, track: TrackInfo, provenance: str) -> None:  # noqa: ARG002
+    def write_basic(self, file_path: Path, track: TrackInfo, provenance: str) -> None:
         return None
 
     def write_full(
         self,
         file_path: Path,
-        track: TrackInfo,  # noqa: ARG002
-        enriched: EnrichedInfo,  # noqa: ARG002
-        cover_bytes: bytes | None,  # noqa: ARG002
-        provenance: str,  # noqa: ARG002
+        track: TrackInfo,
+        enriched: EnrichedInfo,
+        cover_bytes: bytes | None,
+        provenance: str,
     ) -> None:
         return None
 

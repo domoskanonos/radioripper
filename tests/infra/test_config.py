@@ -93,8 +93,8 @@ class TestStreamConfig:
         StreamConfig(name="TopHits", url="http://x/listen.m3u")
 
     def test_rejects_empty_name(self):
-        import pytest as _pt
-        with _pt.raises(Exception):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
             StreamConfig(name="  ", url="http://x/listen.m3u")
 
     def test_accepts_spaces_and_dashes(self):

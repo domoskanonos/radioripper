@@ -108,7 +108,6 @@ class TestMain:
         p = tmp_path / "config.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
 
-        from radio_ripper.cli import _run_async
         from radio_ripper.infra.config import load_settings
         from radio_ripper.infra.logging import configure_logging
 
@@ -119,7 +118,6 @@ class TestMain:
         import asyncio
         started = asyncio.Event()
 
-        original_start = None
 
         with patch("radio_ripper.cli.RadioRipperApp.from_settings") as mock_factory:
             mock_app = mock_factory.return_value
@@ -135,14 +133,14 @@ class TestMain:
 
             # Run _run_async but immediately trigger stop_event
             async def run_test():
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 stop_event = asyncio.Event()
 
                 async def immediate_stop():
                     await asyncio.sleep(0.1)
                     stop_event.set()
 
-                asyncio.create_task(immediate_stop())
+                _stop_task = asyncio.create_task(immediate_stop())
 
                 # We can't directly test _run_async because it creates its own
                 # signal handlers + stop_event. Instead test that mock_factory

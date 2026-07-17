@@ -34,7 +34,7 @@ class TestTrackInfo:
         except AttributeError:
             pass
         else:
-            assert False, "TrackInfo should be frozen"
+            raise AssertionError("TrackInfo should be frozen")
 
 
 class TestEnrichedInfo:

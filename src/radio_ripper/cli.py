@@ -12,8 +12,8 @@ import asyncio
 import logging
 import signal
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Sequence
 
 from radio_ripper import __version__
 from radio_ripper.app import RadioRipperApp
@@ -28,7 +28,7 @@ _DEFAULT_CONFIG_PATHS = (
 )
 
 
-def _find_config_path(arg: Optional[str]) -> Optional[str]:
+def _find_config_path(arg: str | None) -> str | None:
     if arg:
         return arg
     for candidate in _DEFAULT_CONFIG_PATHS:
@@ -95,7 +95,7 @@ async def _run_async(settings, logger: logging.Logger) -> int:
     return 0
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv if argv is not None else sys.argv[1:])
     cfg_path = _find_config_path(args.config)
     if cfg_path is None or not Path(cfg_path).expanduser().is_file():

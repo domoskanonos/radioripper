@@ -13,15 +13,15 @@ States::
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from enum import Enum, auto
-from typing import Iterator
 
 from radio_ripper.domain.models import TrackInfo
 
 _STREAMTITLE_RE = re.compile(r"StreamTitle='(.*?)';", re.DOTALL)
 
 
-class IcyEvent:  # noqa: B903 - simple data carrier
+class IcyEvent:
     """Marker base class for events emitted by :class:`IcyParser`.
 
     Subclasses: :class:`AudioChunk`, :class:`TitleChanged`.
@@ -94,8 +94,7 @@ class IcyParser:
             produced = self._step()
             if not produced:
                 break
-            for event in self._step_drain():
-                yield event
+            yield from self._step_drain()
 
     def _step_drain(self) -> Iterator[IcyEvent]:
         """Yield events deposited by :meth:`_step`."""

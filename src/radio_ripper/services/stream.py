@@ -18,11 +18,12 @@ Behaviour preserved from v1.x:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
 
-from radio_ripper.domain.models import EnrichedInfo, SavedTrack, TrackInfo
+from radio_ripper.domain.models import SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
@@ -64,6 +65,7 @@ class StreamRecorder:
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._enrichment_tasks: set[asyncio.Task[Any]] = set()
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -103,10 +105,8 @@ class StreamRecorder:
                     "[%s] Reconnect in %.1fs (max %.1fs)",
                     self.station_name, delay, self.settings.reconnect_max_delay,
                 )
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
-                except asyncio.TimeoutError:
-                    pass
                 delay = min(delay * 2.0, self.settings.reconnect_max_delay)
         self._log.info("Recorder '%s' stopped.", self.station_name)
 
@@ -144,10 +144,8 @@ class StreamRecorder:
         metaint = _parse_metaint(resp_headers)
         if not metaint or metaint <= 0:
             self._log.info("[%s] No icy-metaint header; closing.", self.station_name)
-            try:
+            with contextlib.suppress(Exception):
                 await agen.aclose()  # type: ignore[attr-defined]
-            except Exception:
-                pass
             return False
         self._log.info("[%s] icy-metaint=%d", self.station_name, metaint)
         parser = IcyParser(metaint)
@@ -195,9 +193,11 @@ class StreamRecorder:
                 )
                 # Kick off async enrichment (non-blocking)
                 if self._metadata and self.settings.enrich_metadata:
-                    asyncio.create_task(
+                    enrich_task = asyncio.create_task(
                         self._enrich_song(final_path, track, provenance)
                     )
+                    self._enrichment_tasks.add(enrich_task)
+                    enrich_task.add_done_callback(self._enrichment_tasks.discard)
             else:
                 writer.discard()
                 self._log.info(
@@ -312,10 +312,8 @@ class StreamRecorder:
             await _close_writer(finalize=False)
             return False
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 await agen.aclose()  # type: ignore[attr-defined]
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------ enrichment
 

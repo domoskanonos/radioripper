@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import httpx
 import pytest
 import respx
 
-from radio_ripper.domain.models import EnrichedInfo
 from radio_ripper.infra.http import HttpxAsyncClient
 from radio_ripper.services.metadata import (
     ITunesMetadataProvider,

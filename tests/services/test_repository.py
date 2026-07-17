@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from radio_ripper.domain.models import SavedTrack
-from radio_ripper.infra.errors import RepositoryError
-from radio_ripper.services.repository import SQLiteTrackRepository
+from radio_ripper.services.repository import SQLiteTrackRepository, RepositoryError
 
 
 class TestSQLiteTrackRepository:
@@ -75,7 +75,7 @@ class TestSQLiteTrackRepository:
         repo = SQLiteTrackRepository(tmp_db_path)
         await repo.aclose()
         # Subsequent operations should raise
-        with pytest.raises(Exception):
+        with pytest.raises((RepositoryError, sqlite3.ProgrammingError)):
             await repo.exists("x", "y")
 
     async def test_wal_mode_enabled(self, tmp_db_path: Path):

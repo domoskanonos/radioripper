@@ -16,11 +16,15 @@ from typing import TYPE_CHECKING
 
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
-from radio_ripper.services.metadata import ITunesMetadataProvider, MetadataProvider, NullMetadataProvider
+from radio_ripper.services.metadata import (
+    ITunesMetadataProvider,
+    MetadataProvider,
+    NullMetadataProvider,
+)
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver
 from radio_ripper.services.repository import SQLiteTrackRepository, TrackRepository
 from radio_ripper.services.stream import StreamRecorder
-from radio_ripper.services.tagging import ID3Tagger, NullTagger, TrackTagger
+from radio_ripper.services.tagging import ID3Tagger, TrackTagger
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -112,7 +116,7 @@ class RadioRipperApp:
         for rec in self._recorders:
             try:
                 await asyncio.wait_for(rec.join(), timeout=10.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.logger.warning("Recorder %s did not stop in time.", rec.station_name)
         # Drain enrichment tasks; they're short-lived.
         pending = [
@@ -122,7 +126,7 @@ class RadioRipperApp:
         for task in pending:
             try:
                 await asyncio.wait_for(task, timeout=15.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 task.cancel()
         await self.repository.aclose()
         await self.client.aclose()

@@ -9,6 +9,7 @@ default ``sqlite3`` driver is synchronous and not thread-safe by default.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sqlite3
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -90,10 +91,8 @@ class SQLiteTrackRepository(TrackRepository):
         self._conn.execute("PRAGMA synchronous=NORMAL;")
         self._conn.execute(_CREATE_SCHEMA)
         for col, decl in _MIGRATION_COLUMNS:
-            try:
+            with contextlib.suppress(sqlite3.OperationalError):
                 self._conn.execute(f"ALTER TABLE songs ADD COLUMN {col} {decl}")
-            except sqlite3.OperationalError:
-                pass
 
     @staticmethod
     def _run(coro):

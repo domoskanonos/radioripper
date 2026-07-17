@@ -65,7 +65,7 @@ class StaticPlaylistResolver(PlaylistResolver):
     def __init__(self, urls: list[str]) -> None:
         self._urls = list(urls)
 
-    async def resolve(self, playlist_url: str) -> list[str]:  # noqa: ARG002
+    async def resolve(self, playlist_url: str) -> list[str]:
         return list(self._urls)
 
 

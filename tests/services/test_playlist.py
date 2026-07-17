@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
+from radio_ripper.infra.http import HttpxAsyncClient
 from radio_ripper.services.playlist import (
     HttpPlaylistResolver,
     StaticPlaylistResolver,

@@ -5,11 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import MagicMock
 
-import pytest
-
-from radio_ripper.domain.models import EnrichedInfo, SavedTrack, TrackInfo
+from radio_ripper.domain.models import SavedTrack
 from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.services.metadata import NullMetadataProvider
 from radio_ripper.services.playlist import StaticPlaylistResolver
@@ -25,7 +22,7 @@ METADATA_INTERVAL = 100  # bytes of audio between metadata blocks
 
 
 def _make_meta_block(stream_title: str) -> bytes:
-    payload = f"StreamTitle='{stream_title}';".encode("utf-8")
+    payload = f"StreamTitle='{stream_title}';".encode()
     padding = (16 - (len(payload) % 16)) % 16
     payload += b"\x00" * padding
     length_byte = len(payload) // 16
@@ -48,19 +45,19 @@ class FakeHttpClient:
         self._headers = {"icy-metaint": str(metaint)}
         self._last_headers: dict[str, str] = {}
 
-    async def get_text(self, url: str, *, timeout: float | None = None) -> str:  # noqa: ARG002
+    async def get_text(self, url: str, *, timeout: float | None = None) -> str:
         return ""
 
     async def get_json(self, url: str, *, params: dict[str, Any] | None = None,
-                       timeout: float | None = None) -> Any:  # noqa: ARG002
+                       timeout: float | None = None) -> Any:
         return {}
 
-    async def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:  # noqa: ARG002
+    async def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:
         return b""
 
     async def stream_binary(
         self, url: str, *, headers: dict[str, str] | None = None,
-        timeout: float | None = None,  # noqa: ARG002
+        timeout: float | None = None,
     ) -> AsyncIterator[bytes]:
         self._last_headers = dict(self._headers)
         # Stream in small chunks to simulate real streaming
@@ -139,15 +136,15 @@ class FakeRepoExistingAfterFirst(FakeRepoFresh):
 
 
 def _make_settings(tmp_path, **overrides) -> Settings:
-    base = dict(
-        destination=tmp_path / "recordings",
-        database=tmp_path / "ripper.db",
-        streams=[StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
-        reconnect_base_delay=0.1,
-        reconnect_max_delay=1.0,
-        min_file_size_bytes=10,
-        enrich_metadata=False,
-    )
+    base = {
+        "destination": tmp_path / "recordings",
+        "database": tmp_path / "ripper.db",
+        "streams": [StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
+        "reconnect_base_delay": 0.1,
+        "reconnect_max_delay": 1.0,
+        "min_file_size_bytes": 10,
+        "enrich_metadata": False,
+    }
     base.update(overrides)
     return Settings.model_validate(base)
 

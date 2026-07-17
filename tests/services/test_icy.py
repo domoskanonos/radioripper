@@ -15,7 +15,7 @@ from radio_ripper.services.icy import (
 
 def _make_meta_block(stream_title: str) -> bytes:
     """Build a single ICY metadata block (length-prefixed)."""
-    payload = f"StreamTitle='{stream_title}';".encode("utf-8")
+    payload = f"StreamTitle='{stream_title}';".encode()
     padding = (16 - (len(payload) % 16)) % 16
     payload += b"\x00" * padding
     length_byte = len(payload) // 16

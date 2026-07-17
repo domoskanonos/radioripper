@@ -93,10 +93,10 @@ class ITunesMetadataProvider(MetadataProvider):
 class NullMetadataProvider(MetadataProvider):
     """No-op provider — used when enrichment is disabled in the config."""
 
-    async def fetch(self, artist: str, title: str) -> EnrichedInfo | None:  # noqa: ARG002
+    async def fetch(self, artist: str, title: str) -> EnrichedInfo | None:
         return None
 
-    async def download_image(self, url: str) -> bytes | None:  # noqa: ARG002
+    async def download_image(self, url: str) -> bytes | None:
         return None
 
 

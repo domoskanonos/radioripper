@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 
@@ -102,10 +103,8 @@ class TrackWriter:
         if self._closed:
             return
         self._closed = True
-        try:
+        with contextlib.suppress(Exception):
             self._fh.close()
-        except Exception:
-            pass
         self._tmp_path.unlink(missing_ok=True)
 
     def __enter__(self) -> TrackWriter:
