@@ -1,0 +1,68 @@
+@startuml gui-architecture
+!theme plain
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+title Radio-Ripper v2 — GUI Architecture
+
+actor "User\n(Browser)" as user
+
+package "Gradio GUI\n(src/radio_ripper/gui/)" {
+    component "gui.py\nbuild_app()\nmain()" as gui
+    note right: Thin presentation layer.\nNo business logic — only\nGradio components + callbacks.
+}
+
+package "API Layer\n(src/radio_ripper/api/)" {
+    component "ConfigApi\nload/save/update_field" as config_api
+    component "StationApi\nlist/add/edit/remove" as station_api
+    component "LibraryApi\nlist_songs/search/get/delete" as library_api
+    component "RipperApi\nstart/stop (bg thread)" as ripper_api
+}
+
+package "Backend Services\n(src/radio_ripper/services/)" {
+    component "RadioRipperApp" as app
+    component "StreamRecorder" as rec
+    component "TrackRepository\n(SQLite)" as repo
+    component "TrackTagger\n(mutagen)" as tagger
+    component "MetadataProvider\n(iTunes)" as md
+}
+
+package "Infra\n(src/radio_ripper/infra/)" {
+    component "Settings\n(Pydantic v2)" as settings
+    component "AsyncHttpClient\n(httpx)" as http
+}
+
+database "songs.db\n(SQLite)" as db
+storage "MP3 Files" as mp3
+file "config.json" as cfg
+
+user --> gui : "HTTP :7860\n(Gradio WebUI)"
+gui --> config_api : "load/save config"
+gui --> station_api : "CRUD streams"
+gui --> library_api : "browse/search/play"
+gui --> ripper_api : "start/stop ripper"
+
+config_api --> settings : "reads/writes"
+config_api --> cfg : "JSON I/O"
+station_api --> config_api : "uses"
+library_api --> db : "SELECT (read-only)"
+library_api --> mp3 : "resolve path\nplay / delete"
+
+ripper_api --> app : "RadioRipperApp.from_settings()"
+ripper_api --> settings : "passes to app"
+app --> rec : "spawns per station"
+app --> repo : "dedup / register"
+app --> tagger : "ID3v2 tag"
+app --> md : "enrich (async)"
+app --> http : "HTTP client"
+rec --> mp3 : "writes MP3"
+rec --> db : "register songs"
+
+note bottom of ripper_api
+  Background thread with own
+  asyncio event loop.
+  start() → thread + asyncio.run()
+  stop()  → stop_event.set()
+end note
+
+@enduml

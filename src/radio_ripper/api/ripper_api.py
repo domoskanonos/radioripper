@@ -90,12 +90,14 @@ class RipperApi:
 
     async def _run_async(self) -> None:
         """Set up the event loop, start the app, wait for stop signal."""
+        assert self._settings is not None, "settings must be set before _run_async"
+        settings = self._settings
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
-        logger = configure_logging(self._settings.log_level, self._settings.log_file)
+        logger = configure_logging(settings.log_level, settings.log_file)
         logger.info("=== Radio-Ripper GUI background mode starting ===")
 
-        self._app = RadioRipperApp.from_settings(self._settings, logger=logger)
+        self._app = RadioRipperApp.from_settings(settings, logger=logger)
         await self._app.start()
 
         with self._lock:
