@@ -95,7 +95,7 @@ class SQLiteTrackRepository(TrackRepository):
                 self._conn.execute(f"ALTER TABLE songs ADD COLUMN {col} {decl}")
 
     @staticmethod
-    def _run(coro):
+    def _run(coro: object) -> object:
         return coro
 
     async def exists(self, station_name: str, stream_title: str) -> bool:

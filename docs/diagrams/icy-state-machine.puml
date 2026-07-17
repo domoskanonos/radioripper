@@ -1,0 +1,18 @@
+@startuml icy-state-machine
+!theme plain
+skinparam shadowing false
+
+title IcyParser State Machine
+
+[*] --> WAIT_AUDIO
+
+WAIT_AUDIO --> READ_META_LEN : metaint bytes consumed\n(emit AudioChunk)
+READ_META_LEN --> READ_META : 1 byte read (meta_len)
+READ_META --> WAIT_AUDIO : meta_len bytes consumed\n(parse StreamTitle)\n(emit TitleChanged if changed)
+
+note right of WAIT_AUDIO : Default state.\nAccumulates audio bytes\nuntil icy-metaint reached.
+note right of READ_META_LEN : Reads 1 byte = length\nof next metadata block\n(0 = no metadata this cycle)
+note right of READ_META : Reads meta_len bytes.\nParses StreamTitle='...';\nIf title changed → TitleChanged
+
+WAIT_AUDIO --> [*] : stop
+@enduml

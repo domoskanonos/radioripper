@@ -1,0 +1,56 @@
+@startuml component-diagram
+!theme plain
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+title Radio-Ripper v2 — Component Diagram (Services Layer)
+
+package "cli.py" {
+    [CLI\nmain()\n_build_arg_parser()] as cli
+}
+
+package "app.py" {
+    [RadioRipperApp\nfrom_settings()\nrun()\nstop()] as app
+}
+
+package "services/" {
+    [StreamRecorder\n_run_forever()\n_run_once()] as recorder
+    [IcyParser\nfeed()\n_step_drain()] as parser
+    [TrackWriter\nfeed()\ncommit()\ndiscard()] as writer
+    [TrackTagger\ntag()] as tagger
+    [TrackRepository\nexists()\nregister()\nupdate_enrichment()] as repo
+    [MetadataProvider\nenrich_song()] as metadata
+    [PlaylistResolver\nresolve()] as playlist
+}
+
+package "infra/" {
+    [AsyncHttpClient\nget_stream()] as http
+    [Settings\nStreamConfig] as config
+    [Error hierarchy] as errors
+    [Logging] as logging
+}
+
+package "domain/" {
+    [TrackInfo\nSavedTrack\nEnrichedInfo] as models
+}
+
+cli --> app : "RadioRipperApp.from_settings()"
+app --> recorder : "creates per station"
+app --> playlist : "resolves URLs"
+app --> repo : "SQLiteTrackRepository"
+app --> tagger : "ID3Tagger"
+app --> metadata : "ITunesMetadataProvider"
+app --> http : "HttpxAsyncClient"
+
+recorder --> http : "get_stream()"
+recorder --> parser : "feed() / drain()"
+recorder --> writer : "per song"
+recorder --> tagger : "tag()"
+recorder --> repo : "exists() / register()"
+recorder --> metadata : "enrich_song() (async)"
+
+parser --> models : "emits TrackInfo"
+writer --> models : "uses TrackInfo"
+tagger --> models : "reads TrackInfo\nEnrichedInfo"
+
+@enduml

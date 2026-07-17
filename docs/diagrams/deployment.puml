@@ -1,0 +1,46 @@
+@startuml deployment-diagram
+!theme plain
+skinparam shadowing false
+
+title Deployment Diagram
+
+node "Host Machine" {
+    node "Local Deployment" as local {
+        component "run.sh" as runsh
+        component "uv\n(Python 3.12)" as uv
+        component "radio-ripper\n(cli:main)" as ripper
+        database "songs.db" as db
+        storage "recordings/" as rec
+        file "config.json" as cfg
+    }
+
+    node "Docker Deployment" as docker {
+        component "Docker Engine" as engine
+        component "Container\nradio-ripper:2.0" as container
+        database "songs.db\n(mounted)" as db2
+        storage "recordings/\n(mounted)" as rec2
+        file "config.json\n(mounted ro)" as cfg2
+    }
+}
+
+cloud "Internet" as net {
+    component "Webradio\nStreams" as streams
+    component "iTunes\nAPI" as itunes
+}
+
+runsh --> uv : "uv run radio-ripper"
+uv --> ripper : "executes"
+ripper --> cfg : "loads config"
+ripper --> streams : "HTTP/ICY"
+ripper --> itunes : "enrich"
+ripper --> db : "SQLite WAL"
+ripper --> rec : "MP3 files"
+
+engine --> container : "docker run"
+container --> cfg2 : "reads (ro)"
+container --> streams : "HTTP/ICY"
+container --> itunes : "enrich"
+container --> db2 : "SQLite WAL"
+container --> rec2 : "MP3 files"
+
+@enduml

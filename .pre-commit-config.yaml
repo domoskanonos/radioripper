@@ -1,0 +1,41 @@
+# .pre-commit-config.yaml — Radio-Ripper pre-commit hooks
+# Install:  pre-commit install
+# Run:      pre-commit run --all-files
+
+repos:
+  # ── Generic file hygiene ────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: debug-statements
+
+  # ── Ruff: lint + format ──────────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  # ── mypy: static type checks (src-only, not tests) ─────────────────────
+  # Uses uv to ensure the right Python environment.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (uv)
+        entry: uv run mypy
+        language: system
+        types: ["python"]
+        files: ^src/radio_ripper/
+        pass_filenames: false
+        args: ["src/radio_ripper/"]

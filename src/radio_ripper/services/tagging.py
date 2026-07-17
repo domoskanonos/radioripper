@@ -1,3 +1,4 @@
+# mypy: disable-error-code="no-untyped-call"
 """ID3v2 tagger built on top of :mod:`mutagen`.
 
 :class:`TrackTagger` is the ABC, :class:`ID3Tagger` the default implementation.
@@ -16,7 +17,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from mutagen.id3 import (  # type: ignore[no-untyped-call]
+from mutagen.id3 import (
     APIC,
     COMM,
     ID3,

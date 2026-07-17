@@ -17,7 +17,7 @@ from pathlib import Path
 
 from radio_ripper import __version__
 from radio_ripper.app import RadioRipperApp
-from radio_ripper.infra.config import load_settings
+from radio_ripper.infra.config import Settings, load_settings
 from radio_ripper.infra.errors import ConfigurationError
 from radio_ripper.infra.logging import configure_logging
 
@@ -75,12 +75,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run_async(settings, logger: logging.Logger) -> int:
+async def _run_async(settings: Settings, logger: logging.Logger) -> int:
     app = RadioRipperApp.from_settings(settings, logger=logger)
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
-    def _signal_handler(signum, _frame):
+    def _signal_handler(signum: int, _frame: object | None) -> None:
         logger.info("Signal %s received - initiating graceful shutdown...", signum)
         stop_event.set()
 

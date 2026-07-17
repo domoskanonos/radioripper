@@ -145,7 +145,7 @@ class StreamRecorder:
         if not metaint or metaint <= 0:
             self._log.info("[%s] No icy-metaint header; closing.", self.station_name)
             with contextlib.suppress(Exception):
-                await agen.aclose()  # type: ignore[attr-defined]
+                await agen.aclose()
             return False
         self._log.info("[%s] icy-metaint=%d", self.station_name, metaint)
         parser = IcyParser(metaint)
@@ -313,7 +313,7 @@ class StreamRecorder:
             return False
         finally:
             with contextlib.suppress(Exception):
-                await agen.aclose()  # type: ignore[attr-defined]
+                await agen.aclose()
 
     # ------------------------------------------------------------------ enrichment
 

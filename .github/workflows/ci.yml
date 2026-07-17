@@ -1,0 +1,77 @@
+# .github/workflows/ci.yml — Radio-Ripper CI pipeline
+# Matrix: Python 3.11 + 3.12
+# Jobs:   ruff (lint) → mypy (types) → pytest (tests + coverage)
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - run: uv sync --quiet
+
+      - name: ruff check
+        run: uv run ruff check src/ tests/
+
+      - name: ruff format --check
+        run: uv run ruff format --check src/ tests/
+
+  type-check:
+    name: Type Check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - run: uv sync --quiet
+
+      - name: mypy
+        run: uv run mypy src/radio_ripper/
+
+  test:
+    name: Test (pytest, ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync --quiet
+
+      - name: pytest
+        run: uv run pytest --cov -q
+
+      - name: Upload coverage (HTML)
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov/
+          retention-days: 30

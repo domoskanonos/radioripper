@@ -110,8 +110,13 @@ class TrackWriter:
     def __enter__(self) -> TrackWriter:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if exc is None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
+        if exc_val is None:
             self.commit()
         else:
             self.discard()
