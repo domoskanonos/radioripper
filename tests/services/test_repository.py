@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from radio_ripper.domain.models import SavedTrack
-from radio_ripper.services.repository import SQLiteTrackRepository, RepositoryError
+from radio_ripper.infra.errors import RepositoryError
+from radio_ripper.services.repository import SQLiteTrackRepository
 
 
 class TestSQLiteTrackRepository:

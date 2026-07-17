@@ -140,7 +140,7 @@ class TestMain:
                     await asyncio.sleep(0.1)
                     stop_event.set()
 
-                _stop_task = asyncio.create_task(immediate_stop())
+                asyncio.create_task(immediate_stop())  # noqa: RUF006  # fire-and-forget in test
 
                 # We can't directly test _run_async because it creates its own
                 # signal handlers + stop_event. Instead test that mock_factory

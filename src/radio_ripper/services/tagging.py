@@ -16,7 +16,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from mutagen.id3 import (
+from mutagen.id3 import (  # type: ignore[no-untyped-call]
     APIC,
     COMM,
     ID3,
