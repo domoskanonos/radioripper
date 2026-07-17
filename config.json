@@ -1,0 +1,21 @@
+{
+  "destination": "./recordings",
+  "database": "./recordings/ripper.db",
+  "streams": [
+    { "name": "TopHits",      "url": "http://tophits.radiomonster.fm/listen.m3u" },
+    { "name": "Evergreens",   "url": "http://evergreens.radiomonster.fm/listen.m3u" },
+    { "name": "Rock",         "url": "http://rock.radiomonster.fm/listen.m3u" },
+    { "name": "Dance",        "url": "http://dance.radiomonster.fm/listen.m3u" },
+    { "name": "90s",          "url": "http://90s.radiomonster.fm/listen.m3u" },
+    { "name": "Deutschrap",   "url": "http://deutsch.radiomonster.fm/listen.m3u" }
+  ],
+  "request_timeout": 30,
+  "read_chunk": 4096,
+  "reconnect_base_delay": 1.0,
+  "reconnect_max_delay": 60.0,
+  "user_agent": "Radio-Ripper/1.0 (https://github.com/radioripper)",
+  "overwrite_existing_files": false,
+  "min_file_size_bytes": 1024,
+  "log_level": "INFO",
+  "log_file": "./radio_ripper.log"
+}
