@@ -18,7 +18,7 @@
   "min_file_size_bytes": 1024,
   "log_level": "INFO",
   "log_file": "./radio_ripper.log",
-  "max_recordings_per_station": 100,
+  "max_recordings": 500,
   "enrich_metadata": true,
   "embed_cover_art": true,
   "enrichment_workers": 4,

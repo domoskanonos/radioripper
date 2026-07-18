@@ -47,7 +47,7 @@ class Settings(BaseModel):
     log_level: str = "INFO"
     log_file: Path | None = None
 
-    max_recordings_per_station: int | None = Field(default=None, ge=1)
+    max_recordings: int | None = Field(default=None, ge=1)
 
     enrich_metadata: bool = True
     embed_cover_art: bool = True

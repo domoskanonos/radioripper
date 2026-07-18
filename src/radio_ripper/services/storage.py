@@ -29,28 +29,27 @@ def sanitize_filename(name: str) -> str:
 
 def compute_file_path(
     destination: Path,
-    station_name: str,
     artist: str,
     title: str,
     stream_title_clean: str,
     *,
     overwrite: bool = False,
 ) -> Path:
-    """Build a safe path ``{dest}/{station}/{Artist - Title}.mp3``.
+    """Build a safe path ``{dest}/{Artist - Title}.mp3``.
 
+    All recordings land in *destination* directly (no per-station subfolder).
     If the candidate already exists and ``overwrite`` is False, append ``(2)``,
     ``(3)``… to the base name until a free slot is found.
     """
-    station_dir = destination / sanitize_filename(station_name)
     if artist and title:
         base = f"{sanitize_filename(artist)} - {sanitize_filename(title)}"
     else:
         base = sanitize_filename(stream_title_clean)
-    candidate = station_dir / f"{base}.mp3"
+    candidate = destination / f"{base}.mp3"
     if not overwrite:
         i = 2
         while candidate.exists():
-            candidate = station_dir / f"{base} ({i}).mp3"
+            candidate = destination / f"{base} ({i}).mp3"
             i += 1
     return candidate
 

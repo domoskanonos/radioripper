@@ -201,10 +201,10 @@ class StreamRecorder:
                     final_path.name,
                     final_path.stat().st_size,
                 )
-                # Enforce per-station recording limit
-                max_rec = self.settings.max_recordings_per_station
+                # Enforce global recording limit
+                max_rec = self.settings.max_recordings
                 if max_rec is not None:
-                    deleted = enforce_recording_limit(final_path.parent, max_rec)
+                    deleted = enforce_recording_limit(self.settings.destination, max_rec)
                     for d in deleted:
                         self._log.info(
                             "[%s] Limit %d reached – deleted oldest: %s",
@@ -282,7 +282,6 @@ class StreamRecorder:
                             continue
                         file_path = compute_file_path(
                             self.settings.destination,
-                            self.station_name,
                             track.artist,
                             track.title,
                             clean,
