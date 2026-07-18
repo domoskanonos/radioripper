@@ -1,3 +1,0 @@
-- Aufnahme hört sich teilweise doppelt an, wird wohl nicht richtig zusammengesetzt...
-- Backend und GUi soll immer zusammengestartet werden, nie einzeln, das soll auch nicht möglich sein.
-- Backend kann im Frontend gestartet und gestoppt werden.

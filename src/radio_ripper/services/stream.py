@@ -30,7 +30,12 @@ from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.metadata import MetadataProvider
 from radio_ripper.services.playlist import PlaylistResolver
 from radio_ripper.services.repository import TrackRepository
-from radio_ripper.services.storage import TrackWriter, compute_file_path
+from radio_ripper.services.storage import (
+    TrackWriter,
+    compute_file_path,
+    enforce_recording_limit,
+    remux_mp3,
+)
 from radio_ripper.services.tagging import TrackTagger
 
 _LOGGER = logging.getLogger("radio_ripper.stream")
@@ -188,12 +193,25 @@ class StreamRecorder:
                     await self._repo.register(saved, self.station_name)
                 except Exception as exc:
                     self._log.warning("[%s] db-register: %s", self.station_name, exc)
+                # Fix MP3 frame alignment caused by ICY stream cut-points
+                remux_mp3(final_path)
                 self._log.info(
                     "[%s] Completed: %s (%d bytes)",
                     self.station_name,
                     final_path.name,
                     final_path.stat().st_size,
                 )
+                # Enforce per-station recording limit
+                max_rec = self.settings.max_recordings_per_station
+                if max_rec is not None:
+                    deleted = enforce_recording_limit(final_path.parent, max_rec)
+                    for d in deleted:
+                        self._log.info(
+                            "[%s] Limit %d reached – deleted oldest: %s",
+                            self.station_name,
+                            max_rec,
+                            d.name,
+                        )
                 # Kick off async enrichment (non-blocking)
                 if self._metadata and self.settings.enrich_metadata:
                     enrich_task = asyncio.create_task(

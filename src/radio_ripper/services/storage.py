@@ -122,4 +122,47 @@ class TrackWriter:
             self.discard()
 
 
-__all__ = ["TrackWriter", "compute_file_path", "sanitize_filename"]
+def remux_mp3(path: Path) -> None:
+    """Post-process a recorded MP3 via pydub/ffmpeg to fix frame-alignment.
+
+    Decodes and re-encodes the file so that any garbage bytes before the
+    first valid MP3 frame (common at ICY stream cut-points) are stripped.
+    Non-fatal: if pydub or ffmpeg is unavailable the original file is kept.
+    """
+    tmp = path.with_suffix(".remux.tmp")
+    try:
+        from pydub import AudioSegment  # type: ignore[import-untyped]
+
+        audio = AudioSegment.from_file(str(path), format="mp3")
+        audio.export(str(tmp), format="mp3", tags={})
+        tmp.replace(path)
+    except ImportError:
+        pass
+    except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+
+
+def enforce_recording_limit(station_dir: Path, max_count: int) -> list[Path]:
+    """Delete the oldest MP3 files in *station_dir* when the count exceeds *max_count*.
+
+    Files are sorted by modification time (oldest first).
+    Returns the list of deleted paths.
+    """
+    mp3_files = sorted(station_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+    deleted: list[Path] = []
+    while len(mp3_files) > max_count:
+        oldest = mp3_files.pop(0)
+        with contextlib.suppress(OSError):
+            oldest.unlink(missing_ok=True)
+        deleted.append(oldest)
+    return deleted
+
+
+__all__ = [
+    "TrackWriter",
+    "compute_file_path",
+    "enforce_recording_limit",
+    "remux_mp3",
+    "sanitize_filename",
+]

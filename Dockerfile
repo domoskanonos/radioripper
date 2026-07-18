@@ -60,6 +60,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy
 
+# ffmpeg for MP3 frame-alignment post-processing
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 # Directory for recordings and database
 RUN mkdir -p /app/recordings \
  && chown -R ripper:ripper /app
