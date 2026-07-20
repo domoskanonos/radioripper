@@ -3,6 +3,12 @@
 The :class:`FingerprintProvider` ABC lets the ripper identify recorded files
 against the AcoustID database. The default implementation uses ``pyacoustid``
 which wraps the Chromaprint library.
+
+A :class:`FingerprintError` is raised when fingerprinting fails for
+*infrastructure* reasons (missing library, network error, API error, rate
+limit). A return value of ``None`` from :meth:`fingerprint` strictly means
+"the file was processed successfully but no match was found in the AcoustID
+database" — callers may safely discard such files.
 """
 
 from __future__ import annotations
@@ -14,12 +20,30 @@ from pathlib import Path
 from radio_ripper.domain.models import FingerprintResult
 
 
+class FingerprintError(RuntimeError):
+    """Raised when fingerprinting fails for infrastructure reasons.
+
+    This is distinct from a successful lookup that yields no match, which
+    is signalled by :meth:`FingerprintProvider.fingerprint` returning
+    ``None``.  Callers MUST NOT discard files when a :class:`FingerprintError`
+    is raised — the failure is transient and the file should be retried
+    later (e.g. by :meth:`RadioRipperApp.reprocess_untested`).
+    """
+
+
 class FingerprintProvider(ABC):
     """Identify a recorded audio file against the AcoustID database."""
 
     @abstractmethod
     async def fingerprint(self, path: Path) -> FingerprintResult | None:
-        """Return :class:`FingerprintResult` if the file matches a known recording."""
+        """Return :class:`FingerprintResult` if the file matches a known recording.
+
+        Raises:
+            FingerprintError: if fingerprinting fails for infrastructure
+                reasons (missing library, network error, API error).  A
+                return value of ``None`` strictly means "successfully
+                looked up but no match found".
+        """
 
 
 class AcoustidFingerprintProvider(FingerprintProvider):
@@ -37,15 +61,18 @@ class AcoustidFingerprintProvider(FingerprintProvider):
     async def fingerprint(self, path: Path) -> FingerprintResult | None:
         try:
             import acoustid  # type: ignore[import-untyped]
-        except ImportError:
-            return None
+        except ImportError as exc:
+            raise FingerprintError(
+                "acoustid library not installed "
+                "(pip install pyacoustid + system chromaprint)"
+            ) from exc
         loop = asyncio.get_running_loop()
         try:
             results = await loop.run_in_executor(
                 None, acoustid.match, self._api_key, str(path)
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
         if not results:
             return None
         best = results[0]
@@ -74,6 +101,7 @@ class NullFingerprintProvider(FingerprintProvider):
 
 __all__ = [
     "AcoustidFingerprintProvider",
+    "FingerprintError",
     "FingerprintProvider",
     "NullFingerprintProvider",
 ]

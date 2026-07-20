@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
-from radio_ripper.domain.models import SavedTrack
+from radio_ripper.domain.models import FingerprintResult, SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings, StreamConfig
+from radio_ripper.services.fingerprint import FingerprintError, FingerprintProvider
 from radio_ripper.services.metadata import NullMetadataProvider
 from radio_ripper.services.playlist import StaticPlaylistResolver
 from radio_ripper.services.repository import TrackRepository
 from radio_ripper.services.stream import StreamRecorder, _parse_metaint
-from radio_ripper.services.tagging import NullTagger
+from radio_ripper.services.tagging import NullTagger, TrackTagger
 
 # ---------------------------------------------------------------------------
 # Fakes / helpers
@@ -459,3 +461,231 @@ class TestAdTitlePatterns:
         titles = [t.stream_title for _, t in repo.registered]
         # Without patterns, "Werbung" is treated as a normal title
         assert "Werbung" in titles
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint-song tests — directly drive _fingerprint_song without streaming
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedFingerprint(FingerprintProvider):
+    """FingerprintProvider stub returning a scripted result or raising."""
+
+    def __init__(
+        self,
+        *,
+        result: FingerprintResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self._result = result
+        self._error = error
+
+    async def fingerprint(self, path: Path) -> FingerprintResult | None:
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+class _RecordingTagger(TrackTagger):
+    """TrackTagger stub recording update_acoustid/write_basic calls."""
+
+    def __init__(self) -> None:
+        self.update_acoustid_calls: list[tuple[Path, str, float]] = []
+
+    def write_basic(self, file_path: Path, track: TrackInfo, provenance: str) -> None:
+        pass
+
+    def write_full(
+        self,
+        file_path: Path,
+        artist: str,
+        title: str,
+        album: str | None = None,
+        year: int | None = None,
+        cover: bytes | None = None,
+    ) -> None:
+        pass
+
+    def update_acoustid(self, file_path: Path, recording_id: str, score: float) -> None:
+        self.update_acoustid_calls.append((file_path, recording_id, score))
+
+
+class _FingerprintRepo(TrackRepository):
+    """Repo stub recording remove / update_file_path / update_fingerprint."""
+
+    def __init__(self) -> None:
+        self.removed: list[tuple[str, str]] = []
+        self.updated_paths: list[tuple[str, str, str]] = []
+        self.updated_fps: list[tuple[str, str, str, float]] = []
+        self.Exists_by_id_returns = False
+        self.Find_by_id_returns: Any = None
+
+    async def exists(self, station_name: str, stream_title: str) -> bool:
+        return False
+
+    async def register(self, track: Any, station_name: str) -> None:
+        pass
+
+    async def update_enrichment(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    async def remove(self, station_name: str, stream_title: str) -> None:
+        self.removed.append((station_name, stream_title))
+
+    async def aclose(self) -> None:
+        pass
+
+    async def update_fingerprint(
+        self, station_name: str, stream_title: str, *,
+        recording_id: str, score: float,
+    ) -> None:
+        self.updated_fps.append((station_name, stream_title, recording_id, score))
+
+    async def exists_by_recording_id(
+        self, recording_id: str, exclude_station: str | None = None
+    ) -> bool:
+        return self.Exists_by_id_returns
+
+    async def find_by_recording_id(self, recording_id: str) -> Any:
+        return self.Find_by_id_returns
+
+    async def list_untested(self) -> list:
+        return []
+
+    async def update_file_path(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        self.updated_paths.append((station_name, stream_title, new_path))
+
+
+def _make_fp_recorder(
+    *,
+    settings: Settings,
+    repo: _FingerprintRepo,
+    tagger: _RecordingTagger,
+    fingerprint: FingerprintProvider,
+) -> StreamRecorder:
+    """A minimal StreamRecorder for fingerprint tests — no HTTP, no playlist."""
+    return StreamRecorder(
+        station_name="TestStation",
+        playlist_url="http://fake.example.com/listen.m3u",
+        settings=settings,
+        http_client=None,  # type: ignore[arg-type]
+        playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+        repository=repo,
+        tagger=tagger,
+        metadata_provider=NullMetadataProvider(),
+        fingerprint_provider=fingerprint,
+    )
+
+
+class TestFingerprintSong:
+    """Directly drive StreamRecorder._fingerprint_song() in isolation."""
+
+    async def test_keeps_untested_file_on_fingerprint_error(self, tmp_path) -> None:
+        """FingerprintError must NOT delete the .untested.mp3 file."""
+        f = tmp_path / "Artist - Title.untested.mp3"
+        f.write_bytes(b"\x00")
+        settings = _make_settings(tmp_path)
+        repo = _FingerprintRepo()
+        tagger = _RecordingTagger()
+        provider = _ScriptedFingerprint(error=FingerprintError("API down"))
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        track = TrackInfo.from_stream_title("Artist - Title")
+        await rec._fingerprint_song(f, track, "prov")
+        assert f.exists(), "FingerprintError must keep .untested.mp3"
+        assert repo.removed == []
+        assert repo.updated_paths == []
+        assert tagger.update_acoustid_calls == []
+
+    async def test_discards_file_on_no_match_with_discard_true(self, tmp_path) -> None:
+        """None result + discard_unmatched=True → delete file + repo.remove."""
+        f = tmp_path / "Artist - Title.untested.mp3"
+        f.write_bytes(b"\x00")
+        settings = _make_settings(tmp_path)  # discard_unmatched=True (default)
+        assert settings.discard_unmatched is True
+        repo = _FingerprintRepo()
+        tagger = _RecordingTagger()
+        provider = _ScriptedFingerprint(result=None)
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        track = TrackInfo.from_stream_title("Artist - Title")
+        await rec._fingerprint_song(f, track, "prov")
+        assert not f.exists(), "Genuine no-match must delete file"
+        assert repo.removed == [("TestStation", "Artist - Title")]
+        assert repo.updated_paths == []
+
+    async def test_keeps_file_on_no_match_with_discard_false(self, tmp_path) -> None:
+        """None result + discard_unmatched=False → keep file, no repo.remove."""
+        f = tmp_path / "Artist - Title.untested.mp3"
+        f.write_bytes(b"\x00")
+        settings = _make_settings(tmp_path, discard_unmatched=False)
+        assert settings.discard_unmatched is False
+        repo = _FingerprintRepo()
+        tagger = _RecordingTagger()
+        provider = _ScriptedFingerprint(result=None)
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        track = TrackInfo.from_stream_title("Artist - Title")
+        await rec._fingerprint_song(f, track, "prov")
+        assert f.exists(), "discard_unmatched=False must keep the file"
+        assert repo.removed == []
+        assert repo.updated_paths == []
+
+    async def test_renames_tags_and_updates_db_on_match(self, tmp_path) -> None:
+        """FingerprintResult → rename .untested.mp3 → .mp3, tag, DB update."""
+        f = tmp_path / "Artist - Title.untested.mp3"
+        f.write_bytes(b"\x00")
+        settings = _make_settings(tmp_path)
+        repo = _FingerprintRepo()
+        # Disable cross-station dedup path so the test is focused on rename/tag/update
+        repo.Exists_by_id_returns = False
+        repo.Find_by_id_returns = None
+        tagger = _RecordingTagger()
+        result = FingerprintResult(
+            artist="Real Artist", title="Real Title", score=0.95, recording_id="rec-42"
+        )
+        provider = _ScriptedFingerprint(result=result)
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        track = TrackInfo.from_stream_title("Artist - Title")
+        await rec._fingerprint_song(f, track, "prov")
+        expected = tmp_path / "Artist - Title.mp3"
+        assert expected.exists(), "Match: file must be renamed to .mp3"
+        assert not f.exists(), "Original .untested.mp3 must be gone"
+        assert tagger.update_acoustid_calls == [(expected, "rec-42", 0.95)]
+        assert repo.updated_paths == [("TestStation", "Artist - Title", str(expected))]
+        assert repo.updated_fps == [("TestStation", "Artist - Title", "rec-42", 0.95)]
+
+    async def test_refuses_rename_when_target_mp3_exists(self, tmp_path) -> None:
+        """Don't clobber an existing .mp3 — keep .untested.mp3 for manual review."""
+        f = tmp_path / "Artist - Title.untested.mp3"
+        f.write_bytes(b"\x00")
+        # Pre-existing .mp3 must not be overwritten
+        existing_mp3 = tmp_path / "Artist - Title.mp3"
+        existing_mp3.write_bytes(b"\xff\xfb")
+        settings = _make_settings(tmp_path)
+        repo = _FingerprintRepo()
+        repo.Exists_by_id_returns = False
+        repo.Find_by_id_returns = None
+        tagger = _RecordingTagger()
+        result = FingerprintResult(
+            artist="Real Artist", title="Real Title", score=0.95, recording_id="rec-42"
+        )
+        provider = _ScriptedFingerprint(result=result)
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        track = TrackInfo.from_stream_title("Artist - Title")
+        await rec._fingerprint_song(f, track, "prov")
+        # Both files must still exist
+        assert f.exists(), "Refuse-rename: .untested.mp3 must remain"
+        assert existing_mp3.exists(), "Refuse-rename: target .mp3 must not be touched"
+        # No db update / tag since rename was refused
+        assert tagger.update_acoustid_calls == []
+        assert repo.updated_paths == []

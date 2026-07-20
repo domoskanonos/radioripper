@@ -27,7 +27,7 @@ from typing import Any
 from radio_ripper.domain.models import EnrichedInfo, SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
-from radio_ripper.services.fingerprint import FingerprintProvider
+from radio_ripper.services.fingerprint import FingerprintError, FingerprintProvider
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.metadata import MetadataProvider
 from radio_ripper.services.playlist import PlaylistResolver
@@ -555,9 +555,17 @@ class StreamRecorder:
             return
         try:
             result = await self._fingerprint.fingerprint(file_path)
+        except FingerprintError as exc:
+            self._log.warning(
+                "[%s] fingerprint infrastructure error for %s: %s "
+                "(file kept as .untested.mp3 for retry)",
+                self.station_name, file_path.name, exc,
+            )
+            return
         except Exception:
             self._log.debug(
-                "[%s] fingerprint error for %s", self.station_name, file_path.name
+                "[%s] unexpected fingerprint error for %s",
+                self.station_name, file_path.name,
             )
             return
         if result is None:
@@ -594,8 +602,21 @@ class StreamRecorder:
 
         # Rename .untested.mp3 → .mp3
         new_path = file_path.with_name(file_path.stem.replace(".untested", "") + ".mp3")
-        with contextlib.suppress(OSError):
+        if new_path.exists():
+            self._log.warning(
+                "[%s] Refuse to rename %s -> %s (target exists). "
+                "Keeping .untested.mp3 for manual review.",
+                self.station_name, file_path.name, new_path.name,
+            )
+            return
+        try:
             file_path.rename(new_path)
+        except OSError as exc:
+            self._log.warning(
+                "[%s] rename %s -> %s failed: %s",
+                self.station_name, file_path.name, new_path.name, exc,
+            )
+            return
         # Write AcoustID info into ID3 tags on the new path
         try:
             self._tagger.update_acoustid(new_path, result.recording_id, result.score)

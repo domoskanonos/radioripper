@@ -14,12 +14,15 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.fingerprint import (
     AcoustidFingerprintProvider,
+    FingerprintError,
     FingerprintProvider,
     NullFingerprintProvider,
 )
@@ -122,15 +125,32 @@ class RadioRipperApp:
         if not records:
             return
         self.logger.info("Re-fingerprinting %d untested files from previous run…", len(records))
+        min_interval = self.settings.acoustid_min_interval_s
+        last_fp_call = 0.0
         for rec in records:
             p = Path(rec.track.file_path)
             if not p.is_file():
                 self.logger.warning("Untested file missing: %s", p)
                 continue
+            if min_interval > 0:
+                now = time.monotonic()
+                wait = min_interval - (now - last_fp_call)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                last_fp_call = time.monotonic()
             try:
                 result = await self.fingerprint.fingerprint(p)
+            except FingerprintError as exc:
+                self.logger.warning(
+                    "Fingerprint infrastructure error for %s: %s "
+                    "(file kept as .untested.mp3 for next retry)",
+                    p.name, exc,
+                )
+                continue
             except Exception:
-                self.logger.debug("fingerprint error for %s", p.name)
+                self.logger.debug(
+                    "unexpected fingerprint error for %s", p.name, exc_info=True,
+                )
                 continue
             if result is None:
                 self.logger.info("Still no AcoustID match for %s", p.name)
@@ -138,23 +158,45 @@ class RadioRipperApp:
                     with contextlib.suppress(OSError):
                         p.unlink(missing_ok=True)
                         remove_empty_parents(p, self.settings.destination)
-                    await self.repository.remove(rec.station_name, rec.track.stream_title)
+                    try:
+                        await self.repository.remove(
+                            rec.station_name, rec.track.stream_title
+                        )
+                    except Exception as exc:
+                        self.logger.debug("db remove after no-match: %s", exc)
                     self.logger.info("Discarded (still no match): %s", p.name)
                 continue
             new_path = p.with_name(p.stem.replace(".untested", "") + ".mp3")
-            with contextlib.suppress(OSError):
+            if new_path.exists():
+                # Don't silently clobber an existing .mp3 — keep .untested.mp3
+                self.logger.warning(
+                    "Refuse to rename %s -> %s (target exists). "
+                    "Keeping .untested.mp3 for manual review.",
+                    p.name, new_path.name,
+                )
+                continue
+            try:
                 p.rename(new_path)
+            except OSError as exc:
+                self.logger.warning("rename %s -> %s failed: %s", p.name, new_path.name, exc)
+                continue
             try:
                 self.tagger.update_acoustid(new_path, result.recording_id, result.score)
             except Exception as exc:
                 self.logger.debug("acoustid tag update: %s", exc)
-            await self.repository.update_file_path(
-                rec.station_name, rec.track.stream_title, str(new_path)
-            )
-            await self.repository.update_fingerprint(
-                rec.station_name, rec.track.stream_title,
-                recording_id=result.recording_id, score=result.score,
-            )
+            try:
+                await self.repository.update_file_path(
+                    rec.station_name, rec.track.stream_title, str(new_path)
+                )
+            except Exception as exc:
+                self.logger.debug("db update_file_path: %s", exc)
+            try:
+                await self.repository.update_fingerprint(
+                    rec.station_name, rec.track.stream_title,
+                    recording_id=result.recording_id, score=result.score,
+                )
+            except Exception as exc:
+                self.logger.debug("db update_fingerprint: %s", exc)
             self.logger.info("Re-fingerprinted OK: %s", new_path.name)
         self.logger.info("Untested reprocess complete (%d files).", len(records))
 
