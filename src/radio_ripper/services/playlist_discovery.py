@@ -14,6 +14,7 @@ import hashlib
 import io
 import json
 import logging
+import time
 import os
 import random
 import tempfile
@@ -170,10 +171,24 @@ async def _download_zip(github_pat: str = "") -> bytes:
         timeout=httpx.Timeout(60.0),
         follow_redirects=True,
     ) as client:
-        resp = await client.get(_ZIP_URL, headers=headers)
-        resp.raise_for_status()
-        _LOGGER.info("ZIP downloaded (%d bytes)", len(resp.content))
-        return resp.content
+        async with client.stream("GET", _ZIP_URL, headers=headers) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0))
+            chunks: list[bytes] = []
+            downloaded = 0
+            last_log = 0.0
+            async for chunk in resp.aiter_bytes():
+                chunks.append(chunk)
+                downloaded += len(chunk)
+                if total and (time.monotonic() - last_log >= 3.0):
+                    pct = min(downloaded * 100 // max(total, 1), 100)
+                    _LOGGER.info("ZIP download: %d/%d KiB (%d%%)", downloaded // 1024, total // 1024, pct)
+                    last_log = time.monotonic()
+            if total:
+                _LOGGER.info("ZIP download: %d/%d KiB (100%%)", total // 1024, total // 1024)
+            else:
+                _LOGGER.info("ZIP download complete (%d KiB)", downloaded // 1024)
+            return b"".join(chunks)
 
 
 def _extract_checked_entries(zip_bytes: bytes) -> list[M3uEntry]:
@@ -223,7 +238,6 @@ def _cache_path(settings: Settings) -> Path:
 def _is_cache_fresh(cache_file: Path, max_age_days: int) -> bool:
     if not cache_file.is_file():
         return False
-    import time
     return (time.time() - cache_file.stat().st_mtime) < max_age_days * 86400
 
 
