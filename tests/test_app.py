@@ -37,6 +37,9 @@ class FakeRepo(TrackRepository):
     async def update_enrichment(self, *args: Any, **kwargs: Any) -> None:
         pass
 
+    async def remove(self, station_name: str, stream_title: str) -> None:
+        pass
+
     async def aclose(self) -> None:
         pass
 

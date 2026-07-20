@@ -101,6 +101,12 @@ class FakeRepoThatSaysExisting(TrackRepository):
     async def update_enrichment(self, *args: Any, **kwargs: Any) -> None:
         pass
 
+    async def remove(self, station_name: str, stream_title: str) -> None:
+        self.registered = [
+            (sn, t) for sn, t in self.registered
+            if not (sn == station_name and t.stream_title == stream_title)
+        ]
+
     async def aclose(self) -> None:
         pass
 
@@ -119,6 +125,12 @@ class FakeRepoFresh(TrackRepository):
 
     async def update_enrichment(self, *args: Any, **kwargs: Any) -> None:
         pass
+
+    async def remove(self, station_name: str, stream_title: str) -> None:
+        self.registered = [
+            (sn, t) for sn, t in self.registered
+            if not (sn == station_name and t.stream_title == stream_title)
+        ]
 
     async def aclose(self) -> None:
         pass

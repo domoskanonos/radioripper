@@ -149,6 +149,44 @@ def remux_mp3(path: Path) -> None:
             tmp.unlink(missing_ok=True)
 
 
+def get_mp3_duration(path: Path) -> float | None:
+    """Return MP3 duration in seconds via ``ffprobe``, or ``None`` on failure.
+
+    Non-fatal: if ffprobe is unavailable or the file cannot be parsed the
+    call silently returns ``None`` so callers can decide how to handle it.
+    """
+    import shutil
+    import subprocess
+
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        val = result.stdout.strip()
+        if not val:
+            return None
+        return float(val)
+    except Exception:
+        return None
+
+
 def enforce_recording_limit(station_dir: Path, max_count: int) -> list[Path]:
     """Delete the oldest MP3 files in *station_dir* when the count exceeds *max_count*.
 
@@ -170,6 +208,7 @@ __all__ = [
     "TrackWriter",
     "compute_file_path",
     "enforce_recording_limit",
+    "get_mp3_duration",
     "remux_mp3",
     "sanitize_filename",
 ]

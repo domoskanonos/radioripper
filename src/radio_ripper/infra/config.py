@@ -16,12 +16,15 @@ from radio_ripper.infra.errors import ConfigurationError
 
 
 class StreamConfig(BaseModel):
-    """A single radio station entry inside ``config.json``."""
+    """A single radio station entry (used internally after discovery)."""
 
-    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_\- ]+$")
+    name: str = Field(min_length=1, max_length=64)
     url: HttpUrl
     enabled: bool = True
     ad_title_patterns: list[str] | None = None
+    bitrate: int = 0
+    icy: bool = True
+    source: str = ""
 
     @field_validator("name")
     @classmethod
@@ -37,7 +40,19 @@ class Settings(BaseModel):
 
     destination: Path = Field(default=Path("./recordings"))
     database: Path = Field(default=Path("./recordings/ripper.db"))
-    streams: list[StreamConfig] = Field(min_length=1)
+
+    stream_keywords: list[str] = Field(default_factory=lambda: [
+        "rock", "50", "60", "70", "80", "90", "10",
+        "dance", "pop", "top hits", "charts",
+    ])
+    discovery_enabled: bool = True
+    discovery_repo_url: str = "https://github.com/junguler/m3u-radio-music-playlists.git"
+    discovery_max_stations: int = Field(default=150, ge=1, le=500)
+    discovery_min_bitrate: int = Field(default=0, ge=0)
+    discovery_update_interval_days: int = Field(default=7, ge=1)
+
+    # Internal — set after discovery, not in config.json
+    streams: list[StreamConfig] = Field(default_factory=list, exclude=True)
 
     request_timeout: float = Field(default=30.0, ge=1.0)
     read_chunk: int = Field(default=4096, ge=64, le=65536)
@@ -59,6 +74,11 @@ class Settings(BaseModel):
     enrichment_workers: int = Field(default=4, ge=1, le=32)
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
+
+    min_duration_s: float = Field(default=0, ge=0)
+    acoustid_api_key: str = ""
+    acoustid_min_score: float = Field(default=0.8, ge=0.0, le=1.0)
+    discard_unmatched: bool = False
 
     @field_validator("log_level")
     @classmethod

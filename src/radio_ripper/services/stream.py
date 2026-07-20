@@ -27,6 +27,7 @@ from typing import Any
 from radio_ripper.domain.models import EnrichedInfo, SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
+from radio_ripper.services.fingerprint import FingerprintProvider
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.metadata import MetadataProvider
 from radio_ripper.services.playlist import PlaylistResolver
@@ -35,6 +36,7 @@ from radio_ripper.services.storage import (
     TrackWriter,
     compute_file_path,
     enforce_recording_limit,
+    get_mp3_duration,
     remux_mp3,
 )
 from radio_ripper.services.tagging import TrackTagger
@@ -56,6 +58,7 @@ class StreamRecorder:
         repository: TrackRepository,
         tagger: TrackTagger,
         metadata_provider: MetadataProvider | None = None,
+        fingerprint_provider: FingerprintProvider | None = None,
         enrich_semaphore: asyncio.Semaphore | None = None,
         logger: logging.Logger | None = None,
         ad_title_patterns: list[str] | None = None,
@@ -69,6 +72,7 @@ class StreamRecorder:
         self._repo = repository
         self._tagger = tagger
         self._metadata = metadata_provider
+        self._fingerprint = fingerprint_provider
         self._enrich_sem = enrich_semaphore
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
@@ -203,6 +207,27 @@ class StreamRecorder:
                     writer = None
                     return
                 final_path = writer.final_path
+                # Fix MP3 frame alignment caused by ICY stream cut-points
+                # (must run BEFORE tagging so tags aren't stripped by pydub/ffmpeg)
+                remux_mp3(final_path)
+                # Duration check: discard songs shorter than the configured minimum
+                min_dur = self.settings.min_duration_s
+                if min_dur > 0:
+                    dur = get_mp3_duration(final_path)
+                    if dur is not None and dur < min_dur:
+                        self._log.info(
+                            "[%s] Discarded (too short: %.1fs < %.0fs): %s",
+                            self.station_name,
+                            dur,
+                            min_dur,
+                            final_path.name,
+                        )
+                        with contextlib.suppress(OSError):
+                            final_path.unlink(missing_ok=True)
+                        current_title = None
+                        recording = False
+                        writer = None
+                        return
                 track = TrackInfo.from_stream_title(current_title or "")
                 provenance = f"{self.station_name}@{self.playlist_url}"
                 try:
@@ -220,8 +245,6 @@ class StreamRecorder:
                     await self._repo.register(saved, self.station_name)
                 except Exception as exc:
                     self._log.warning("[%s] db-register: %s", self.station_name, exc)
-                # Fix MP3 frame alignment caused by ICY stream cut-points
-                remux_mp3(final_path)
                 self._log.info(
                     "[%s] Completed: %s (%d bytes)",
                     self.station_name,
@@ -246,6 +269,13 @@ class StreamRecorder:
                     )
                     self._enrichment_tasks.add(enrich_task)
                     enrich_task.add_done_callback(self._enrichment_tasks.discard)
+                # Kick off async fingerprinting (non-blocking)
+                if self._fingerprint is not None:
+                    fp_task = asyncio.create_task(
+                        self._fingerprint_song(final_path, track, provenance)
+                    )
+                    self._enrichment_tasks.add(fp_task)
+                    fp_task.add_done_callback(self._enrichment_tasks.discard)
             else:
                 writer.discard()
                 self._log.info(
@@ -493,6 +523,52 @@ class StreamRecorder:
             )
         except Exception as exc:
             self._log.debug("[%s] db enrichment update: %s", self.station_name, exc)
+
+    # ------------------------------------------------------------- fingerprinting
+
+    async def _fingerprint_song(
+        self,
+        file_path: Path,
+        track: TrackInfo,
+        provenance: str,
+    ) -> None:
+        if self._fingerprint is None:
+            return
+        try:
+            result = await self._fingerprint.fingerprint(file_path)
+        except Exception:
+            self._log.debug(
+                "[%s] fingerprint error for %s", self.station_name, file_path.name
+            )
+            return
+        if result is None:
+            self._log.info(
+                "[%s] No AcoustID match: %s",
+                self.station_name,
+                file_path.name,
+            )
+            if self.settings.discard_unmatched:
+                with contextlib.suppress(OSError):
+                    file_path.unlink(missing_ok=True)
+                try:
+                    await self._repo.remove(self.station_name, track.stream_title)
+                except Exception as exc:
+                    self._log.debug(
+                        "[%s] db remove after no-match: %s", self.station_name, exc
+                    )
+                self._log.info(
+                    "[%s] Discarded (no AcoustID match): %s",
+                    self.station_name,
+                    file_path.name,
+                )
+        else:
+            self._log.info(
+                "[%s] AcoustID match (score=%.2f): %s - %s",
+                self.station_name,
+                result.score,
+                result.artist,
+                result.title,
+            )
 
 
 def _parse_metaint(headers: dict[str, str]) -> int | None:

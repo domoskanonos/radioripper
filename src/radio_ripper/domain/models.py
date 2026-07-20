@@ -45,6 +45,23 @@ class EnrichedInfo:
     artwork_url: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class FingerprintResult:
+    """Result from AcoustID/MusicBrainz fingerprinting.
+
+    Attributes:
+        artist: Matched artist name.
+        title: Matched track title.
+        score: Confidence score (0.0–1.0).
+        recording_id: MusicBrainz recording MBID.
+    """
+
+    artist: str
+    title: str
+    score: float
+    recording_id: str
+
+
 @dataclass(slots=True)
 class SavedTrack:
     """A track that has been successfully recorded and written to disk."""
@@ -61,4 +78,4 @@ class SavedTrack:
     extras: dict[str, str] = field(default_factory=dict)
 
 
-__all__ = ["EnrichedInfo", "SavedTrack", "TrackInfo"]
+__all__ = ["EnrichedInfo", "FingerprintResult", "SavedTrack", "TrackInfo"]

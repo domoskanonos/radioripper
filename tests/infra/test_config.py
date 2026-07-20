@@ -33,19 +33,26 @@ class TestLoadSettings:
         assert len(s.streams) == 1
         assert str(s.streams[0].url).rstrip("/") == "http://tophits.radiomonster.fm/listen.m3u"
 
-    def test_stream_name_pattern_invalid_chars(self, tmp_path: Path):
-        cfg = dict(GOOD_BASE)
-        cfg["streams"] = [{"name": "Top/Hits", "url": "http://x/listen.m3u"}]
-        path = _write_config(tmp_path, cfg)
-        with pytest.raises(ConfigurationError):
-            load_settings(path)
-
-    def test_missing_field_rejected(self, tmp_path: Path):
+    def test_missing_streams_defaults_to_empty(self, tmp_path: Path):
         cfg = dict(GOOD_BASE)
         del cfg["streams"]
         path = _write_config(tmp_path, cfg)
-        with pytest.raises(ConfigurationError):
-            load_settings(path)
+        s = load_settings(path)
+        assert s.streams == []
+
+    def test_no_keywords_and_no_streams_still_valid(self, tmp_path: Path):
+        """Empty streams + empty keywords is valid; discovery handles the rest."""
+        cfg = {
+            "destination": "./recordings",
+            "database": "./recordings/ripper.db",
+            "stream_keywords": [],
+            "discovery_enabled": False,
+        }
+        path = _write_config(tmp_path, cfg)
+        s = load_settings(path)
+        assert s.streams == []
+        assert s.stream_keywords == []
+        assert s.discovery_enabled is False
 
     def test_timeout_must_be_positive(self, tmp_path: Path):
         cfg = dict(GOOD_BASE)

@@ -11,11 +11,19 @@ a :class:`~radio_ripper.services.repository.TrackRepository`, a
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
+from radio_ripper.services.fingerprint import (
+    AcoustidFingerprintProvider,
+    FingerprintProvider,
+    NullFingerprintProvider,
+)
+from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 from radio_ripper.services.metadata import (
     ITunesMetadataProvider,
     MetadataProvider,
@@ -43,6 +51,7 @@ class RadioRipperApp:
         repository: TrackRepository,
         tagger: TrackTagger,
         metadata_provider: MetadataProvider,
+        fingerprint_provider: FingerprintProvider | None = None,
         playlist_resolver: PlaylistResolver,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -51,6 +60,7 @@ class RadioRipperApp:
         self.repository = repository
         self.tagger = tagger
         self.metadata = metadata_provider
+        self.fingerprint = fingerprint_provider
         self.resolver = playlist_resolver
         self.logger = logger or _LOGGER
         self._enrich_sem = asyncio.Semaphore(settings.enrichment_workers)
@@ -75,12 +85,26 @@ class RadioRipperApp:
             else NullMetadataProvider()
         )
         resolver = HttpPlaylistResolver(client, timeout=settings.request_timeout)
+        with contextlib.suppress(ImportError):
+            from dotenv import load_dotenv
+
+            load_dotenv()
+        api_key = settings.acoustid_api_key or os.environ.get("ACCOUST_ID", "")
+        fingerprint: FingerprintProvider = (
+            AcoustidFingerprintProvider(
+                api_key,
+                min_score=settings.acoustid_min_score,
+            )
+            if api_key
+            else NullFingerprintProvider()
+        )
         return cls(
             settings=settings,
             client=client,
             repository=repository,
             tagger=tagger,
             metadata_provider=metadata,
+            fingerprint_provider=fingerprint,
             playlist_resolver=resolver,
             logger=log,
         )
@@ -91,8 +115,12 @@ class RadioRipperApp:
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
         if not self.settings.streams:
-            self.logger.error("No streams configured. Exiting.")
-            return
+            discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
+            if not discovered:
+                self.logger.error("No streams discovered and none configured. Exiting.")
+                return
+            self.settings.streams = discovered
+            self.logger.info("Loaded %d stations via discovery.", len(discovered))
         for stream in self.settings.streams:
             if not stream.enabled:
                 self.logger.info("Skipping disabled stream: %s", stream.name)
@@ -111,6 +139,7 @@ class RadioRipperApp:
                 repository=self.repository,
                 tagger=self.tagger,
                 metadata_provider=self.metadata,
+                fingerprint_provider=self.fingerprint,
                 enrich_semaphore=self._enrich_sem,
                 logger=self.logger,
                 ad_title_patterns=effective_patterns,

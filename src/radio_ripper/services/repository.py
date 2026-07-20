@@ -71,6 +71,10 @@ class TrackRepository(ABC):
         """Update a previously-registered track with enrichment results."""
 
     @abstractmethod
+    async def remove(self, station_name: str, stream_title: str) -> None:
+        """Remove a previously-registered track from the repository."""
+
+    @abstractmethod
     async def aclose(self) -> None:
         """Release resources."""
 
@@ -208,6 +212,19 @@ class SQLiteTrackRepository(TrackRepository):
             )
         except sqlite3.Error as exc:
             raise RepositoryError(f"update_enrichment() failed: {exc}") from exc
+
+    async def remove(self, station_name: str, stream_title: str) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._remove_sync, station_name, stream_title)
+
+    def _remove_sync(self, station_name: str, stream_title: str) -> None:
+        try:
+            self._conn.execute(
+                "DELETE FROM songs WHERE station_name=? AND stream_title=?",
+                (station_name, stream_title),
+            )
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"remove() failed: {exc}") from exc
 
     async def aclose(self) -> None:
         async with self._lock:
