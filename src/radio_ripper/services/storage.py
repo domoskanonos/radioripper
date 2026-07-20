@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import re
+import shutil
+import tempfile
 from pathlib import Path
 
 _ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -62,18 +64,20 @@ def compute_file_path(
 
 
 class TrackWriter:
-    """Atomic MP3 file writer: writes bytes to a ``.tmp`` then renames on close.
+    """Atomic MP3 file writer: writes bytes to a system temp file then moves on close.
 
-    Provides a synchronous ``write`` (called from the same task) and an
-    atomic ``close`` (final file appears only once fully written).
+    The final destination directory is created **only** on successful
+    :meth:`commit`, so no empty directories are left for discarded recordings.
     """
 
     def __init__(self, final_path: Path, *, min_size: int = 1024) -> None:
         self.final_path = final_path
         self.min_size = min_size
-        final_path.parent.mkdir(parents=True, exist_ok=True)
-        self._tmp_path = final_path.with_suffix(final_path.suffix + ".tmp")
-        self._fh = self._tmp_path.open("wb")
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".mp3.tmp", prefix="radio-ripper-", delete=False,
+        )
+        self._tmp_path = Path(tmp.name)
+        self._fh = tmp
         self._size = 0
         self._closed = False
 
@@ -101,7 +105,8 @@ class TrackWriter:
         if self._size < self.min_size:
             self._tmp_path.unlink(missing_ok=True)
             return False
-        self._tmp_path.replace(self.final_path)
+        self.final_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(self._tmp_path), str(self.final_path))
         return True
 
     def discard(self) -> None:
@@ -187,6 +192,17 @@ def get_mp3_duration(path: Path) -> float | None:
         return None
 
 
+def remove_empty_parents(file_path: Path, root: Path) -> None:
+    """Remove empty parent directories from ``file_path`` up to (not including) ``root``."""
+    child = file_path.parent
+    while child != root:
+        try:
+            child.rmdir()
+        except OSError:
+            break
+        child = child.parent
+
+
 def enforce_recording_limit(station_dir: Path, max_count: int) -> list[Path]:
     """Delete the oldest MP3 files in *station_dir* when the count exceeds *max_count*.
 
@@ -201,6 +217,7 @@ def enforce_recording_limit(station_dir: Path, max_count: int) -> list[Path]:
         with contextlib.suppress(OSError):
             oldest.unlink(missing_ok=True)
         deleted.append(oldest)
+        remove_empty_parents(oldest, station_dir)
     return deleted
 
 
@@ -209,6 +226,7 @@ __all__ = [
     "compute_file_path",
     "enforce_recording_limit",
     "get_mp3_duration",
+    "remove_empty_parents",
     "remux_mp3",
     "sanitize_filename",
 ]

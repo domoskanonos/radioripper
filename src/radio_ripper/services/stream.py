@@ -37,6 +37,7 @@ from radio_ripper.services.storage import (
     compute_file_path,
     enforce_recording_limit,
     get_mp3_duration,
+    remove_empty_parents,
     remux_mp3,
 )
 from radio_ripper.services.tagging import TrackTagger
@@ -83,6 +84,7 @@ class StreamRecorder:
         ]
         self._no_icy_disable_after = no_icy_disable_after
         self._no_icy_failures = 0
+        self._connect_failures = 0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -126,6 +128,14 @@ class StreamRecorder:
                     self._no_icy_failures,
                 )
                 break
+            if self._connect_failures >= self._no_icy_disable_after:
+                self._log.error(
+                    "[%s] Disabled: connect failed %d times in a row. "
+                    "Removing station from active set.",
+                    self.station_name,
+                    self._connect_failures,
+                )
+                break
             if ok:
                 delay = self.settings.reconnect_base_delay
             else:
@@ -148,12 +158,16 @@ class StreamRecorder:
         stream_url = urls[0]
         self._log.info("[%s] Using stream URL: %s", self.station_name, stream_url)
         try:
-            return await self._stream_with_meta(stream_url)
+            ok = await self._stream_with_meta(stream_url)
+            self._connect_failures = 0
+            return ok
         except StreamConnectionError as exc:
             self._log.error("[%s] Request failed: %s", self.station_name, exc)
+            self._connect_failures += 1
             return False
         except StreamProtocolError as exc:
             self._log.warning("[%s] Protocol error: %s", self.station_name, exc)
+            self._connect_failures = 0
             return False
 
     async def _stream_with_meta(self, stream_url: str) -> bool:
@@ -202,6 +216,7 @@ class StreamRecorder:
                     self._log.info(
                         "[%s] Discarded (too small): %s", self.station_name, writer.final_path.name
                     )
+                    remove_empty_parents(writer.final_path, self.settings.destination)
                     current_title = None
                     recording = False
                     writer = None
@@ -224,6 +239,7 @@ class StreamRecorder:
                         )
                         with contextlib.suppress(OSError):
                             final_path.unlink(missing_ok=True)
+                        remove_empty_parents(final_path, self.settings.destination)
                         current_title = None
                         recording = False
                         writer = None
@@ -284,6 +300,7 @@ class StreamRecorder:
                     writer.final_path.name,
                     writer.size,
                 )
+                remove_empty_parents(writer.final_path, self.settings.destination)
             writer = None
             current_title = None
             recording = False
@@ -550,6 +567,7 @@ class StreamRecorder:
             if self.settings.discard_unmatched:
                 with contextlib.suppress(OSError):
                     file_path.unlink(missing_ok=True)
+                    remove_empty_parents(file_path, self.settings.destination)
                 try:
                     await self._repo.remove(self.station_name, track.stream_title)
                 except Exception as exc:
@@ -620,6 +638,7 @@ class StreamRecorder:
                 )
                 with contextlib.suppress(OSError):
                     file_path.unlink(missing_ok=True)
+                    remove_empty_parents(file_path, self.settings.destination)
                 try:
                     await self._repo.remove(self.station_name, track.stream_title)
                 except Exception as exc:
@@ -641,6 +660,7 @@ class StreamRecorder:
             )
             with contextlib.suppress(OSError):
                 old_path.unlink(missing_ok=True)
+                remove_empty_parents(old_path, self.settings.destination)
             try:
                 await self._repo.remove(
                     existing.station_name, existing.track.stream_title

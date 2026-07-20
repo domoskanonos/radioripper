@@ -104,28 +104,33 @@ def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
 
 async def _probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict:
     result: dict = {"icy": False, "bitrate": 0, "error": None}
+    headers = {"Icy-MetaData": "1", "User-Agent": "Radio-Ripper/2.0"}
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             follow_redirects=True,
         ) as client:
-            async with client.stream("GET", url, headers={"Icy-MetaData": "1"}) as resp:
+            async with client.stream("GET", url, headers=headers) as resp:
                 if resp.status_code != 200 and resp.status_code != 206:
                     result["error"] = f"HTTP {resp.status_code}"
                     return result
-                headers = dict(resp.headers)
-                metaint = headers.get("icy-metaint") or headers.get("Icy-Metaint")
+                resp_headers = dict(resp.headers)
+                metaint = resp_headers.get("icy-metaint") or resp_headers.get("Icy-Metaint")
                 result["icy"] = metaint is not None
-                br_raw = headers.get("icy-br") or headers.get("Icy-Br")
+                br_raw = resp_headers.get("icy-br") or resp_headers.get("Icy-Br")
                 if br_raw:
                     try:
                         result["bitrate"] = int(br_raw)
                     except (ValueError, TypeError):
                         pass
+                # Read one chunk to verify the stream actually sends data
                 try:
-                    await resp.areceive_headers()
-                except Exception:
-                    pass
+                    async for chunk in resp.aiter_bytes():
+                        result["read_bytes"] = len(chunk)
+                        break
+                except Exception as exc:
+                    result["error"] = f"no data: {exc!s}"[:60]
+                    return result
     except httpx.TimeoutException:
         result["error"] = "timeout"
     except httpx.ConnectError:
