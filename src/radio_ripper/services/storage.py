@@ -33,23 +33,30 @@ def compute_file_path(
     title: str,
     stream_title_clean: str,
     *,
+    album: str | None = None,
+    fallback_album: str = "Radio-Aufnahmen",
     overwrite: bool = False,
 ) -> Path:
-    """Build a safe path ``{dest}/{Artist - Title}.mp3``.
+    """Build a safe path ``{dest}/{Artist}/{Album}/{Artist} - {Title}.mp3``.
 
-    All recordings land in *destination* directly (no per-station subfolder).
+    The recording directory structure uses per-artist and per-album subfolders.
+    If *album* is not provided, *fallback_album* is used (defaults to
+    ``"Radio-Aufnahmen"`` or the station name passed by the caller).
     If the candidate already exists and ``overwrite`` is False, append ``(2)``,
     ``(3)``… to the base name until a free slot is found.
     """
+    album_name = sanitize_filename(album if album else fallback_album)
     if artist and title:
+        artist_dir = sanitize_filename(artist)
         base = f"{sanitize_filename(artist)} - {sanitize_filename(title)}"
     else:
+        artist_dir = "Unknown"
         base = sanitize_filename(stream_title_clean)
-    candidate = destination / f"{base}.mp3"
+    candidate = destination / artist_dir / album_name / f"{base}.mp3"
     if not overwrite:
         i = 2
         while candidate.exists():
-            candidate = destination / f"{base} ({i}).mp3"
+            candidate = destination / artist_dir / album_name / f"{base} ({i}).mp3"
             i += 1
     return candidate
 
@@ -145,10 +152,11 @@ def remux_mp3(path: Path) -> None:
 def enforce_recording_limit(station_dir: Path, max_count: int) -> list[Path]:
     """Delete the oldest MP3 files in *station_dir* when the count exceeds *max_count*.
 
-    Files are sorted by modification time (oldest first).
+    Files are sorted by modification time (oldest first). Searches recursively
+    through artist/album subdirectories.
     Returns the list of deleted paths.
     """
-    mp3_files = sorted(station_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+    mp3_files = sorted(station_dir.rglob("*.mp3"), key=lambda p: p.stat().st_mtime)
     deleted: list[Path] = []
     while len(mp3_files) > max_count:
         oldest = mp3_files.pop(0)

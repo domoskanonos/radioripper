@@ -55,6 +55,7 @@ class Settings(BaseModel):
 
     enrich_metadata: bool = True
     embed_cover_art: bool = True
+    fallback_cover_path: Path | None = None
     enrichment_workers: int = Field(default=4, ge=1, le=32)
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
@@ -67,7 +68,7 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("database", "destination", "log_file")
+    @field_validator("database", "destination", "log_file", "fallback_cover_path")
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
         return v.expanduser() if v is not None else None

@@ -4,16 +4,19 @@
 :class:`TrackTagger` is the ABC, :class:`ID3Tagger` the default implementation.
 Tags written:
     - ``TPE1``  (Artist)
+    - ``TPE2``  (Album Artist) — identical to Artist
     - ``TIT2``  (Title)
     - ``TALB``  (Album) — optional
     - ``TYER``  (Year) — optional
     - ``COMM``  (Recorded via Radio-Ripper)
     - ``TXXX:RIPPEDBY`` (station@playlist) — provenance
-    - ``APIC``  (Cover art) — optional
+    - ``APIC``  (Cover art, JPEG or PNG only, scaled 500–1000 px) — optional
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -25,12 +28,16 @@ from mutagen.id3 import (
     TDRC,
     TIT2,
     TPE1,
+    TPE2,
     TXXX,
     ID3NoHeaderError,
 )
 
 from radio_ripper.domain.models import EnrichedInfo, TrackInfo
 from radio_ripper.infra.errors import TaggingError
+
+_MIN_COVER_PX = 500
+_MAX_COVER_PX = 1000
 
 
 def _guess_image_mime(data: bytes) -> str:
@@ -41,6 +48,47 @@ def _guess_image_mime(data: bytes) -> str:
     if data.startswith(b"GIF8"):
         return "image/gif"
     return "image/jpeg"
+
+
+def _scale_cover(data: bytes) -> tuple[bytes, str] | None:
+    """Scale *data* to the 500–1000 px target range and return ``(bytes, mime)``.
+
+    Only ``image/jpeg`` and ``image/png`` are accepted; any other format
+    (e.g. GIF) returns ``None`` so the cover is silently skipped.
+    On Pillow import error or decode failure the original bytes are returned
+    unchanged so the cover is still embedded without scaling.
+    """
+    mime = _guess_image_mime(data)
+    if mime not in ("image/jpeg", "image/png"):
+        return None
+    try:
+        from PIL import Image  # type: ignore[import-untyped]
+
+        img = Image.open(io.BytesIO(data))
+        w, h = img.size
+        long_side = max(w, h)
+        if long_side < _MIN_COVER_PX:
+            scale = _MIN_COVER_PX / long_side
+            img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
+            w, h = img.size
+            long_side = max(w, h)
+        if long_side > _MAX_COVER_PX:
+            scale = _MAX_COVER_PX / long_side
+            img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
+        out = io.BytesIO()
+        if mime == "image/jpeg":
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            img.save(out, format="JPEG", quality=90)
+        else:
+            img.save(out, format="PNG")
+        return out.getvalue(), mime
+    except ImportError:
+        return data, mime
+    except Exception:
+        with contextlib.suppress(Exception):
+            pass
+        return data, mime
 
 
 class TrackTagger(ABC):
@@ -58,6 +106,8 @@ class TrackTagger(ABC):
         enriched: EnrichedInfo,
         cover_bytes: bytes | None,
         provenance: str,
+        *,
+        fallback_cover: bytes | None = None,
     ) -> None:
         """Write enriched tags including album/year/genre and cover art."""
 
@@ -84,11 +134,13 @@ class ID3Tagger(TrackTagger):
         except Exception as exc:
             raise TaggingError(f"failed to load {file_path}: {exc}") from exc
         audio.delall("TPE1")
+        audio.delall("TPE2")
         audio.delall("TIT2")
         audio.delall("COMM")
         audio.delall("TXXX:RIPPEDBY")
         if track.artist:
             audio.add(TPE1(encoding=3, text=track.artist))
+            audio.add(TPE2(encoding=3, text=track.artist))
         if track.title:
             audio.add(TIT2(encoding=3, text=track.title))
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
@@ -105,12 +157,15 @@ class ID3Tagger(TrackTagger):
         enriched: EnrichedInfo,
         cover_bytes: bytes | None,
         provenance: str,
+        *,
+        fallback_cover: bytes | None = None,
     ) -> None:
         try:
             audio = _load_or_create(file_path)
         except Exception as exc:
             raise TaggingError(f"failed to load {file_path}: {exc}") from exc
         audio.delall("TPE1")
+        audio.delall("TPE2")
         audio.delall("TIT2")
         audio.delall("TALB")
         audio.delall("TDRC")
@@ -122,6 +177,7 @@ class ID3Tagger(TrackTagger):
         title = enriched.title or track.title
         if artist:
             audio.add(TPE1(encoding=3, text=artist))
+            audio.add(TPE2(encoding=3, text=artist))
         if title:
             audio.add(TIT2(encoding=3, text=title))
         if enriched.album:
@@ -130,9 +186,12 @@ class ID3Tagger(TrackTagger):
             audio.add(TDRC(encoding=3, text=enriched.year))
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
-        if cover_bytes:
-            mime = _guess_image_mime(cover_bytes)
-            audio.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=cover_bytes))
+        effective_cover = cover_bytes or fallback_cover
+        if effective_cover:
+            scaled = _scale_cover(effective_cover)
+            if scaled is not None:
+                scaled_data, mime = scaled
+                audio.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=scaled_data))
         try:
             audio.save(file_path, v2_version=3, v1=2)
         except Exception as exc:
@@ -152,8 +211,10 @@ class NullTagger(TrackTagger):
         enriched: EnrichedInfo,
         cover_bytes: bytes | None,
         provenance: str,
+        *,
+        fallback_cover: bytes | None = None,
     ) -> None:
         return None
 
 
-__all__ = ["ID3Tagger", "NullTagger", "TrackTagger"]
+__all__ = ["ID3Tagger", "NullTagger", "TrackTagger", "_scale_cover"]

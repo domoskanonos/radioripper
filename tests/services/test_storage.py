@@ -38,18 +38,26 @@ class TestSanitizeFilename:
 class TestComputeFilePath:
     def test_basic_path(self, tmp_path: Path):
         p = compute_file_path(tmp_path, "Adele", "Hello", "Adele - Hello")
-        assert p == tmp_path / "Adele - Hello.mp3"
+        assert p == tmp_path / "Adele" / "Radio-Aufnahmen" / "Adele - Hello.mp3"
+
+    def test_custom_fallback_album(self, tmp_path: Path):
+        p = compute_file_path(tmp_path, "Adele", "Hello", "Adele - Hello", fallback_album="SWR3")
+        assert p == tmp_path / "Adele" / "SWR3" / "Adele - Hello.mp3"
+
+    def test_explicit_album(self, tmp_path: Path):
+        p = compute_file_path(tmp_path, "Adele", "Hello", "Adele - Hello", album="25")
+        assert p == tmp_path / "Adele" / "25" / "Adele - Hello.mp3"
 
     def test_no_artist_in_stream_title(self, tmp_path: Path):
         p = compute_file_path(tmp_path, "", "", "SimplyJonk")
-        assert p == tmp_path / "SimplyJonk.mp3"
+        assert p == tmp_path / "Unknown" / "Radio-Aufnahmen" / "SimplyJonk.mp3"
 
     def test_avoid_collision(self, tmp_path: Path):
         first = compute_file_path(tmp_path, "A", "T", "A - T")
         first.parent.mkdir(parents=True, exist_ok=True)
         first.write_bytes(b"")
         second = compute_file_path(tmp_path, "A", "T", "A - T")
-        assert second == tmp_path / "A - T (2).mp3"
+        assert second == tmp_path / "A" / "Radio-Aufnahmen" / "A - T (2).mp3"
 
     def test_overwrite_flag_no_collision_suffix(self, tmp_path: Path):
         first = compute_file_path(tmp_path, "A", "T", "A - T")

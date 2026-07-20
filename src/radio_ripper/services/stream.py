@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from radio_ripper.domain.models import SavedTrack, TrackInfo
+from radio_ripper.domain.models import EnrichedInfo, SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
@@ -312,6 +312,7 @@ class StreamRecorder:
                             track.artist,
                             track.title,
                             clean,
+                            fallback_album=self.station_name,
                             overwrite=self.settings.overwrite_existing_files,
                         )
                         if file_path.exists() and not self.settings.overwrite_existing_files:
@@ -402,6 +403,13 @@ class StreamRecorder:
     ) -> None:
         assert self._metadata is not None
         info = await self._metadata.fetch(track.artist, track.title)
+
+        # Load station fallback cover (e.g. station logo) from config
+        fallback_cover: bytes | None = None
+        if self.settings.fallback_cover_path is not None:
+            with contextlib.suppress(OSError):
+                fallback_cover = self.settings.fallback_cover_path.read_bytes()
+
         if info is None:
             self._log.info(
                 "[%s] no enrichment hit for: %s - %s",
@@ -409,6 +417,24 @@ class StreamRecorder:
                 track.artist,
                 track.title,
             )
+            # Embed fallback cover even when no enrichment data is found
+            if fallback_cover and self.settings.embed_cover_art:
+                try:
+                    self._tagger.write_full(
+                        file_path,
+                        track,
+                        EnrichedInfo(),
+                        None,
+                        provenance,
+                        fallback_cover=fallback_cover,
+                    )
+                except Exception as exc:
+                    self._log.warning(
+                        "[%s] fallback-cover embed failed %s: %s",
+                        self.station_name,
+                        file_path.name,
+                        exc,
+                    )
             try:
                 await self._repo.update_enrichment(
                     self.station_name,
@@ -424,7 +450,14 @@ class StreamRecorder:
         if self.settings.embed_cover_art and info.artwork_url:
             cover = await self._metadata.download_image(info.artwork_url)
         try:
-            self._tagger.write_full(file_path, track, info, cover, provenance)
+            self._tagger.write_full(
+                file_path,
+                track,
+                info,
+                cover,
+                provenance,
+                fallback_cover=fallback_cover,
+            )
         except Exception as exc:
             self._log.warning(
                 "[%s] tag-enrichment failed %s: %s",
@@ -438,7 +471,7 @@ class StreamRecorder:
             file_path.name,
             info.album or "-",
             info.year or "-",
-            "yes" if cover else "no",
+            "yes" if (cover or fallback_cover) else "no",
         )
         try:
             await self._repo.update_enrichment(
@@ -449,7 +482,7 @@ class StreamRecorder:
                 album=info.album,
                 year=info.year,
                 file_size=file_path.stat().st_size if file_path.exists() else None,
-                has_cover=cover is not None,
+                has_cover=cover is not None or fallback_cover is not None,
                 enrichment="itunes",
             )
         except Exception as exc:

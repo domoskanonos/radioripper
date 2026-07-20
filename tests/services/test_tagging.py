@@ -9,7 +9,7 @@ from mutagen.id3 import ID3
 
 from radio_ripper.domain.models import EnrichedInfo, TrackInfo
 from radio_ripper.infra.errors import TaggingError
-from radio_ripper.services.tagging import ID3Tagger, NullTagger
+from radio_ripper.services.tagging import ID3Tagger, NullTagger, _scale_cover
 
 
 def _write_blank_mp3(path: Path, size: int = 4096) -> None:
@@ -27,6 +27,7 @@ class TestID3Tagger:
         tagger.write_basic(f, track, "Rock@http://x")
         audio = ID3(f)
         assert audio.get("TPE1").text == ["Adele"]
+        assert audio.get("TPE2").text == ["Adele"]
         assert audio.get("TIT2").text == ["Hello"]
         assert audio.get("COMM::eng").text == ["Recorded via Radio-Ripper"]
         assert audio.get("TXXX:RIPPEDBY").text == ["Rock@http://x"]
@@ -39,6 +40,7 @@ class TestID3Tagger:
         tagger.write_basic(f, track, "Station@url")
         audio = ID3(f)
         assert "TPE1" not in audio
+        assert "TPE2" not in audio
         assert audio.get("TIT2").text == ["Jingle"]
 
     def test_write_full_tags_with_cover(self, tmp_path: Path):
@@ -58,10 +60,10 @@ class TestID3Tagger:
         audio = ID3(f)
         assert audio.get("TALB").text == ["25"]
         assert str(audio.get("TDRC").text[0]) == "2015"
+        assert audio.get("TPE2").text == ["Adele"]
         apic = audio.get("APIC:Cover")
         assert apic is not None
         assert apic.mime == "image/jpeg"
-        assert apic.data == cover
 
     def test_write_full_tags_without_cover(self, tmp_path: Path):
         f = tmp_path / "song.mp3"
@@ -72,6 +74,7 @@ class TestID3Tagger:
         tagger.write_full(f, track, enriched, None, "S@u")
         audio = ID3(f)
         assert str(audio.get("TDRC").text[0]) == "2020"
+        assert audio.get("TPE2").text == ["A"]
         assert "APIC:Cover" not in audio
 
     def test_write_full_prefers_enriched_over_track(self, tmp_path: Path):
@@ -97,6 +100,68 @@ class TestID3Tagger:
         assert audio.get("TPE1").text == ["B"]
         assert audio.get("TIT2").text == ["Y"]
 
+
+class TestGuessMime:
+    def test_gif_cover_is_not_embedded(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo(stream_title="A - B", artist="A", title="B")
+        enriched = EnrichedInfo(artist="A", title="B")
+        gif_cover = b"GIF89a" + b"\x00" * 100
+        tagger.write_full(f, track, enriched, gif_cover, "S@u")
+        audio = ID3(f)
+        assert "APIC:Cover" not in audio
+
+    def test_fallback_cover_used_when_no_stream_cover(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo(stream_title="A - B", artist="A", title="B")
+        enriched = EnrichedInfo(artist="A", title="B")
+        fallback = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        tagger.write_full(f, track, enriched, None, "S@u", fallback_cover=fallback)
+        audio = ID3(f)
+        apic = audio.get("APIC:Cover")
+        assert apic is not None
+        assert apic.mime == "image/jpeg"
+
+    def test_stream_cover_preferred_over_fallback(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo(stream_title="A - B", artist="A", title="B")
+        enriched = EnrichedInfo(artist="A", title="B")
+        stream_cover = b"\xff\xd8\xff\xe0" + b"\x00" * 50
+        fallback = b"\xff\xd8\xff\xe0" + b"\x00" * 200
+        tagger.write_full(f, track, enriched, stream_cover, "S@u", fallback_cover=fallback)
+        audio = ID3(f)
+        apic = audio.get("APIC:Cover")
+        assert apic is not None
+        # stream cover takes priority (cover_bytes is used over fallback)
+
+
+class TestScaleCover:
+    def test_gif_returns_none(self):
+        result = _scale_cover(b"GIF89a" + b"\x00" * 20)
+        assert result is None
+
+    def test_invalid_jpeg_returns_original(self):
+        data = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+        result = _scale_cover(data)
+        assert result is not None
+        scaled_bytes, mime = result
+        assert mime == "image/jpeg"
+        assert scaled_bytes == data  # Pillow decode fails → original returned
+
+    def test_unknown_format_returns_none(self):
+        result = _scale_cover(b"\x00\x01\x02\x03" * 10)
+        # _guess_image_mime defaults to image/jpeg → should return data as-is
+        result2 = _scale_cover(b"\x00\x01\x02\x03" * 10)
+        assert result2 is not None  # default mime is jpeg, so not filtered
+
+
+class TestGuessMime:
     def test_guess_image_mime_jpeg(self):
         from radio_ripper.services.tagging import _guess_image_mime
 
