@@ -145,6 +145,7 @@ class RadioRipperApp:
                     "Fingerprint infrastructure error for %s: %s "
                     "(file kept as .untested.mp3 for next retry)",
                     p.name, exc,
+                    exc_info=True,
                 )
                 continue
             except Exception:

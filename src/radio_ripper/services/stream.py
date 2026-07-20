@@ -560,6 +560,7 @@ class StreamRecorder:
                 "[%s] fingerprint infrastructure error for %s: %s "
                 "(file kept as .untested.mp3 for retry)",
                 self.station_name, file_path.name, exc,
+                exc_info=True,
             )
             return
         except Exception:
