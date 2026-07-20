@@ -1,7 +1,8 @@
-"""M3U radio-stream discovery — fetch ``+checked+`` playlists via ZIP download.
+"""M3U radio-stream discovery — fetch ``+checked+`` playlists via git sparse-checkout.
 
-Downloads the repo ZIP, extracts it, parses all ``.m3u`` files from the
-``+checked+`` directory, filters by user-defined keywords, probes for ICY
+Clones only the ``+checked+`` directory from the
+``junguler/m3u-radio-music-playlists`` repo via ``git clone --depth 1 --filter=blob:none --sparse``,
+parses the entries, filters by user-defined keywords, probes for ICY
 support + bitrate, and caches the top-N working stations together with a hash
 of the active keywords so the cache is invalidated when the keywords change.
 """
@@ -9,16 +10,14 @@ of the active keywords so the cache is invalidated when the keywords change.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
-import io
 import json
 import logging
-import time
 import os
 import random
+import shutil
 import tempfile
-import zipfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,7 +26,7 @@ import httpx
 from radio_ripper.infra.config import Settings, StreamConfig
 
 _LOGGER = logging.getLogger("radio_ripper.discovery")
-_ZIP_URL = "https://github.com/junguler/m3u-radio-music-playlists/archive/refs/heads/main.zip"
+_REPO_URL = "https://github.com/junguler/m3u-radio-music-playlists.git"
 _PROBE_TIMEOUT = 8.0
 _MAX_CONCURRENT = 50
 
@@ -161,71 +160,71 @@ async def _probe_batch(
     return ok
 
 
-async def _download_zip(github_pat: str = "") -> bytes:
-    """Download the repo ZIP and return raw bytes."""
-    _LOGGER.info("Downloading ZIP from GitHub (%s)…", _ZIP_URL)
-    headers: dict[str, str] = {"User-Agent": "Radio-Ripper/2.0"}
+# ---------------------------------------------------------------- git sparse checkout
+
+
+async def _git_sparse_checkout(github_pat: str = "") -> tuple[Path, Path]:
+    """Clone ``+checked+`` via git sparse-checkout, return ``(tmp_dir, checked_dir)``."""
+    tmp_dir = Path(tempfile.mkdtemp(prefix="radio-ripper-"))
+    repo_dir = tmp_dir / "repo"
+
     if github_pat:
-        headers["Authorization"] = f"Bearer {github_pat}"
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(60.0),
-        follow_redirects=True,
-    ) as client:
-        async with client.stream("GET", _ZIP_URL, headers=headers) as resp:
-            resp.raise_for_status()
-            total = int(resp.headers.get("content-length", 0))
-            chunks: list[bytes] = []
-            downloaded = 0
-            last_log = 0.0
-            async for chunk in resp.aiter_bytes():
-                chunks.append(chunk)
-                downloaded += len(chunk)
-                if total and (time.monotonic() - last_log >= 3.0):
-                    pct = min(downloaded * 100 // max(total, 1), 100)
-                    _LOGGER.info("ZIP download: %d/%d KiB (%d%%)", downloaded // 1024, total // 1024, pct)
-                    last_log = time.monotonic()
-            if total:
-                _LOGGER.info("ZIP download: %d/%d KiB (100%%)", total // 1024, total // 1024)
-            else:
-                _LOGGER.info("ZIP download complete (%d KiB)", downloaded // 1024)
-            return b"".join(chunks)
+        clone_url = f"https://x-access-token:{github_pat}@github.com/junguler/m3u-radio-music-playlists.git"
+    else:
+        clone_url = _REPO_URL
+
+    _LOGGER.info("Cloning +checked+ via git sparse-checkout…")
+    t0 = time.monotonic()
+
+    proc = await asyncio.create_subprocess_exec(
+        "git", "clone",
+        "--depth", "1",
+        "--filter=blob:none",
+        "--sparse",
+        clone_url,
+        str(repo_dir),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        msg = stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"git clone failed: {msg}")
+
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", str(repo_dir),
+        "sparse-checkout", "set", "+checked+",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        msg = stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"git sparse-checkout failed: {msg}")
+
+    elapsed = time.monotonic() - t0
+    checked_dir = repo_dir / "+checked+"
+    m3u_count = len(list(checked_dir.rglob("*.m3u"))) if checked_dir.is_dir() else 0
+    _LOGGER.info("git clone done in %.1fs — %d .m3u files in +checked+", elapsed, m3u_count)
+    return tmp_dir, checked_dir
 
 
-def _extract_checked_entries(zip_bytes: bytes) -> list[M3uEntry]:
-    """Synchronously extract and parse all ``.m3u`` files from ``+checked+``."""
+def _parse_checked_dir(checked_dir: Path) -> list[M3uEntry]:
+    """Parse all ``.m3u`` files found in *checked_dir* (recursively)."""
+    if not checked_dir.is_dir():
+        _LOGGER.warning("+checked+ directory not found at %s", checked_dir)
+        return []
+
     all_entries: list[M3uEntry] = []
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        checked_prefix = ""
-        for name in zf.namelist():
-            if "/+checked+/" in name or name.endswith("/+checked+/"):
-                parts = name.split("/")
-                idx = parts.index("+checked+")
-                checked_prefix = "/".join(parts[: idx + 1]) + "/"
-                break
-        if not checked_prefix:
-            _LOGGER.warning("No +checked+ directory found in ZIP")
-            return []
-
-        m3u_files = [
-            name
-            for name in zf.namelist()
-            if name.startswith(checked_prefix) and name.lower().endswith(".m3u")
-        ]
-        _LOGGER.info("Found %d .m3u files in +checked+", len(m3u_files))
-
-        for name in m3u_files:
-            filename = name[len(checked_prefix) :]
-            text = zf.read(name).decode("utf-8", errors="replace")
-            all_entries.extend(_parse_m3u_text(text, filename))
-
-    _LOGGER.info("Extracted %d M3U entries from ZIP", len(all_entries))
+    for path in sorted(checked_dir.rglob("*.m3u")):
+        try:
+            text = path.read_text("utf-8")
+        except Exception:
+            continue
+        all_entries.extend(_parse_m3u_text(text, path.name))
     return all_entries
-
-
-async def _download_and_parse_zip(github_pat: str = "") -> list[M3uEntry]:
-    """Download repo ZIP and return parsed M3U entries from ``+checked+``."""
-    zip_bytes = await _download_zip(github_pat)
-    return await asyncio.to_thread(_extract_checked_entries, zip_bytes)
 
 
 # ---------------------------------------------------------------- cache
@@ -334,7 +333,12 @@ class PlaylistDiscoveryService:
 
     async def _discover(self) -> list[StreamConfig]:
         pat = self._settings.github_pat or os.environ.get("GITHUB_PAT", "")
-        all_entries = await _download_and_parse_zip(pat)
+        tmp_dir, checked_dir = await _git_sparse_checkout(pat)
+        try:
+            all_entries = _parse_checked_dir(checked_dir)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
         self._log.info("Parsed %d total M3U entries", len(all_entries))
 
         filtered = _filter_keywords(all_entries, self._settings.stream_keywords)

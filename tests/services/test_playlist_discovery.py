@@ -15,12 +15,12 @@ from radio_ripper.services.playlist_discovery import (
     M3uEntry,
     PlaylistDiscoveryService,
     _deduplicate_by_name,
-    _download_and_parse_zip,
-    _extract_checked_entries,
     _filter_keywords,
+    _git_sparse_checkout,
     _is_cache_fresh,
     _keywords_hash,
     _load_cache,
+    _parse_checked_dir,
     _parse_m3u_text,
     _probe_icy,
     _save_cache,
@@ -356,67 +356,84 @@ class TestPlaylistDiscoveryService:
 
 
 # ---------------------------------------------------------------------------
-# ZIP download & extract
+# git sparse checkout & parse_checked_dir
 # ---------------------------------------------------------------------------
 
 
-class TestZipDownload:
-    def _make_zip(self, files: dict[str, str]) -> bytes:
-        """Build an in-memory ZIP file from a ``{path_in_zip: content}`` dict."""
-        import io
-        import zipfile
+class TestParseCheckedDir:
+    def test_nonexistent_dir_returns_empty(self) -> None:
+        assert _parse_checked_dir(Path("/nonexistent")) == []
 
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for path, content in files.items():
-                zf.writestr(path, content)
-        return buf.getvalue()
+    def test_empty_dir(self, tmp_path: Path) -> None:
+        d = tmp_path / "+checked+"
+        d.mkdir()
+        assert _parse_checked_dir(d) == []
 
-    def test_extract_no_checked_dir_returns_empty(self) -> None:
-        z = self._make_zip({"README.md": "hello"})
-        assert _extract_checked_entries(z) == []
-
-    def test_extract_checked_empty(self) -> None:
-        z = self._make_zip({"repo/+checked+/": ""})
-        assert _extract_checked_entries(z) == []
-
-    def test_extract_single_m3u(self) -> None:
-        content = "#EXTM3U\n#EXTINF:-1,Rock FM\nhttp://rock.example.com\n"
-        z = self._make_zip({"m3u-radio-music-playlists-main/+checked+/rock.m3u": content})
-        entries = _extract_checked_entries(z)
+    def test_single_m3u(self, tmp_path: Path) -> None:
+        d = tmp_path / "+checked+"
+        d.mkdir()
+        (d / "rock.m3u").write_text(
+            "#EXTM3U\n#EXTINF:-1,Rock FM\nhttp://rock.example.com\n",
+        )
+        entries = _parse_checked_dir(d)
         assert len(entries) == 1
         assert entries[0].name == "Rock FM"
         assert entries[0].url == "http://rock.example.com"
         assert entries[0].source == "rock.m3u"
 
-    def test_extract_multiple_m3us(self) -> None:
-        fmt = "#EXTM3U\n#EXTINF:-1,{name}\n{url}\n"
-        z = self._make_zip({
-            "repo-main/+checked+/rock.m3u": fmt.format(name="Rock FM", url="http://a"),
-            "repo-main/+checked+/pop.m3u": fmt.format(name="Pop FM", url="http://b"),
-        })
-        entries = _extract_checked_entries(z)
+    def test_multiple_m3us(self, tmp_path: Path) -> None:
+        d = tmp_path / "+checked+"
+        d.mkdir()
+        (d / "rock.m3u").write_text("#EXTM3U\n#EXTINF:-1,Rock FM\nhttp://a\n")
+        (d / "pop.m3u").write_text("#EXTM3U\n#EXTINF:-1,Pop FM\nhttp://b\n")
+        entries = _parse_checked_dir(d)
         assert len(entries) == 2
-        names = {e.name for e in entries}
-        assert names == {"Rock FM", "Pop FM"}
+        assert {e.name for e in entries} == {"Rock FM", "Pop FM"}
 
-    def test_extract_ignores_non_m3u(self) -> None:
-        z = self._make_zip({
-            "repo/+checked+/readme.txt": "hello",
-            "repo/+checked+/rock.m3u": "#EXTM3U\n#EXTINF:-1,Rock FM\nhttp://a\n",
-        })
-        assert len(_extract_checked_entries(z)) == 1
+    def test_ignores_non_m3u(self, tmp_path: Path) -> None:
+        d = tmp_path / "+checked+"
+        d.mkdir()
+        (d / "readme.txt").write_text("hello")
+        (d / "rock.m3u").write_text("#EXTM3U\n#EXTINF:-1,Rock FM\nhttp://a\n")
+        assert len(_parse_checked_dir(d)) == 1
+
+    def test_ignores_bad_encoding(self, tmp_path: Path) -> None:
+        d = tmp_path / "+checked+"
+        d.mkdir()
+        (d / "bad.m3u").write_bytes(b"\xff\xfe")
+        assert _parse_checked_dir(d) == []
+
+
+class TestGitSparseCheckout:
+    @pytest.mark.asyncio
+    async def test_success(self) -> None:
+        async def fake_proc(*args, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            m.communicate = AsyncMock(return_value=(b"", b""))
+            return m
+
+        with (
+            patch.object(Path, "rglob", return_value=[]),
+            patch("asyncio.create_subprocess_exec", side_effect=fake_proc),
+        ):
+            tmp_dir, checked_dir = await _git_sparse_checkout()
+            assert checked_dir.name == "+checked+"
+            assert tmp_dir.is_dir()
+            # clean up the real temp dir that was created
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_download_and_parse_zip(self) -> None:
-        m3u = "#EXTM3U\n#EXTINF:-1,Pop FM\nhttp://pop.example.com\n"
-        zip_bytes = self._make_zip({"repo/+checked+/pop.m3u": m3u})
+    async def test_clone_failure(self) -> None:
+        async def fail_proc(*args, **kwargs):
+            m = MagicMock()
+            m.returncode = 1
+            m.communicate = AsyncMock(return_value=(b"", b"fatal: repository not found"))
+            return m
 
-        with patch(
-            "radio_ripper.services.playlist_discovery._download_zip",
-            return_value=zip_bytes,
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=fail_proc),
+            pytest.raises(RuntimeError, match="git clone failed"),
         ):
-            entries = await _download_and_parse_zip()
-        assert len(entries) == 1
-        assert entries[0].name == "Pop FM"
-        assert entries[0].url == "http://pop.example.com"
+            await _git_sparse_checkout()
