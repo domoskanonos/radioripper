@@ -46,7 +46,7 @@ class Settings(BaseModel):
         "dance", "pop", "top hits", "charts",
     ])
     discovery_enabled: bool = True
-    discovery_repo_url: str = "https://github.com/junguler/m3u-radio-music-playlists.git"
+    temp_dir: Path = Field(default=Path.home() / ".cache" / "radio-ripper")
     discovery_max_stations: int = Field(default=150, ge=1, le=500)
     discovery_min_bitrate: int = Field(default=0, ge=0)
     discovery_update_interval_days: int = Field(default=7, ge=1)
@@ -89,7 +89,7 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("database", "destination", "log_file", "fallback_cover_path")
+    @field_validator("database", "destination", "log_file", "fallback_cover_path", "temp_dir")
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
         return v.expanduser() if v is not None else None

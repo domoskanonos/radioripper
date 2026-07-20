@@ -1,21 +1,21 @@
-"""M3U radio-stream discovery — download, parse, filter, probe, cache.
+"""M3U radio-stream discovery — fetch ``+checked+`` playlists via GitHub API.
 
-Fetches the jünguler/m3u-radio-music-playlists repo, parses the M3U files,
-filters by user-defined keywords, probes for ICY metadata support and bitrate,
-and caches the top-N working stations for the ripper to use.
+Lists all ``.m3u`` files in the ``+checked+`` directory of the
+``junguler/m3u-radio-music-playlists`` repo, downloads them, parses the entries,
+filters by user-defined keywords, probes for ICY support + bitrate, and caches
+the top-N working stations together with a hash of the active keywords so the
+cache is invalidated when the keywords change.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import itertools
+import hashlib
 import json
 import logging
 import random
-import shutil
-import subprocess
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -23,8 +23,10 @@ import httpx
 from radio_ripper.infra.config import Settings, StreamConfig
 
 _LOGGER = logging.getLogger("radio_ripper.discovery")
-_REPO_DIR = Path.home() / ".cache" / "radio-ripper" / "m3u-repo"
-_CACHE_FILE = Path.home() / ".cache" / "radio-ripper" / "discovered_stations.json"
+_API_URL = (
+    "https://api.github.com/repos/junguler/m3u-radio-music-playlists/contents/%2Bchecked%2B"
+)
+_RAW_BASE = "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists/main/+checked+"
 _PROBE_TIMEOUT = 8.0
 _MAX_CONCURRENT = 50
 
@@ -36,40 +38,33 @@ class M3uEntry:
     source: str
 
 
-def _parse_m3u(path: Path) -> list[M3uEntry]:
-    """Parse a single .m3u file and return list of (name, url, source)."""
+def _keywords_hash(keywords: list[str]) -> str:
+    h = hashlib.sha256()
+    for k in sorted(keywords):
+        h.update(k.lower().strip().encode())
+    return h.hexdigest()[:16]
+
+
+def _parse_m3u_text(text: str, source: str) -> list[M3uEntry]:
+    """Parse M3U content from a string and return entries."""
     entries: list[M3uEntry] = []
     current_name = ""
-    try:
-        text = path.read_text("utf-8", errors="replace")
-    except OSError:
-        return entries
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#EXTM3U"):
             continue
         if line.startswith("#EXTINF:"):
-            # #EXTINF:-1,Station Name  or  #EXTINF:-1 tvg-name="X",Station Name
             after_comma = line.split(",", 1)
             current_name = after_comma[1].strip() if len(after_comma) > 1 else ""
         elif line.startswith("#"):
             continue
         elif current_name:
-            entries.append(M3uEntry(name=current_name, url=line, source=path.name))
+            entries.append(M3uEntry(name=current_name, url=line, source=source))
             current_name = ""
     return entries
 
 
-def _parse_all_m3us(repo_dir: Path) -> list[M3uEntry]:
-    """Recursively parse all .m3u files under *repo_dir*."""
-    entries: list[M3uEntry] = []
-    for m3u in repo_dir.rglob("*.m3u"):
-        entries.extend(_parse_m3u(m3u))
-    return entries
-
-
 def _filter_keywords(entries: list[M3uEntry], keywords: list[str]) -> list[M3uEntry]:
-    """Keep entries whose name matches at least one keyword (case-insensitive)."""
     if not keywords:
         return entries
     lowered = [k.lower().strip() for k in keywords if k.strip()]
@@ -84,7 +79,6 @@ def _filter_keywords(entries: list[M3uEntry], keywords: list[str]) -> list[M3uEn
 
 
 def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
-    """Keep the first occurrence of each station name (case-insensitive)."""
     seen: set[str] = set()
     result: list[M3uEntry] = []
     for e in entries:
@@ -96,10 +90,6 @@ def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
 
 
 async def _probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict:
-    """Quick probe: check ICY support and bitrate for a stream URL.
-
-    Returns dict with keys ``icy`` (bool), ``bitrate`` (int), ``error`` (str or None).
-    """
     result: dict = {"icy": False, "bitrate": 0, "error": None}
     try:
         async with httpx.AsyncClient(
@@ -119,7 +109,6 @@ async def _probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict:
                         result["bitrate"] = int(br_raw)
                     except (ValueError, TypeError):
                         pass
-                # Read a tiny bit to confirm it's really audio
                 try:
                     await resp.areceive_headers()
                 except Exception:
@@ -140,8 +129,6 @@ async def _probe_batch(
     max_ok: int,
     semaphore: asyncio.Semaphore,
 ) -> list[tuple[M3uEntry, dict]]:
-    """Probe a batch of entries concurrently. Stops early when *max_ok* found."""
-
     async def _probe_one(entry: M3uEntry) -> tuple[M3uEntry, dict] | None:
         async with semaphore:
             probe = await _probe_icy(entry.url)
@@ -165,7 +152,6 @@ async def _probe_batch(
             except Exception:
                 pass
 
-    # Cancel remaining
     for t in pending:
         t.cancel()
     for t in pending:
@@ -175,54 +161,118 @@ async def _probe_batch(
     return ok
 
 
+async def _list_m3u_files() -> list[str]:
+    """List ``.m3u`` filenames in the ``+checked+`` repo directory."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15.0),
+        headers={"User-Agent": "Radio-Ripper/2.0", "Accept": "application/vnd.github.v3+json"},
+    ) as client:
+        resp = await client.get(_API_URL)
+        resp.raise_for_status()
+        items = resp.json()
+
+    return [
+        item["name"]
+        for item in items
+        if item["type"] == "file" and item["name"].lower().endswith(".m3u")
+    ]
+
+
+async def _fetch_m3u_content(filename: str) -> str:
+    """Download a single M3U file content via raw GitHub."""
+    url = f"{_RAW_BASE}/{filename}"
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15.0),
+        follow_redirects=True,
+    ) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.text
+
+
+# ---------------------------------------------------------------- cache
+
+
+def _cache_path(settings: Settings) -> Path:
+    return settings.temp_dir / "discovered_stations.json"
+
+
+def _is_cache_fresh(cache_file: Path, max_age_days: int) -> bool:
+    if not cache_file.is_file():
+        return False
+    import time
+    return (time.time() - cache_file.stat().st_mtime) < max_age_days * 86400
+
+
+def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
+    """Load cached stations and their keywords_hash."""
+    try:
+        raw = json.loads(cache_file.read_text("utf-8"))
+        if isinstance(raw, dict):
+            stations = [StreamConfig(**s) for s in raw.get("stations", [])]
+            kh = raw.get("_keywords_hash", "")
+        else:
+            # legacy: flat list
+            stations = [StreamConfig(**s) for s in raw if s.get("icy")]
+            kh = ""
+        return stations, kh
+    except Exception:
+        return [], ""
+
+
+def _save_cache(
+    cache_file: Path, stations: list[StreamConfig], keywords_hash: str = ""
+) -> None:
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "_keywords_hash": keywords_hash,
+        "stations": [s.model_dump(mode="json") for s in stations],
+    }
+    cache_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+
+
+# ---------------------------------------------------------------- service
+
+
 class PlaylistDiscoveryService:
-    """Download the M3U repo, parse, filter, probe, and cache stations."""
+    """Fetch ``+checked+`` M3U playlists, filter, probe, and cache stations."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._log = _LOGGER
 
-    # ------------------------------------------------------------- public API
-
     async def load_or_discover(self) -> list[StreamConfig]:
-        """Return cached stations if fresh, otherwise run full discovery."""
         if not self._settings.discovery_enabled:
             return []
 
-        # Fresh enough?
-        if _is_cache_fresh(_CACHE_FILE, self._settings.discovery_update_interval_days):
-            cached = _load_cache(_CACHE_FILE)
-            if cached:
+        cache_file = _cache_path(self._settings)
+        kh = _keywords_hash(self._settings.stream_keywords)
+
+        if _is_cache_fresh(cache_file, self._settings.discovery_update_interval_days):
+            cached_stations, cached_hash = _load_cache(cache_file)
+            if cached_stations and cached_hash == kh:
                 self._log.info(
-                    "Using %d cached stations from %s", len(cached), _CACHE_FILE
+                    "Using %d cached stations (keywords match)", len(cached_stations)
                 )
                 if self._settings.reprobe_on_start:
-                    alive = await self._reprobe(cached)
-                    if len(alive) < len(cached):
-                        self._log.info(
-                            "Reprobe: %d/%d stations still alive",
-                            len(alive), len(cached),
-                        )
-                    if len(alive) < self._settings.discovery_max_stations // 2:
-                        self._log.info(
-                            "Too few stations alive (%d), re-running full discovery…",
-                            len(alive),
-                        )
-                        stations = await self._discover()
-                        _save_cache(_CACHE_FILE, stations)
-                        return stations
-                    _save_cache(_CACHE_FILE, alive)
-                    return alive
-                return cached
+                    alive = await self._reprobe(cached_stations)
+                    if alive:
+                        _save_cache(cache_file, alive, keywords_hash=kh)
+                    return alive or []
+                return cached_stations
 
-        self._log.info("Starting playlist discovery (keywords=%s)…", self._settings.stream_keywords)
+        self._log.info(
+            "Starting playlist discovery (keywords=%s)…",
+            self._settings.stream_keywords,
+        )
         stations = await self._discover()
-        _save_cache(_CACHE_FILE, stations)
-        self._log.info("Discovery complete: %d stations saved to %s", len(stations), _CACHE_FILE)
+        _save_cache(cache_file, stations, keywords_hash=kh)
+        self._log.info(
+            "Discovery complete: %d stations", len(stations)
+        )
         return stations
 
     async def _reprobe(self, stations: list[StreamConfig]) -> list[StreamConfig]:
-        """Re-probe cached stations and return only those still alive."""
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
         entries = [
             M3uEntry(name=s.name, url=str(s.url), source=s.source)
@@ -248,8 +298,21 @@ class PlaylistDiscoveryService:
         return result
 
     async def _discover(self) -> list[StreamConfig]:
-        repo_dir = await _ensure_repo(self._settings.discovery_repo_url)
-        all_entries = _parse_all_m3us(repo_dir)
+        filenames = await _list_m3u_files()
+        self._log.info("Found %d .m3u files in +checked+", len(filenames))
+
+        contents = await asyncio.gather(
+            *[_fetch_m3u_content(f) for f in filenames],
+            return_exceptions=True,
+        )
+
+        all_entries: list[M3uEntry] = []
+        for filename, text in zip(filenames, contents):
+            if isinstance(text, Exception):
+                self._log.debug("Failed to fetch %s: %s", filename, text)
+                continue
+            all_entries.extend(_parse_m3u_text(text, filename))
+
         self._log.info("Parsed %d total M3U entries", len(all_entries))
 
         filtered = _filter_keywords(all_entries, self._settings.stream_keywords)
@@ -262,7 +325,6 @@ class PlaylistDiscoveryService:
             self._log.warning("No stations matched the configured keywords.")
             return []
 
-        # Shuffle for variety, then probe
         random.shuffle(unique)
         max_needed = self._settings.discovery_max_stations
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
@@ -271,7 +333,6 @@ class PlaylistDiscoveryService:
         good = await _probe_batch(unique, max_needed, semaphore)
         self._log.info("Probing done: %d ICY-capable streams found", len(good))
 
-        # Sort by bitrate descending
         good.sort(key=lambda x: x[1].get("bitrate", 0), reverse=True)
 
         stations: list[StreamConfig] = []
@@ -284,69 +345,10 @@ class PlaylistDiscoveryService:
                     bitrate=probe.get("bitrate", 0),
                     icy=True,
                     source=entry.source,
+
                 )
             )
         return stations
-
-
-# ------------------------------------------------------------------- helpers
-
-
-def _is_cache_fresh(cache_file: Path, max_age_days: int) -> bool:
-    if not cache_file.is_file():
-        return False
-    import time
-
-    age = time.time() - cache_file.stat().st_mtime
-    return age < max_age_days * 86400
-
-
-def _load_cache(cache_file: Path) -> list[StreamConfig]:
-    try:
-        data = json.loads(cache_file.read_text("utf-8"))
-        return [StreamConfig(**s) for s in data if s.get("icy")]
-    except Exception:
-        return []
-
-
-def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    data = [s.model_dump(mode="json") for s in stations]
-    cache_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
-
-
-async def _ensure_repo(repo_url: str) -> Path:
-    """Clone or update the M3U repo. Returns path to repo root."""
-    repo_dir = _REPO_DIR
-    if repo_dir.is_dir():
-        # Update existing
-        try:
-            result = subprocess.run(
-                ["git", "pull", "--ff-only"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode != 0:
-                _LOGGER.warning("git pull failed: %s", result.stderr[:200])
-        except Exception as exc:
-            _LOGGER.warning("git pull error: %s", exc)
-    else:
-        # Fresh clone
-        repo_dir.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            result = subprocess.run(
-                ["git", "clone", "--depth", "1", repo_url, str(repo_dir)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"git clone failed: {result.stderr[:200]}")
-        except Exception as exc:
-            raise RuntimeError(f"cannot clone repo: {exc}") from exc
-    return repo_dir
 
 
 __all__ = [

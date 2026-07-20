@@ -17,84 +17,55 @@ from radio_ripper.services.playlist_discovery import (
     _deduplicate_by_name,
     _filter_keywords,
     _is_cache_fresh,
+    _keywords_hash,
     _load_cache,
-    _parse_m3u,
-    _parse_all_m3us,
+    _parse_m3u_text,
     _probe_icy,
     _save_cache,
 )
 
 
 # ---------------------------------------------------------------------------
-# _parse_m3u
+# _parse_m3u_text
 # ---------------------------------------------------------------------------
 
 
-class TestParseM3u:
-    def test_parse_with_extinf(self, tmp_path: Path) -> None:
-        m3u = tmp_path / "test.m3u"
-        m3u.write_text(
-            "#EXTM3U\n#EXTINF:-1,Station Name\nhttp://example.com/stream\n",
-            encoding="utf-8",
-        )
-        entries = _parse_m3u(m3u)
+class TestParseM3uText:
+    def test_parse_with_extinf(self) -> None:
+        text = "#EXTM3U\n#EXTINF:-1,Station Name\nhttp://example.com/stream\n"
+        entries = _parse_m3u_text(text, "test.m3u")
         assert len(entries) == 1
         assert entries[0].name == "Station Name"
         assert entries[0].url == "http://example.com/stream"
         assert entries[0].source == "test.m3u"
 
-    def test_parse_with_tvg_attr(self, tmp_path: Path) -> None:
-        m3u = tmp_path / "test.m3u"
-        m3u.write_text(
-            '#EXTINF:-1 tvg-id="rock.fm" tvg-name="Rock FM",Rock FM\nhttp://r',
-            encoding="utf-8",
-        )
-        entries = _parse_m3u(m3u)
+    def test_parse_with_tvg_attr(self) -> None:
+        text = '#EXTINF:-1 tvg-id="rock.fm" tvg-name="Rock FM",Rock FM\nhttp://r\n'
+        entries = _parse_m3u_text(text, "test.m3u")
         assert len(entries) == 1
         assert entries[0].name == "Rock FM"
 
-    def test_parse_no_extinf_returns_empty(self, tmp_path: Path) -> None:
-        m3u = tmp_path / "test.m3u"
-        m3u.write_text("http://example.com/stream\n", encoding="utf-8")
-        assert _parse_m3u(m3u) == []
+    def test_parse_no_extinf_returns_empty(self) -> None:
+        text = "http://example.com/stream\n"
+        assert _parse_m3u_text(text, "test.m3u") == []
 
-    def test_parse_empty_and_comments(self, tmp_path: Path) -> None:
-        m3u = tmp_path / "test.m3u"
-        m3u.write_text("#EXTM3U\n\n# some comment\n", encoding="utf-8")
-        assert _parse_m3u(m3u) == []
+    def test_parse_empty_and_comments(self) -> None:
+        text = "#EXTM3U\n\n# some comment\n"
+        assert _parse_m3u_text(text, "test.m3u") == []
 
-    def test_parse_file_read_error_returns_empty(self, tmp_path: Path) -> None:
-        missing = tmp_path / "nonexistent.m3u"
-        assert _parse_m3u(missing) == []
-
-    def test_parse_multiple_entries(self, tmp_path: Path) -> None:
-        m3u = tmp_path / "test.m3u"
-        m3u.write_text(
+    def test_parse_multiple_entries(self) -> None:
+        text = (
             "#EXTM3U\n"
-            '#EXTINF:-1,One\nhttp://a\n'
-            '#EXTINF:-1,Two\nhttp://b\n',
-            encoding="utf-8",
+            "#EXTINF:-1,One\nhttp://a\n"
+            "#EXTINF:-1,Two\nhttp://b\n"
         )
-        entries = _parse_m3u(m3u)
+        entries = _parse_m3u_text(text, "test.m3u")
         assert len(entries) == 2
         assert entries[0].name == "One"
         assert entries[1].name == "Two"
 
-
-# ---------------------------------------------------------------------------
-# _parse_all_m3us
-# ---------------------------------------------------------------------------
-
-
-class TestParseAllM3us:
-    def test_recursive_collection(self, tmp_path: Path) -> None:
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        (tmp_path / "a.m3u").write_text("#EXTM3U\n#EXTINF:-1,A\nhttp://a\n")
-        (sub / "b.m3u").write_text("#EXTM3U\n#EXTINF:-1,B\nhttp://b\n")
-        entries = _parse_all_m3us(tmp_path)
-        names = {e.name for e in entries}
-        assert names == {"A", "B"}
+    def test_empty_text_returns_empty(self) -> None:
+        assert _parse_m3u_text("", "test.m3u") == []
 
 
 # ---------------------------------------------------------------------------
@@ -263,13 +234,13 @@ class TestProbeIcy:
 class TestCacheHelpers:
     def test_is_cache_fresh_when_file_recent(self, tmp_path: Path) -> None:
         cf = tmp_path / "cache.json"
-        cf.write_text("[]")
+        cf.write_text("{}")
         assert _is_cache_fresh(cf, max_age_days=7) is True
 
     def test_is_cache_stale(self, tmp_path: Path) -> None:
         import os
         cf = tmp_path / "cache.json"
-        cf.write_text("[]")
+        cf.write_text("{}")
         old = time.time() - 8 * 86400
         os.utime(cf, (old, old))
         assert _is_cache_fresh(cf, max_age_days=7) is False
@@ -283,49 +254,35 @@ class TestCacheHelpers:
             StreamConfig(name="Pop FM", url="http://b", icy=True),
         ]
         cf = tmp_path / "cache.json"
-        _save_cache(cf, stations)
-        loaded = _load_cache(cf)
+        _save_cache(cf, stations, keywords_hash="abc")
+        loaded, kh = _load_cache(cf)
         assert len(loaded) == 2
         assert loaded[0].name == "Rock FM"
+        assert kh == "abc"
 
-    def test_load_corrupt_cache(self, tmp_path: Path) -> None:
-        cf = tmp_path / "cache.json"
-        cf.write_text("not json")
-        assert _load_cache(cf) == []
-
-    def test_load_only_icy_true(self, tmp_path: Path) -> None:
+    def test_load_legacy_flat_list(self, tmp_path: Path) -> None:
         data = [
             {"name": "A", "url": "http://a", "icy": True},
             {"name": "B", "url": "http://b", "icy": False},
         ]
         cf = tmp_path / "cache.json"
         cf.write_text(json.dumps(data))
-        loaded = _load_cache(cf)
+        loaded, kh = _load_cache(cf)
         assert len(loaded) == 1
         assert loaded[0].name == "A"
+        assert kh == ""
+
+    def test_load_corrupt_cache(self, tmp_path: Path) -> None:
+        cf = tmp_path / "cache.json"
+        cf.write_text("not json")
+        loaded, kh = _load_cache(cf)
+        assert loaded == []
+        assert kh == ""
 
 
 # ---------------------------------------------------------------------------
 # PlaylistDiscoveryService
 # ---------------------------------------------------------------------------
-
-
-    def test_reprobe_keeps_alive_stations(self) -> None:
-        stations = [
-            StreamConfig(name="Rock FM", url="http://a", icy=True),
-            StreamConfig(name="Jazz FM", url="http://b", icy=True),
-        ]
-        svc = PlaylistDiscoveryService(
-            Settings(
-                destination="./rec",
-                database="./rec/ripper.db",
-                discovery_enabled=True,
-                reprobe_on_start=True,
-            )
-        )
-        # _reprobe returns only those still alive (we rely on _probe_batch which
-        # is tested separately; here we just verify the filtering shape works)
-        assert svc is not None
 
 
 class TestPlaylistDiscoveryService:
@@ -345,26 +302,24 @@ class TestPlaylistDiscoveryService:
         stations = [
             StreamConfig(name="Rock FM", url="http://a", icy=True),
         ]
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            reprobe_on_start=False,
+            temp_dir=tmp_path,
+        )
+        kh = _keywords_hash(settings.stream_keywords)
         cf = tmp_path / "discovered_stations.json"
-        _save_cache(cf, stations)
+        _save_cache(cf, stations, keywords_hash=kh)
 
         with (
-            patch(
-                "radio_ripper.services.playlist_discovery._CACHE_FILE",
-                cf,
-            ),
             patch(
                 "radio_ripper.services.playlist_discovery._is_cache_fresh",
                 return_value=True,
             ),
             patch.object(PlaylistDiscoveryService, "_discover") as mock_discover,
         ):
-            settings = Settings(
-                destination="./rec",
-                database="./rec/ripper.db",
-                discovery_enabled=True,
-                reprobe_on_start=False,
-            )
             svc = PlaylistDiscoveryService(settings)
             result = await svc.load_or_discover()
         assert len(result) == 1
@@ -373,14 +328,16 @@ class TestPlaylistDiscoveryService:
 
     @pytest.mark.asyncio
     async def test_runs_discovery_when_cache_stale(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+        )
         cf = tmp_path / "discovered_stations.json"
-        cf.write_text("[]")
+        _save_cache(cf, [], keywords_hash=_keywords_hash(settings.stream_keywords))
 
         with (
-            patch(
-                "radio_ripper.services.playlist_discovery._CACHE_FILE",
-                cf,
-            ),
             patch(
                 "radio_ripper.services.playlist_discovery._is_cache_fresh",
                 return_value=False,
@@ -390,11 +347,6 @@ class TestPlaylistDiscoveryService:
             mock_discover.return_value = [
                 StreamConfig(name="Rock FM", url="http://a", icy=True),
             ]
-            settings = Settings(
-                destination="./rec",
-                database="./rec/ripper.db",
-                discovery_enabled=True,
-            )
             svc = PlaylistDiscoveryService(settings)
             result = await svc.load_or_discover()
         assert len(result) == 1
