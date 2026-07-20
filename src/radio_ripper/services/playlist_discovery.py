@@ -1,22 +1,22 @@
-"""M3U radio-stream discovery — fetch ``+checked+`` playlists via git sparse-checkout.
+"""M3U radio-stream discovery — fetch the mega M3U from GitHub.
 
-Clones only the ``+checked+`` directory from the
-``junguler/m3u-radio-music-playlists`` repo via ``git clone --depth 1 --filter=blob:none --sparse``,
-parses the entries, filters by user-defined keywords, probes for ICY
-support + bitrate, and caches the top-N working stations together with a hash
-of the active keywords so the cache is invalidated when the keywords change.
+Downloads the ``---everything-checked-repo.m3u`` file from
+``junguler/m3u-radio-music-playlists``, parses the entries, filters by
+user-defined keywords (matching both station name and #EXTINF attributes),
+probes for ICY support + bitrate, and caches the top-N working stations
+together with a hash of the active keywords so the cache is invalidated
+when the keywords change.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import os
 import random
-import shutil
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +26,10 @@ import httpx
 from radio_ripper.infra.config import Settings, StreamConfig
 
 _LOGGER = logging.getLogger("radio_ripper.discovery")
-_REPO_URL = "https://github.com/junguler/m3u-radio-music-playlists.git"
+_MEGA_URL = (
+    "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists"
+    "/refs/heads/main/---everything-checked-repo.m3u"
+)
 _PROBE_TIMEOUT = 8.0
 _MAX_CONCURRENT = 50
 
@@ -36,6 +39,7 @@ class M3uEntry:
     name: str
     url: str
     source: str
+    extinf: str = ""
 
 
 def _keywords_hash(keywords: list[str]) -> str:
@@ -48,18 +52,28 @@ def _keywords_hash(keywords: list[str]) -> str:
 def _parse_m3u_text(text: str, source: str) -> list[M3uEntry]:
     entries: list[M3uEntry] = []
     current_name = ""
+    current_extinf = ""
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#EXTM3U"):
             continue
         if line.startswith("#EXTINF:"):
+            current_extinf = line
             after_comma = line.split(",", 1)
             current_name = after_comma[1].strip() if len(after_comma) > 1 else ""
         elif line.startswith("#"):
             continue
         elif current_name:
-            entries.append(M3uEntry(name=current_name, url=line, source=source))
+            entries.append(
+                M3uEntry(
+                    name=current_name,
+                    url=line,
+                    source=source,
+                    extinf=current_extinf,
+                )
+            )
             current_name = ""
+            current_extinf = ""
     return entries
 
 
@@ -71,8 +85,8 @@ def _filter_keywords(entries: list[M3uEntry], keywords: list[str]) -> list[M3uEn
         return entries
     result: list[M3uEntry] = []
     for e in entries:
-        name_lower = e.name.lower()
-        if any(kw in name_lower for kw in lowered):
+        text = (e.name + " " + e.extinf).lower()
+        if any(kw in text for kw in lowered):
             result.append(e)
     return result
 
@@ -160,71 +174,26 @@ async def _probe_batch(
     return ok
 
 
-# ---------------------------------------------------------------- git sparse checkout
+# ---------------------------------------------------------------- download
 
 
-async def _git_sparse_checkout(github_pat: str = "") -> tuple[Path, Path]:
-    """Clone ``+checked+`` via git sparse-checkout, return ``(tmp_dir, checked_dir)``."""
-    tmp_dir = Path(tempfile.mkdtemp(prefix="radio-ripper-"))
-    repo_dir = tmp_dir / "repo"
-
+async def _download_mega_m3u(github_pat: str = "") -> str:
+    """Download the ``---everything-checked-repo.m3u`` file and return its text."""
+    headers: dict[str, str] = {"User-Agent": "Radio-Ripper/2.0"}
     if github_pat:
-        clone_url = f"https://x-access-token:{github_pat}@github.com/junguler/m3u-radio-music-playlists.git"
-    else:
-        clone_url = _REPO_URL
-
-    _LOGGER.info("Cloning +checked+ via git sparse-checkout…")
+        headers["Authorization"] = f"Bearer {github_pat}"
+    _LOGGER.info("Downloading ---everything-checked-repo.m3u…")
     t0 = time.monotonic()
-
-    proc = await asyncio.create_subprocess_exec(
-        "git", "clone",
-        "--depth", "1",
-        "--filter=blob:none",
-        "--sparse",
-        clone_url,
-        str(repo_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        msg = stderr.decode(errors="replace").strip()
-        raise RuntimeError(f"git clone failed: {msg}")
-
-    proc = await asyncio.create_subprocess_exec(
-        "git", "-C", str(repo_dir),
-        "sparse-checkout", "set", "+checked+",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        msg = stderr.decode(errors="replace").strip()
-        raise RuntimeError(f"git sparse-checkout failed: {msg}")
-
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0),
+        follow_redirects=True,
+    ) as client:
+        resp = await client.get(_MEGA_URL, headers=headers)
+        resp.raise_for_status()
+        text = resp.text
     elapsed = time.monotonic() - t0
-    checked_dir = repo_dir / "+checked+"
-    m3u_count = len(list(checked_dir.rglob("*.m3u"))) if checked_dir.is_dir() else 0
-    _LOGGER.info("git clone done in %.1fs — %d .m3u files in +checked+", elapsed, m3u_count)
-    return tmp_dir, checked_dir
-
-
-def _parse_checked_dir(checked_dir: Path) -> list[M3uEntry]:
-    """Parse all ``.m3u`` files found in *checked_dir* (recursively)."""
-    if not checked_dir.is_dir():
-        _LOGGER.warning("+checked+ directory not found at %s", checked_dir)
-        return []
-
-    all_entries: list[M3uEntry] = []
-    for path in sorted(checked_dir.rglob("*.m3u")):
-        try:
-            text = path.read_text("utf-8")
-        except Exception:
-            continue
-        all_entries.extend(_parse_m3u_text(text, path.name))
-    return all_entries
+    _LOGGER.info("Downloaded ---everything-checked-repo.m3u (%.1f KiB, %.1fs)", len(text) / 1024, elapsed)
+    return text
 
 
 # ---------------------------------------------------------------- cache
@@ -269,7 +238,7 @@ def _save_cache(
 
 
 class PlaylistDiscoveryService:
-    """Fetch ``+checked+`` M3U playlists, filter, probe, and cache stations."""
+    """Fetch the mega M3U, filter, probe, and cache stations."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -333,12 +302,8 @@ class PlaylistDiscoveryService:
 
     async def _discover(self) -> list[StreamConfig]:
         pat = self._settings.github_pat or os.environ.get("GITHUB_PAT", "")
-        tmp_dir, checked_dir = await _git_sparse_checkout(pat)
-        try:
-            all_entries = _parse_checked_dir(checked_dir)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
+        text = await _download_mega_m3u(pat)
+        all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
         self._log.info("Parsed %d total M3U entries", len(all_entries))
 
         filtered = _filter_keywords(all_entries, self._settings.stream_keywords)
