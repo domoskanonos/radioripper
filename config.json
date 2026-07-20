@@ -2,12 +2,10 @@
   "destination": "/home/laptop/Musik",
   "database": "./recordings/ripper.db",
   "streams": [
-    { "name": "TopHits",    "url": "http://tophits.radiomonster.fm/listen.m3u" },
-    { "name": "Evergreens", "url": "http://evergreens.radiomonster.fm/listen.m3u" },
-    { "name": "Rock",       "url": "http://rock.radiomonster.fm/listen.m3u" },
-    { "name": "Dance",      "url": "http://dance.radiomonster.fm/listen.m3u" },
-    { "name": "90s",        "url": "http://90s.radiomonster.fm/listen.m3u" },
-    { "name": "Deutschrap", "url": "http://deutsch.radiomonster.fm/listen.m3u" }
+    { "name": "011FM-60s", "url": "http://listen.011fm.com:80/stream03" },
+    { "name": "GotRadio-60s", "url": "http://gr02.cdnstream.com:8370" },
+    { "name": "ClassicRockMiami", "url": "https://streamingp.shoutcast.com/classic-rock-miami" },
+    { "name": "1FM-60s70s", "url": "https://strm112.1.fm/60s_70s_mobile_mp3" }
   ],
   "request_timeout": 30,
   "read_chunk": 4096,
@@ -24,8 +22,5 @@
   "enrichment_workers": 4,
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
-  "min_track_duration_seconds": 60.0,
-  "tail_trim_bytes": 0,
-  "pre_buffer_bytes": 0,
   "no_icy_disable_after": 10
 }

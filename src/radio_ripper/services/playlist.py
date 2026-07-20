@@ -52,8 +52,12 @@ class HttpPlaylistResolver(PlaylistResolver):
         self._timeout = timeout
 
     async def resolve(self, playlist_url: str) -> list[str]:
-        text = await self._client.get_text(playlist_url, timeout=self._timeout)
         lower = playlist_url.lower()
+        # If URL is a direct stream (not a playlist file), return it as-is
+        if not (lower.endswith(".m3u") or lower.endswith(".pls") or lower.endswith(".m3u8")):
+            return [playlist_url]
+        # Otherwise fetch and parse the playlist
+        text = await self._client.get_text(playlist_url, timeout=self._timeout)
         if lower.endswith(".pls") or "file" in text[:200].lower():
             return parse_pls(text)
         return parse_m3u(text)

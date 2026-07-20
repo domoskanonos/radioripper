@@ -1,0 +1,7 @@
+   { "name": "TopHits",    "url": "http://tophits.radiomonster.fm/listen.m3u" },
+    { "name": "Evergreens", "url": "http://evergreens.radiomonster.fm/listen.m3u" },
+    { "name": "Rock",       "url": "http://rock.radiomonster.fm/listen.m3u" },
+    { "name": "Dance",      "url": "http://dance.radiomonster.fm/listen.m3u" },
+    { "name": "90s",        "url": "http://90s.radiomonster.fm/listen.m3u" },
+    { "name": "Deutschrap", "url": "http://deutsch.radiomonster.fm/listen.m3u" }
+  

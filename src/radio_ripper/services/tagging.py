@@ -8,6 +8,8 @@ Tags written:
     - ``TIT2``  (Title)
     - ``TALB``  (Album) — optional
     - ``TYER``  (Year) — optional
+    - ``TRSN``  (Internet Radio Station Name) — from provenance
+    - ``TPUB``  (Publisher/Label) — radio station name for Jellyfin
     - ``COMM``  (Recorded via Radio-Ripper)
     - ``TXXX:RIPPEDBY`` (station@playlist) — provenance
     - ``APIC``  (Cover art, JPEG or PNG only, scaled 500–1000 px) — optional
@@ -29,6 +31,8 @@ from mutagen.id3 import (
     TIT2,
     TPE1,
     TPE2,
+    TPUB,
+    TRSN,
     TXXX,
     ID3NoHeaderError,
 )
@@ -136,6 +140,8 @@ class ID3Tagger(TrackTagger):
         audio.delall("TPE1")
         audio.delall("TPE2")
         audio.delall("TIT2")
+        audio.delall("TRSN")
+        audio.delall("TPUB")
         audio.delall("COMM")
         audio.delall("TXXX:RIPPEDBY")
         if track.artist:
@@ -143,6 +149,10 @@ class ID3Tagger(TrackTagger):
             audio.add(TPE2(encoding=3, text=track.artist))
         if track.title:
             audio.add(TIT2(encoding=3, text=track.title))
+        # Extract station name from provenance (format: "station@url")
+        station_name = provenance.split("@")[0] if "@" in provenance else provenance
+        audio.add(TRSN(encoding=3, text=station_name))
+        audio.add(TPUB(encoding=3, text=station_name))
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
         try:
@@ -169,6 +179,8 @@ class ID3Tagger(TrackTagger):
         audio.delall("TIT2")
         audio.delall("TALB")
         audio.delall("TDRC")
+        audio.delall("TRSN")
+        audio.delall("TPUB")
         audio.delall("COMM")
         audio.delall("APIC")
         audio.delall("TXXX:RIPPEDBY")
@@ -184,6 +196,10 @@ class ID3Tagger(TrackTagger):
             audio.add(TALB(encoding=3, text=enriched.album))
         if enriched.year:
             audio.add(TDRC(encoding=3, text=enriched.year))
+        # Extract station name from provenance (format: "station@url")
+        station_name = provenance.split("@")[0] if "@" in provenance else provenance
+        audio.add(TRSN(encoding=3, text=station_name))
+        audio.add(TPUB(encoding=3, text=station_name))
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
         effective_cover = cover_bytes or fallback_cover
