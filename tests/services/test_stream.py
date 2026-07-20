@@ -325,3 +325,147 @@ class TestStreamRecorder:
         files = list(settings.destination.rglob("*.mp3"))
         assert len(files) >= 1
         assert any("Adele" in f.name for f in files)
+
+
+class TestAdTitlePatterns:
+    async def test_ad_title_is_not_recorded(self, tmp_path):
+        """Titles matching ad_title_patterns are skipped entirely."""
+        stream = _make_stream_bytes(
+            ["Joining", "Werbung - Spot", "Artist - Real Song", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path)
+        repo = FakeRepoFresh()
+        rec = StreamRecorder(
+            station_name="TestStation",
+            playlist_url="http://fake.example.com/listen.m3u",
+            settings=settings,
+            http_client=client,
+            playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+            repository=repo,
+            tagger=NullTagger(),
+            metadata_provider=NullMetadataProvider(),
+            ad_title_patterns=["^Werbung"],
+        )
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        titles = [t.stream_title for _, t in repo.registered]
+        assert "Werbung - Spot" not in titles
+        assert "Artist - Real Song" in titles
+
+    async def test_ad_pattern_case_insensitive(self, tmp_path):
+        """Ad pattern matching is case-insensitive."""
+        stream = _make_stream_bytes(
+            ["Joining", "ADVERTISEMENT", "Artist - Song", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path)
+        repo = FakeRepoFresh()
+        rec = StreamRecorder(
+            station_name="TestStation",
+            playlist_url="http://fake.example.com/listen.m3u",
+            settings=settings,
+            http_client=client,
+            playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+            repository=repo,
+            tagger=NullTagger(),
+            metadata_provider=NullMetadataProvider(),
+            ad_title_patterns=["advertisement"],
+        )
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        titles = [t.stream_title for _, t in repo.registered]
+        assert "ADVERTISEMENT" not in titles
+        assert "Artist - Song" in titles
+
+    async def test_no_patterns_records_everything(self, tmp_path):
+        """Without patterns, all non-empty titles are recorded normally."""
+        stream = _make_stream_bytes(
+            ["Joining", "Werbung", "Artist - Song", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path)
+        repo = FakeRepoFresh()
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        titles = [t.stream_title for _, t in repo.registered]
+        # Without patterns, "Werbung" is treated as a normal title
+        assert "Werbung" in titles
+
+
+class TestPreBufferBytes:
+    async def test_pre_buffer_skips_first_bytes(self, tmp_path):
+        """pre_buffer_bytes causes the first N bytes of each recording to be dropped."""
+        audio_per_song = 200
+        stream = _make_stream_bytes(
+            ["Joining", "Artist - Song", "Next - Song"],
+            audio_per_song=audio_per_song,
+        )
+        client = FakeHttpClient(stream, metaint=audio_per_song)
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+        repo = FakeRepoFresh()
+        skip = 50
+        rec = StreamRecorder(
+            station_name="TestStation",
+            playlist_url="http://fake.example.com/listen.m3u",
+            settings=settings,
+            http_client=client,
+            playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+            repository=repo,
+            tagger=NullTagger(),
+            metadata_provider=NullMetadataProvider(),
+            pre_buffer_bytes=skip,
+        )
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        titles = [t.stream_title for _, t in repo.registered]
+        assert "Artist - Song" in titles
+        # File should be smaller than the full audio_per_song because of the skip
+        files = list(settings.destination.rglob("*.mp3"))
+        song_file = next((f for f in files if "Artist" in f.name), None)
+        assert song_file is not None
+        assert song_file.stat().st_size < audio_per_song
+
+    async def test_zero_pre_buffer_writes_all_bytes(self, tmp_path):
+        """pre_buffer_bytes=0 (default) writes all audio bytes unchanged."""
+        audio_per_song = 200
+        stream = _make_stream_bytes(
+            ["Joining", "Artist - Song", "Next - Song"],
+            audio_per_song=audio_per_song,
+        )
+        client = FakeHttpClient(stream, metaint=audio_per_song)
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+        repo = FakeRepoFresh()
+        rec = StreamRecorder(
+            station_name="TestStation",
+            playlist_url="http://fake.example.com/listen.m3u",
+            settings=settings,
+            http_client=client,
+            playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+            repository=repo,
+            tagger=NullTagger(),
+            metadata_provider=NullMetadataProvider(),
+            pre_buffer_bytes=0,
+        )
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        files = list(settings.destination.rglob("*.mp3"))
+        song_file = next((f for f in files if "Artist" in f.name), None)
+        assert song_file is not None
+        assert song_file.stat().st_size >= audio_per_song

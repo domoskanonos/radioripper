@@ -20,6 +20,8 @@ class StreamConfig(BaseModel):
 
     name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_\- ]+$")
     url: HttpUrl
+    ad_title_patterns: list[str] | None = None
+    pre_buffer_bytes: int | None = Field(default=None, ge=0)
 
     @field_validator("name")
     @classmethod
@@ -48,6 +50,8 @@ class Settings(BaseModel):
     log_file: Path | None = None
 
     max_recordings: int | None = Field(default=None, ge=1)
+    ad_title_patterns: list[str] = Field(default_factory=list)
+    pre_buffer_bytes: int = Field(default=0, ge=0)
 
     enrich_metadata: bool = True
     embed_cover_art: bool = True

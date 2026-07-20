@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,8 @@ class StreamRecorder:
         metadata_provider: MetadataProvider | None = None,
         enrich_semaphore: asyncio.Semaphore | None = None,
         logger: logging.Logger | None = None,
+        ad_title_patterns: list[str] | None = None,
+        pre_buffer_bytes: int = 0,
     ) -> None:
         self.station_name = station_name
         self.playlist_url = playlist_url
@@ -71,8 +74,16 @@ class StreamRecorder:
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._enrichment_tasks: set[asyncio.Task[Any]] = set()
+        self._ad_patterns: list[re.Pattern[str]] = [
+            re.compile(p, re.IGNORECASE) for p in (ad_title_patterns or [])
+        ]
+        self._pre_buffer_bytes = pre_buffer_bytes
 
     # ------------------------------------------------------------------ lifecycle
+
+    def _is_ad_title(self, title: str) -> bool:
+        """Return True if *title* matches any configured ad-title pattern."""
+        return bool(self._ad_patterns and any(p.search(title) for p in self._ad_patterns))
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -160,6 +171,7 @@ class StreamRecorder:
         current_title: str | None = None
         writer: TrackWriter | None = None
         recording = False
+        pre_skip_remaining: int = 0  # bytes to discard at start of each new recording
 
         async def _close_writer(finalize: bool) -> None:
             nonlocal writer, current_title, recording
@@ -248,7 +260,14 @@ class StreamRecorder:
                 for event in parser.events():
                     if isinstance(event, AudioChunk):
                         if recording and writer is not None:
-                            writer.write(event.data)
+                            if pre_skip_remaining > 0:
+                                skip = min(pre_skip_remaining, len(event.data))
+                                pre_skip_remaining -= skip
+                                tail = event.data[skip:]
+                                if tail:
+                                    writer.write(tail)
+                            else:
+                                writer.write(event.data)
                         # else: phase 1 / duplicate mode -> discard bytes
                     elif isinstance(event, TitleChanged):
                         new_title = event.title
@@ -269,6 +288,14 @@ class StreamRecorder:
                         current_title = new_title
                         clean = new_title.strip()
                         if not clean:
+                            recording = False
+                            continue
+                        if self._is_ad_title(clean):
+                            self._log.info(
+                                "[%s] Ad title detected, skipping: %s",
+                                self.station_name,
+                                clean,
+                            )
                             recording = False
                             continue
                         track = TrackInfo.from_stream_title(clean)
@@ -318,10 +345,12 @@ class StreamRecorder:
                                 min_size=self.settings.min_file_size_bytes,
                             )
                             recording = True
+                            pre_skip_remaining = self._pre_buffer_bytes
                             self._log.info(
-                                "[%s] Recording -> %s",
+                                "[%s] Recording -> %s%s",
                                 self.station_name,
                                 file_path.name,
+                                f" (skipping first {pre_skip_remaining} bytes)" if pre_skip_remaining else "",
                             )
                         except OSError as exc:
                             self._log.error(

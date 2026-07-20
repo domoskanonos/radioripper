@@ -94,6 +94,16 @@ class RadioRipperApp:
             self.logger.error("No streams configured. Exiting.")
             return
         for stream in self.settings.streams:
+            effective_patterns = (
+                stream.ad_title_patterns
+                if stream.ad_title_patterns is not None
+                else self.settings.ad_title_patterns
+            )
+            effective_pre_buffer = (
+                stream.pre_buffer_bytes
+                if stream.pre_buffer_bytes is not None
+                else self.settings.pre_buffer_bytes
+            )
             rec = StreamRecorder(
                 station_name=stream.name,
                 playlist_url=str(stream.url),
@@ -105,6 +115,8 @@ class RadioRipperApp:
                 metadata_provider=self.metadata,
                 enrich_semaphore=self._enrich_sem,
                 logger=self.logger,
+                ad_title_patterns=effective_patterns,
+                pre_buffer_bytes=effective_pre_buffer,
             )
             rec.start()
             self._recorders.append(rec)
