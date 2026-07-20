@@ -77,6 +77,7 @@ class Settings(BaseModel):
 
     reprobe_on_start: bool = True
     min_duration_s: float = Field(default=0, ge=0)
+    github_pat: str = ""
     acoustid_api_key: str = ""
     acoustid_min_score: float = Field(default=0.8, ge=0.0, le=1.0)
     discard_unmatched: bool = False

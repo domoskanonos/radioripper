@@ -1,10 +1,9 @@
-"""M3U radio-stream discovery — fetch ``+checked+`` playlists via GitHub API.
+"""M3U radio-stream discovery — fetch ``+checked+`` playlists via ZIP download.
 
-Lists all ``.m3u`` files in the ``+checked+`` directory of the
-``junguler/m3u-radio-music-playlists`` repo, downloads them, parses the entries,
-filters by user-defined keywords, probes for ICY support + bitrate, and caches
-the top-N working stations together with a hash of the active keywords so the
-cache is invalidated when the keywords change.
+Downloads the repo ZIP, extracts it, parses all ``.m3u`` files from the
+``+checked+`` directory, filters by user-defined keywords, probes for ICY
+support + bitrate, and caches the top-N working stations together with a hash
+of the active keywords so the cache is invalidated when the keywords change.
 """
 
 from __future__ import annotations
@@ -12,9 +11,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import io
 import json
 import logging
+import os
 import random
+import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,10 +26,7 @@ import httpx
 from radio_ripper.infra.config import Settings, StreamConfig
 
 _LOGGER = logging.getLogger("radio_ripper.discovery")
-_API_URL = (
-    "https://api.github.com/repos/junguler/m3u-radio-music-playlists/contents/%2Bchecked%2B"
-)
-_RAW_BASE = "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists/main/+checked+"
+_ZIP_URL = "https://github.com/junguler/m3u-radio-music-playlists/archive/refs/heads/main.zip"
 _PROBE_TIMEOUT = 8.0
 _MAX_CONCURRENT = 50
 
@@ -46,7 +46,6 @@ def _keywords_hash(keywords: list[str]) -> str:
 
 
 def _parse_m3u_text(text: str, source: str) -> list[M3uEntry]:
-    """Parse M3U content from a string and return entries."""
     entries: list[M3uEntry] = []
     current_name = ""
     for line in text.splitlines():
@@ -161,33 +160,49 @@ async def _probe_batch(
     return ok
 
 
-async def _list_m3u_files() -> list[str]:
-    """List ``.m3u`` filenames in the ``+checked+`` repo directory."""
+async def _download_zip(github_pat: str = "") -> bytes:
+    """Download the repo ZIP and return raw bytes."""
+    headers: dict[str, str] = {"User-Agent": "Radio-Ripper/2.0"}
+    if github_pat:
+        headers["Authorization"] = f"Bearer {github_pat}"
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(15.0),
-        headers={"User-Agent": "Radio-Ripper/2.0", "Accept": "application/vnd.github.v3+json"},
-    ) as client:
-        resp = await client.get(_API_URL)
-        resp.raise_for_status()
-        items = resp.json()
-
-    return [
-        item["name"]
-        for item in items
-        if item["type"] == "file" and item["name"].lower().endswith(".m3u")
-    ]
-
-
-async def _fetch_m3u_content(filename: str) -> str:
-    """Download a single M3U file content via raw GitHub."""
-    url = f"{_RAW_BASE}/{filename}"
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(15.0),
+        timeout=httpx.Timeout(60.0),
         follow_redirects=True,
     ) as client:
-        resp = await client.get(url)
+        resp = await client.get(_ZIP_URL, headers=headers)
         resp.raise_for_status()
-        return resp.text
+        return resp.content
+
+
+def _extract_checked_entries(zip_bytes: bytes) -> list[M3uEntry]:
+    """Synchronously extract and parse all ``.m3u`` files from ``+checked+``."""
+    all_entries: list[M3uEntry] = []
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        checked_prefix = ""
+        for name in zf.namelist():
+            if "/+checked+/" in name or name.endswith("/+checked+/"):
+                parts = name.split("/")
+                idx = parts.index("+checked+")
+                checked_prefix = "/".join(parts[: idx + 1]) + "/"
+                break
+        if not checked_prefix:
+            return []
+
+        for name in zf.namelist():
+            if not name.startswith(checked_prefix):
+                continue
+            if not name.lower().endswith(".m3u"):
+                continue
+            filename = name[len(checked_prefix) :]
+            text = zf.read(name).decode("utf-8", errors="replace")
+            all_entries.extend(_parse_m3u_text(text, filename))
+    return all_entries
+
+
+async def _download_and_parse_zip(github_pat: str = "") -> list[M3uEntry]:
+    """Download repo ZIP and return parsed M3U entries from ``+checked+``."""
+    zip_bytes = await _download_zip(github_pat)
+    return await asyncio.to_thread(_extract_checked_entries, zip_bytes)
 
 
 # ---------------------------------------------------------------- cache
@@ -205,14 +220,12 @@ def _is_cache_fresh(cache_file: Path, max_age_days: int) -> bool:
 
 
 def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
-    """Load cached stations and their keywords_hash."""
     try:
         raw = json.loads(cache_file.read_text("utf-8"))
         if isinstance(raw, dict):
             stations = [StreamConfig(**s) for s in raw.get("stations", [])]
             kh = raw.get("_keywords_hash", "")
         else:
-            # legacy: flat list
             stations = [StreamConfig(**s) for s in raw if s.get("icy")]
             kh = ""
         return stations, kh
@@ -298,21 +311,8 @@ class PlaylistDiscoveryService:
         return result
 
     async def _discover(self) -> list[StreamConfig]:
-        filenames = await _list_m3u_files()
-        self._log.info("Found %d .m3u files in +checked+", len(filenames))
-
-        contents = await asyncio.gather(
-            *[_fetch_m3u_content(f) for f in filenames],
-            return_exceptions=True,
-        )
-
-        all_entries: list[M3uEntry] = []
-        for filename, text in zip(filenames, contents):
-            if isinstance(text, Exception):
-                self._log.debug("Failed to fetch %s: %s", filename, text)
-                continue
-            all_entries.extend(_parse_m3u_text(text, filename))
-
+        pat = self._settings.github_pat or os.environ.get("GITHUB_PAT", "")
+        all_entries = await _download_and_parse_zip(pat)
         self._log.info("Parsed %d total M3U entries", len(all_entries))
 
         filtered = _filter_keywords(all_entries, self._settings.stream_keywords)
@@ -345,7 +345,6 @@ class PlaylistDiscoveryService:
                     bitrate=probe.get("bitrate", 0),
                     icy=True,
                     source=entry.source,
-
                 )
             )
         return stations

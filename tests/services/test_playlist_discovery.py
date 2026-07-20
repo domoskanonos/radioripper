@@ -15,6 +15,8 @@ from radio_ripper.services.playlist_discovery import (
     M3uEntry,
     PlaylistDiscoveryService,
     _deduplicate_by_name,
+    _download_and_parse_zip,
+    _extract_checked_entries,
     _filter_keywords,
     _is_cache_fresh,
     _keywords_hash,
@@ -351,3 +353,70 @@ class TestPlaylistDiscoveryService:
             result = await svc.load_or_discover()
         assert len(result) == 1
         mock_discover.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# ZIP download & extract
+# ---------------------------------------------------------------------------
+
+
+class TestZipDownload:
+    def _make_zip(self, files: dict[str, str]) -> bytes:
+        """Build an in-memory ZIP file from a ``{path_in_zip: content}`` dict."""
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path, content in files.items():
+                zf.writestr(path, content)
+        return buf.getvalue()
+
+    def test_extract_no_checked_dir_returns_empty(self) -> None:
+        z = self._make_zip({"README.md": "hello"})
+        assert _extract_checked_entries(z) == []
+
+    def test_extract_checked_empty(self) -> None:
+        z = self._make_zip({"repo/+checked+/": ""})
+        assert _extract_checked_entries(z) == []
+
+    def test_extract_single_m3u(self) -> None:
+        content = "#EXTM3U\n#EXTINF:-1,Rock FM\nhttp://rock.example.com\n"
+        z = self._make_zip({"m3u-radio-music-playlists-main/+checked+/rock.m3u": content})
+        entries = _extract_checked_entries(z)
+        assert len(entries) == 1
+        assert entries[0].name == "Rock FM"
+        assert entries[0].url == "http://rock.example.com"
+        assert entries[0].source == "rock.m3u"
+
+    def test_extract_multiple_m3us(self) -> None:
+        fmt = "#EXTM3U\n#EXTINF:-1,{name}\n{url}\n"
+        z = self._make_zip({
+            "repo-main/+checked+/rock.m3u": fmt.format(name="Rock FM", url="http://a"),
+            "repo-main/+checked+/pop.m3u": fmt.format(name="Pop FM", url="http://b"),
+        })
+        entries = _extract_checked_entries(z)
+        assert len(entries) == 2
+        names = {e.name for e in entries}
+        assert names == {"Rock FM", "Pop FM"}
+
+    def test_extract_ignores_non_m3u(self) -> None:
+        z = self._make_zip({
+            "repo/+checked+/readme.txt": "hello",
+            "repo/+checked+/rock.m3u": "#EXTM3U\n#EXTINF:-1,Rock FM\nhttp://a\n",
+        })
+        assert len(_extract_checked_entries(z)) == 1
+
+    @pytest.mark.asyncio
+    async def test_download_and_parse_zip(self) -> None:
+        m3u = "#EXTM3U\n#EXTINF:-1,Pop FM\nhttp://pop.example.com\n"
+        zip_bytes = self._make_zip({"repo/+checked+/pop.m3u": m3u})
+
+        with patch(
+            "radio_ripper.services.playlist_discovery._download_zip",
+            return_value=zip_bytes,
+        ):
+            entries = await _download_and_parse_zip()
+        assert len(entries) == 1
+        assert entries[0].name == "Pop FM"
+        assert entries[0].url == "http://pop.example.com"
