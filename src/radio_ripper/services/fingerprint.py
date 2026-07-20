@@ -68,9 +68,13 @@ class AcoustidFingerprintProvider(FingerprintProvider):
             ) from exc
         loop = asyncio.get_running_loop()
         try:
-            results = await loop.run_in_executor(
+            gen = await loop.run_in_executor(
                 None, acoustid.match, self._api_key, str(path)
             )
+            # acoustid.match returns a generator (parse_lookup_result uses yield).
+            # Materialize it so we can subscript and len-check properly.
+            # This also surfaces any WebServiceError raised during iteration.
+            results = list(gen)
         except Exception as exc:
             raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
         if not results:

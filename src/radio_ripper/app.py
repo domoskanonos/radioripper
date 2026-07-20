@@ -118,7 +118,7 @@ class RadioRipperApp:
 
     async def reprocess_untested(self) -> None:
         """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
-        if not isinstance(self.fingerprint, AcoustidFingerprintProvider):
+        if self.fingerprint is None or isinstance(self.fingerprint, NullFingerprintProvider):
             self.logger.debug("No AcoustID provider — skipping untested reprocess.")
             return
         records = await self.repository.list_untested()
