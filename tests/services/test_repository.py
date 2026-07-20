@@ -115,3 +115,40 @@ class TestSQLiteTrackRepository:
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         conn.close()
         assert mode == "wal"
+
+    async def test_remove_deletes_record(self, sqlite_repo: SQLiteTrackRepository):
+        track = SavedTrack("A - B", "A", "B", "/x", 1)
+        await sqlite_repo.register(track, "Rock")
+        assert await sqlite_repo.exists("Rock", "A - B")
+        await sqlite_repo.remove("Rock", "A - B")
+        assert not await sqlite_repo.exists("Rock", "A - B")
+
+    async def test_update_fingerprint(self, sqlite_repo: SQLiteTrackRepository):
+        track = SavedTrack("A - B", "A", "B", "/x", 1)
+        await sqlite_repo.register(track, "Rock")
+        await sqlite_repo.update_fingerprint("Rock", "A - B", recording_id="abc123", score=0.95)
+        rec = await sqlite_repo.find_by_recording_id("abc123")
+        assert rec is not None
+        assert rec.station_name == "Rock"
+        assert rec.track.stream_title == "A - B"
+        assert rec.track.acoustid_score == 0.95
+
+    async def test_exists_by_recording_id(self, sqlite_repo: SQLiteTrackRepository):
+        track = SavedTrack("A - B", "A", "B", "/x", 1)
+        await sqlite_repo.register(track, "Rock")
+        await sqlite_repo.update_fingerprint("Rock", "A - B", recording_id="abc123", score=0.9)
+        assert await sqlite_repo.exists_by_recording_id("abc123")
+
+    async def test_exists_by_recording_id_exclude_station(
+        self, sqlite_repo: SQLiteTrackRepository
+    ):
+        track = SavedTrack("A - B", "A", "B", "/x", 1)
+        await sqlite_repo.register(track, "Rock")
+        await sqlite_repo.update_fingerprint("Rock", "A - B", recording_id="abc123", score=0.9)
+        assert not await sqlite_repo.exists_by_recording_id("abc123", exclude_station="Rock")
+        assert await sqlite_repo.exists_by_recording_id("abc123", exclude_station="Jazz")
+
+    async def test_find_by_recording_id_returns_none_when_missing(
+        self, sqlite_repo: SQLiteTrackRepository
+    ):
+        assert await sqlite_repo.find_by_recording_id("nope") is None

@@ -12,10 +12,19 @@ import asyncio
 import contextlib
 import sqlite3
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 
 from radio_ripper.domain.models import SavedTrack
 from radio_ripper.infra.errors import RepositoryError
+
+
+@dataclass(slots=True)
+class TrackRecord:
+    """A :class:`SavedTrack` together with its originating station name."""
+
+    station_name: str
+    track: SavedTrack
 
 _CREATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS songs (
@@ -40,6 +49,8 @@ _MIGRATION_COLUMNS = (
     ("year", "TEXT"),
     ("has_cover", "INTEGER DEFAULT 0"),
     ("enrichment", "TEXT"),
+    ("acoustid_recording_id", "TEXT"),
+    ("acoustid_score", "REAL"),
 )
 
 
@@ -53,6 +64,29 @@ class TrackRepository(ABC):
     @abstractmethod
     async def register(self, track: SavedTrack, station_name: str) -> None:
         """Insert a recorded track (ignored on duplicate key)."""
+
+    @abstractmethod
+    async def update_fingerprint(
+        self,
+        station_name: str,
+        stream_title: str,
+        *,
+        recording_id: str,
+        score: float,
+    ) -> None:
+        """Update a registered track with AcoustID fingerprint results."""
+
+    @abstractmethod
+    async def exists_by_recording_id(
+        self, recording_id: str, exclude_station: str | None = None
+    ) -> bool:
+        """Return True if *recording_id* is already stored (optionally excluding a station)."""
+
+    @abstractmethod
+    async def find_by_recording_id(
+        self, recording_id: str
+    ) -> TrackRecord | None:
+        """Return the existing track record for a recording_id, or None."""
 
     @abstractmethod
     async def update_enrichment(
@@ -127,8 +161,9 @@ class SQLiteTrackRepository(TrackRepository):
                 """
                 INSERT OR IGNORE INTO songs
                     (station_name, stream_title, artist, title,
-                     album, year, file_path, file_size, has_cover, enrichment)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     album, year, file_path, file_size, has_cover, enrichment,
+                     acoustid_recording_id, acoustid_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     station_name,
@@ -141,6 +176,8 @@ class SQLiteTrackRepository(TrackRepository):
                     track.file_size,
                     1 if track.has_cover else 0,
                     track.enrichment,
+                    track.acoustid_recording_id,
+                    track.acoustid_score,
                 ),
             )
         except sqlite3.Error as exc:
@@ -212,6 +249,109 @@ class SQLiteTrackRepository(TrackRepository):
             )
         except sqlite3.Error as exc:
             raise RepositoryError(f"update_enrichment() failed: {exc}") from exc
+
+    async def update_fingerprint(
+        self,
+        station_name: str,
+        stream_title: str,
+        *,
+        recording_id: str,
+        score: float,
+    ) -> None:
+        async with self._lock:
+            await asyncio.to_thread(
+                self._update_fingerprint_sync,
+                station_name,
+                stream_title,
+                recording_id,
+                score,
+            )
+
+    def _update_fingerprint_sync(
+        self,
+        station_name: str,
+        stream_title: str,
+        recording_id: str,
+        score: float,
+    ) -> None:
+        try:
+            self._conn.execute(
+                """
+                UPDATE songs SET
+                    acoustid_recording_id = ?,
+                    acoustid_score = ?
+                WHERE station_name=? AND LOWER(stream_title)=LOWER(?)
+                """,
+                (recording_id, score, station_name, stream_title),
+            )
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"update_fingerprint() failed: {exc}") from exc
+
+    async def exists_by_recording_id(
+        self, recording_id: str, exclude_station: str | None = None
+    ) -> bool:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._exists_by_recording_id_sync, recording_id, exclude_station
+            )
+
+    def _exists_by_recording_id_sync(
+        self, recording_id: str, exclude_station: str | None
+    ) -> bool:
+        try:
+            if exclude_station:
+                cur = self._conn.execute(
+                    "SELECT 1 FROM songs "
+                    "WHERE acoustid_recording_id=? AND station_name!=? LIMIT 1",
+                    (recording_id, exclude_station),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT 1 FROM songs WHERE acoustid_recording_id=? LIMIT 1",
+                    (recording_id,),
+                )
+            return cur.fetchone() is not None
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"exists_by_recording_id() failed: {exc}") from exc
+
+    async def find_by_recording_id(self, recording_id: str) -> TrackRecord | None:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._find_by_recording_id_sync, recording_id
+            )
+
+    def _find_by_recording_id_sync(self, recording_id: str) -> TrackRecord | None:
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT station_name, stream_title, artist, title,
+                       file_path, file_size, album, year, has_cover,
+                       enrichment, acoustid_recording_id, acoustid_score
+                FROM songs WHERE acoustid_recording_id=? LIMIT 1
+                """,
+                (recording_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return TrackRecord(
+                station_name=row["station_name"],
+                track=SavedTrack(
+                    stream_title=row["stream_title"],
+                    artist=row["artist"] or "",
+                    title=row["title"] or "",
+                    file_path=row["file_path"],
+                    file_size=row["file_size"] or 0,
+                    album=row["album"],
+                    year=row["year"],
+                    has_cover=bool(row["has_cover"]),
+                    enrichment=row["enrichment"],
+                    acoustid_recording_id=row["acoustid_recording_id"],
+                    acoustid_score=row["acoustid_score"],
+                ),
+            )
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"find_by_recording_id() failed: {exc}") from exc
 
     async def remove(self, station_name: str, stream_title: str) -> None:
         async with self._lock:

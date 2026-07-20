@@ -196,6 +196,23 @@ class PlaylistDiscoveryService:
                 self._log.info(
                     "Using %d cached stations from %s", len(cached), _CACHE_FILE
                 )
+                if self._settings.reprobe_on_start:
+                    alive = await self._reprobe(cached)
+                    if len(alive) < len(cached):
+                        self._log.info(
+                            "Reprobe: %d/%d stations still alive",
+                            len(alive), len(cached),
+                        )
+                    if len(alive) < self._settings.discovery_max_stations // 2:
+                        self._log.info(
+                            "Too few stations alive (%d), re-running full discovery…",
+                            len(alive),
+                        )
+                        stations = await self._discover()
+                        _save_cache(_CACHE_FILE, stations)
+                        return stations
+                    _save_cache(_CACHE_FILE, alive)
+                    return alive
                 return cached
 
         self._log.info("Starting playlist discovery (keywords=%s)…", self._settings.stream_keywords)
@@ -203,6 +220,32 @@ class PlaylistDiscoveryService:
         _save_cache(_CACHE_FILE, stations)
         self._log.info("Discovery complete: %d stations saved to %s", len(stations), _CACHE_FILE)
         return stations
+
+    async def _reprobe(self, stations: list[StreamConfig]) -> list[StreamConfig]:
+        """Re-probe cached stations and return only those still alive."""
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
+        entries = [
+            M3uEntry(name=s.name, url=str(s.url), source=s.source)
+            for s in stations
+        ]
+        good = await _probe_batch(entries, len(stations), semaphore)
+        alive_map = {g[0].url: g[1] for g in good}
+        result: list[StreamConfig] = []
+        for s in stations:
+            url = str(s.url)
+            if url in alive_map:
+                probe = alive_map[url]
+                result.append(
+                    StreamConfig(
+                        name=s.name,
+                        url=s.url,
+                        enabled=s.enabled,
+                        bitrate=probe.get("bitrate", s.bitrate),
+                        icy=True,
+                        source=s.source,
+                    )
+                )
+        return result
 
     async def _discover(self) -> list[StreamConfig]:
         repo_dir = await _ensure_repo(self._settings.discovery_repo_url)
@@ -268,7 +311,7 @@ def _load_cache(cache_file: Path) -> list[StreamConfig]:
 
 def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    data = [s.model_dump() for s in stations]
+    data = [s.model_dump(mode="json") for s in stations]
     cache_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
 
 

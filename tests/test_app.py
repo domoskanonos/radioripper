@@ -43,6 +43,20 @@ class FakeRepo(TrackRepository):
     async def aclose(self) -> None:
         pass
 
+    async def update_fingerprint(
+        self, station_name: str, stream_title: str, *,
+        recording_id: str, score: float,
+    ) -> None:
+        pass
+
+    async def exists_by_recording_id(
+        self, recording_id: str, exclude_station: str | None = None
+    ) -> bool:
+        return False
+
+    async def find_by_recording_id(self, recording_id: str) -> None:
+        return None
+
 
 class TestRadioRipperApp:
     async def test_create_recorders_for_each_stream(self, tmp_path):

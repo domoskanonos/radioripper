@@ -75,6 +75,7 @@ class Settings(BaseModel):
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
 
+    reprobe_on_start: bool = True
     min_duration_s: float = Field(default=0, ge=0)
     acoustid_api_key: str = ""
     acoustid_min_score: float = Field(default=0.8, ge=0.0, le=1.0)

@@ -75,6 +75,8 @@ class SavedTrack:
     year: str | None = None
     has_cover: bool = False
     enrichment: str | None = None
+    acoustid_recording_id: str | None = None
+    acoustid_score: float | None = None
     extras: dict[str, str] = field(default_factory=dict)
 
 

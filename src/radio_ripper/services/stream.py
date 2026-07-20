@@ -561,14 +561,95 @@ class StreamRecorder:
                     self.station_name,
                     file_path.name,
                 )
-        else:
+            return
+
+        self._log.info(
+            "[%s] AcoustID match (score=%.2f): %s - %s (rec=%s)",
+            self.station_name,
+            result.score,
+            result.artist,
+            result.title,
+            result.recording_id,
+        )
+
+        # Persist fingerprint result in the DB
+        try:
+            await self._repo.update_fingerprint(
+                self.station_name,
+                track.stream_title,
+                recording_id=result.recording_id,
+                score=result.score,
+            )
+        except Exception as exc:
+            self._log.debug(
+                "[%s] db update_fingerprint: %s", self.station_name, exc
+            )
+
+        if not result.recording_id:
+            return
+
+        # Cross-station dedup: if same recording_id exists from another station
+        # with a score >= current, discard this file.
+        try:
+            existing = await self._repo.find_by_recording_id(result.recording_id)
+        except Exception as exc:
+            self._log.debug(
+                "[%s] find_by_recording_id: %s", self.station_name, exc
+            )
+            return
+
+        if existing is not None:
+            old_score = existing.track.acoustid_score or 0.0
+            # Exclude this very recording (same station + title) from comparison
+            same_song = (
+                existing.track.stream_title.lower() == track.stream_title.lower()
+                and existing.station_name == self.station_name
+            )
+            if same_song:
+                return
+
+            if result.score <= old_score:
+                # Existing recording is same quality or better — discard new one
+                self._log.info(
+                    "[%s] Duplicate via AcoustID (existing score=%.2f >= %.2f) — "
+                    "discarding new: %s",
+                    self.station_name,
+                    old_score,
+                    result.score,
+                    file_path.name,
+                )
+                with contextlib.suppress(OSError):
+                    file_path.unlink(missing_ok=True)
+                try:
+                    await self._repo.remove(self.station_name, track.stream_title)
+                except Exception as exc:
+                    self._log.debug(
+                        "[%s] db remove after acoustid-dup: %s",
+                        self.station_name, exc,
+                    )
+                return
+
+            # New recording has a better score — replace the old one
+            old_path = Path(existing.track.file_path)
             self._log.info(
-                "[%s] AcoustID match (score=%.2f): %s - %s",
+                "[%s] Better AcoustID match (%.2f > %.2f) — "
+                "replacing existing: %s",
                 self.station_name,
                 result.score,
-                result.artist,
-                result.title,
+                old_score,
+                old_path.name,
             )
+            with contextlib.suppress(OSError):
+                old_path.unlink(missing_ok=True)
+            try:
+                await self._repo.remove(
+                    existing.station_name, existing.track.stream_title
+                )
+            except Exception as exc:
+                self._log.debug(
+                    "[%s] db remove old for replacement: %s",
+                    self.station_name, exc,
+                )
 
 
 def _parse_metaint(headers: dict[str, str]) -> int | None:
