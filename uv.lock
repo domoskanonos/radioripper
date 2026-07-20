@@ -1479,6 +1479,14 @@ gui = [
     { name = "gradio" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "respx" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "gradio", marker = "extra == 'gui'", specifier = ">=4.44.0" },
@@ -1496,6 +1504,14 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.0" },
 ]
 provides-extras = ["dev", "gui"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "respx", specifier = ">=0.23.1" },
+]
 
 [[package]]
 name = "respx"

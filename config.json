@@ -1,5 +1,5 @@
 {
-  "destination": "./recordings",
+  "destination": "/home/laptop/Musik",
   "database": "./recordings/ripper.db",
   "streams": [
     { "name": "TopHits",    "url": "http://tophits.radiomonster.fm/listen.m3u" },
@@ -23,5 +23,6 @@
   "embed_cover_art": true,
   "enrichment_workers": 4,
   "metadata_timeout": 8.0,
-  "cover_timeout": 15.0
+  "cover_timeout": 15.0,
+  "no_icy_disable_after": 10
 }

@@ -59,7 +59,7 @@ class StreamRecorder:
         enrich_semaphore: asyncio.Semaphore | None = None,
         logger: logging.Logger | None = None,
         ad_title_patterns: list[str] | None = None,
-        pre_buffer_bytes: int = 0,
+        no_icy_disable_after: int = 10,
     ) -> None:
         self.station_name = station_name
         self.playlist_url = playlist_url
@@ -77,7 +77,8 @@ class StreamRecorder:
         self._ad_patterns: list[re.Pattern[str]] = [
             re.compile(p, re.IGNORECASE) for p in (ad_title_patterns or [])
         ]
-        self._pre_buffer_bytes = pre_buffer_bytes
+        self._no_icy_disable_after = no_icy_disable_after
+        self._no_icy_failures = 0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -112,6 +113,14 @@ class StreamRecorder:
                 self._log.exception("Uncaught error in recorder '%s'", self.station_name)
                 ok = False
             if self._stop_event.is_set():
+                break
+            if self._no_icy_failures >= self._no_icy_disable_after:
+                self._log.error(
+                    "[%s] Disabled: no ICY metadata after %d consecutive attempts. "
+                    "Stream likely does not support ICY or always plays ads.",
+                    self.station_name,
+                    self._no_icy_failures,
+                )
                 break
             if ok:
                 delay = self.settings.reconnect_base_delay
@@ -160,10 +169,17 @@ class StreamRecorder:
         resp_headers = self._http.response_headers()
         metaint = _parse_metaint(resp_headers)
         if not metaint or metaint <= 0:
-            self._log.info("[%s] No icy-metaint header; closing.", self.station_name)
+            self._no_icy_failures += 1
+            self._log.info(
+                "[%s] No icy-metaint header; closing. (failure %d/%d)",
+                self.station_name,
+                self._no_icy_failures,
+                self._no_icy_disable_after,
+            )
             with contextlib.suppress(Exception):
                 await agen.aclose()
             return False
+        self._no_icy_failures = 0  # reset on successful ICY connection
         self._log.info("[%s] icy-metaint=%d", self.station_name, metaint)
         parser = IcyParser(metaint)
 
@@ -171,7 +187,6 @@ class StreamRecorder:
         current_title: str | None = None
         writer: TrackWriter | None = None
         recording = False
-        pre_skip_remaining: int = 0  # bytes to discard at start of each new recording
 
         async def _close_writer(finalize: bool) -> None:
             nonlocal writer, current_title, recording
@@ -260,14 +275,7 @@ class StreamRecorder:
                 for event in parser.events():
                     if isinstance(event, AudioChunk):
                         if recording and writer is not None:
-                            if pre_skip_remaining > 0:
-                                skip = min(pre_skip_remaining, len(event.data))
-                                pre_skip_remaining -= skip
-                                tail = event.data[skip:]
-                                if tail:
-                                    writer.write(tail)
-                            else:
-                                writer.write(event.data)
+                            writer.write(event.data)
                         # else: phase 1 / duplicate mode -> discard bytes
                     elif isinstance(event, TitleChanged):
                         new_title = event.title
@@ -346,12 +354,10 @@ class StreamRecorder:
                                 min_size=self.settings.min_file_size_bytes,
                             )
                             recording = True
-                            pre_skip_remaining = self._pre_buffer_bytes
                             self._log.info(
-                                "[%s] Recording -> %s%s",
+                                "[%s] Recording -> %s",
                                 self.station_name,
                                 file_path.name,
-                                f" (skipping first {pre_skip_remaining} bytes)" if pre_skip_remaining else "",
                             )
                         except OSError as exc:
                             self._log.error(
