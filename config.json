@@ -24,5 +24,8 @@
   "enrichment_workers": 4,
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
+  "min_track_duration_seconds": 60.0,
+  "tail_trim_bytes": 0,
+  "pre_buffer_bytes": 0,
   "no_icy_disable_after": 10
 }
