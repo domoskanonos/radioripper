@@ -31,6 +31,7 @@ from radio_ripper.services.metadata import (
 )
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver
 from radio_ripper.services.repository import SQLiteTrackRepository, TrackRepository
+from radio_ripper.services.storage import remove_empty_parents
 from radio_ripper.services.stream import StreamRecorder
 from radio_ripper.services.tagging import ID3Tagger, TrackTagger
 
@@ -112,8 +113,54 @@ class RadioRipperApp:
     def recorders(self) -> Sequence[StreamRecorder]:
         return list(self._recorders)
 
+    async def reprocess_untested(self) -> None:
+        """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
+        if not isinstance(self.fingerprint, AcoustidFingerprintProvider):
+            self.logger.debug("No AcoustID provider — skipping untested reprocess.")
+            return
+        records = await self.repository.list_untested()
+        if not records:
+            return
+        self.logger.info("Re-fingerprinting %d untested files from previous run…", len(records))
+        for rec in records:
+            p = Path(rec.track.file_path)
+            if not p.is_file():
+                self.logger.warning("Untested file missing: %s", p)
+                continue
+            try:
+                result = await self.fingerprint.fingerprint(p)
+            except Exception:
+                self.logger.debug("fingerprint error for %s", p.name)
+                continue
+            if result is None:
+                self.logger.info("Still no AcoustID match for %s", p.name)
+                if self.settings.discard_unmatched:
+                    with contextlib.suppress(OSError):
+                        p.unlink(missing_ok=True)
+                        remove_empty_parents(p, self.settings.destination)
+                    await self.repository.remove(rec.station_name, rec.track.stream_title)
+                    self.logger.info("Discarded (still no match): %s", p.name)
+                continue
+            new_path = p.with_name(p.stem.replace(".untested", "") + ".mp3")
+            with contextlib.suppress(OSError):
+                p.rename(new_path)
+            try:
+                self.tagger.update_acoustid(new_path, result.recording_id, result.score)
+            except Exception as exc:
+                self.logger.debug("acoustid tag update: %s", exc)
+            await self.repository.update_file_path(
+                rec.station_name, rec.track.stream_title, str(new_path)
+            )
+            await self.repository.update_fingerprint(
+                rec.station_name, rec.track.stream_title,
+                recording_id=result.recording_id, score=result.score,
+            )
+            self.logger.info("Re-fingerprinted OK: %s", new_path.name)
+        self.logger.info("Untested reprocess complete (%d files).", len(records))
+
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
+        await self.reprocess_untested()
         if not self.settings.streams:
             discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
             if not discovered:

@@ -105,6 +105,16 @@ class TrackRepository(ABC):
         """Update a previously-registered track with enrichment results."""
 
     @abstractmethod
+    async def list_untested(self) -> list[TrackRecord]:
+        """Return all records whose file_path ends with ``.untested.mp3``."""
+
+    @abstractmethod
+    async def update_file_path(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        """Update the file path after renaming (e.g. .untested.mp3 → .mp3)."""
+
+    @abstractmethod
     async def remove(self, station_name: str, stream_title: str) -> None:
         """Remove a previously-registered track from the repository."""
 
@@ -351,7 +361,64 @@ class SQLiteTrackRepository(TrackRepository):
                 ),
             )
         except sqlite3.Error as exc:
-            raise RepositoryError(f"find_by_recording_id() failed: {exc}") from exc
+            raise RepositoryError(f"update_fingerprint() failed: {exc}") from exc
+
+    async def list_untested(self) -> list[TrackRecord]:
+        async with self._lock:
+            return await asyncio.to_thread(self._list_untested_sync)
+
+    def _list_untested_sync(self) -> list[TrackRecord]:
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT station_name, stream_title, artist, title,
+                       file_path, file_size, album, year, has_cover,
+                       enrichment, acoustid_recording_id, acoustid_score
+                FROM songs WHERE file_path LIKE '%.untested.mp3'
+                """
+            )
+            result: list[TrackRecord] = []
+            for row in cur.fetchall():
+                result.append(
+                    TrackRecord(
+                        station_name=row["station_name"],
+                        track=SavedTrack(
+                            stream_title=row["stream_title"],
+                            artist=row["artist"] or "",
+                            title=row["title"] or "",
+                            file_path=row["file_path"],
+                            file_size=row["file_size"] or 0,
+                            album=row["album"],
+                            year=row["year"],
+                            has_cover=bool(row["has_cover"]),
+                            enrichment=row["enrichment"],
+                            acoustid_recording_id=row["acoustid_recording_id"],
+                            acoustid_score=row["acoustid_score"],
+                        ),
+                    )
+                )
+            return result
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"list_untested() failed: {exc}") from exc
+
+    async def update_file_path(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        async with self._lock:
+            await asyncio.to_thread(
+                self._update_file_path_sync, station_name, stream_title, new_path
+            )
+
+    def _update_file_path_sync(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        try:
+            self._conn.execute(
+                "UPDATE songs SET file_path=? WHERE station_name=? AND LOWER(stream_title)=LOWER(?)",
+                (new_path, station_name, stream_title),
+            )
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"update_file_path() failed: {exc}") from exc
 
     async def remove(self, station_name: str, stream_title: str) -> None:
         async with self._lock:

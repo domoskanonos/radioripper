@@ -370,6 +370,8 @@ class StreamRecorder:
                             fallback_album=self.station_name,
                             overwrite=self.settings.overwrite_existing_files,
                         )
+                        # Write as .untested.mp3 until AcoustID confirms the match
+                        file_path = file_path.with_name(file_path.stem + ".untested" + file_path.suffix)
                         if file_path.exists() and not self.settings.overwrite_existing_files:
                             self._log.info(
                                 "[%s] File exists (no db record) - registering & skip: %s",
@@ -589,6 +591,23 @@ class StreamRecorder:
             result.title,
             result.recording_id,
         )
+
+        # Rename .untested.mp3 → .mp3
+        new_path = file_path.with_name(file_path.stem.replace(".untested", "") + ".mp3")
+        with contextlib.suppress(OSError):
+            file_path.rename(new_path)
+        # Write AcoustID info into ID3 tags on the new path
+        try:
+            self._tagger.update_acoustid(new_path, result.recording_id, result.score)
+        except Exception as exc:
+            self._log.debug("[%s] acoustid tag update: %s", self.station_name, exc)
+        # Update DB file_path to the new name
+        try:
+            await self._repo.update_file_path(
+                self.station_name, track.stream_title, str(new_path)
+            )
+        except Exception as exc:
+            self._log.debug("[%s] db update_file_path: %s", self.station_name, exc)
 
         # Persist fingerprint result in the DB
         try:

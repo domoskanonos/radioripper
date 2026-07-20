@@ -124,6 +124,14 @@ class FakeRepoThatSaysExisting(TrackRepository):
     async def find_by_recording_id(self, recording_id: str) -> None:
         return None
 
+    async def list_untested(self) -> list:
+        return []
+
+    async def update_file_path(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        pass
+
 
 class FakeRepoFresh(TrackRepository):
     """TrackRepository that never says exists — for recording tests."""
@@ -162,6 +170,14 @@ class FakeRepoFresh(TrackRepository):
 
     async def find_by_recording_id(self, recording_id: str) -> None:
         return None
+
+    async def list_untested(self) -> list:
+        return []
+
+    async def update_file_path(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        pass
 
 
 class FakeRepoExistingAfterFirst(FakeRepoFresh):

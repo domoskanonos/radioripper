@@ -57,6 +57,14 @@ class FakeRepo(TrackRepository):
     async def find_by_recording_id(self, recording_id: str) -> None:
         return None
 
+    async def list_untested(self) -> list:
+        return []
+
+    async def update_file_path(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        pass
+
 
 class TestRadioRipperApp:
     async def test_create_recorders_for_each_stream(self, tmp_path):

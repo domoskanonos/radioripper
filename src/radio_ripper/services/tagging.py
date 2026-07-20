@@ -115,6 +115,12 @@ class TrackTagger(ABC):
     ) -> None:
         """Write enriched tags including album/year/genre and cover art."""
 
+    @abstractmethod
+    def update_acoustid(
+        self, file_path: Path, recording_id: str, score: float
+    ) -> None:
+        """Add AcoustID/MusicBrainz tags to an already-tagged file."""
+
 
 def _load_or_create(file_path: Path) -> ID3:
     """Load an existing ID3 tag or create a fresh one.
@@ -214,6 +220,24 @@ class ID3Tagger(TrackTagger):
             raise TaggingError(f"failed to save enriched tags to {file_path}: {exc}") from exc
 
 
+    def update_acoustid(
+        self, file_path: Path, recording_id: str, score: float
+    ) -> None:
+        try:
+            audio = _load_or_create(file_path)
+        except Exception as exc:
+            raise TaggingError(f"failed to load {file_path} for acoustid tag: {exc}") from exc
+        audio.delall("TXXX:MusicBrainz Recording Id")
+        audio.delall("TXXX:AcoustID Score")
+        if recording_id:
+            audio.add(TXXX(encoding=3, desc="MusicBrainz Recording Id", text=recording_id))
+        audio.add(TXXX(encoding=3, desc="AcoustID Score", text=str(round(score, 4))))
+        try:
+            audio.save(file_path, v2_version=3, v1=2)
+        except Exception as exc:
+            raise TaggingError(f"failed to save acoustid tags to {file_path}: {exc}") from exc
+
+
 class NullTagger(TrackTagger):
     """No-op tagger (used when tagging is disabled)."""
 
@@ -229,6 +253,11 @@ class NullTagger(TrackTagger):
         provenance: str,
         *,
         fallback_cover: bytes | None = None,
+    ) -> None:
+        return None
+
+    def update_acoustid(
+        self, file_path: Path, recording_id: str, score: float
     ) -> None:
         return None
 
