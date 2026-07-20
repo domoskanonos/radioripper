@@ -162,6 +162,7 @@ async def _probe_batch(
 
 async def _download_zip(github_pat: str = "") -> bytes:
     """Download the repo ZIP and return raw bytes."""
+    _LOGGER.info("Downloading ZIP from GitHub (%s)…", _ZIP_URL)
     headers: dict[str, str] = {"User-Agent": "Radio-Ripper/2.0"}
     if github_pat:
         headers["Authorization"] = f"Bearer {github_pat}"
@@ -171,6 +172,7 @@ async def _download_zip(github_pat: str = "") -> bytes:
     ) as client:
         resp = await client.get(_ZIP_URL, headers=headers)
         resp.raise_for_status()
+        _LOGGER.info("ZIP downloaded (%d bytes)", len(resp.content))
         return resp.content
 
 
@@ -186,16 +188,22 @@ def _extract_checked_entries(zip_bytes: bytes) -> list[M3uEntry]:
                 checked_prefix = "/".join(parts[: idx + 1]) + "/"
                 break
         if not checked_prefix:
+            _LOGGER.warning("No +checked+ directory found in ZIP")
             return []
 
-        for name in zf.namelist():
-            if not name.startswith(checked_prefix):
-                continue
-            if not name.lower().endswith(".m3u"):
-                continue
+        m3u_files = [
+            name
+            for name in zf.namelist()
+            if name.startswith(checked_prefix) and name.lower().endswith(".m3u")
+        ]
+        _LOGGER.info("Found %d .m3u files in +checked+", len(m3u_files))
+
+        for name in m3u_files:
             filename = name[len(checked_prefix) :]
             text = zf.read(name).decode("utf-8", errors="replace")
             all_entries.extend(_parse_m3u_text(text, filename))
+
+    _LOGGER.info("Extracted %d M3U entries from ZIP", len(all_entries))
     return all_entries
 
 
