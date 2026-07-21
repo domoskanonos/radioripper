@@ -41,3 +41,9 @@ Pydantic-v2-Modelle mit Validierung:
 - type-check: mypy strict
 - test: pytest --cov auf Python 3.11-3.13
 - GitHub Pages: mkdocs-gerenderte arc42-Dokumentation
+
+## 8.6 Rechtliche Hinweise / Legal Compliance
+
+**DE:** Radio-Ripper ist ein Werkzeug zur privaten, nicht-kommerziellen Aufnahme öffentlich zugänglicher Internet-Radiostreams. Die Software selbst enthält keine DRM-Umgehung, keine Authentifizierung an geschützten Diensten und keine Funktion zum Teilen oder Veröffentlichen von Mitschnitten. Jegliche Nutzung, die gegen geltendes Urheberrecht oder Nutzungsbedingungen Dritter verstösst, liegt in der alleinigen Verantwortung des Nutzers.
+
+**EN:** Radio-Ripper is a tool for private, non-commercial recording of publicly available internet radio streams. The software itself does not circumvent DRM, does not authenticate against protected services, and provides no functionality to share or publish recordings. Any use that violates applicable copyright laws or third-party terms of service is the sole responsibility of the user.

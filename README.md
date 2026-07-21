@@ -217,3 +217,23 @@ CI (GitHub Actions) läuft bei jedem Push: Ruff → MyPy → Pytest (3.11 + 3.12
 ## Lizenz
 
 Siehe [LICENSE](LICENSE).
+
+---
+
+## ⚖️ Rechtlicher Hinweis / Legal Disclaimer
+
+**DE:** Diese Software ist ausschließlich für **private, nicht-kommerzielle Test- und Bildungszwecke** bestimmt. Sie zeichnet öffentlich zugängliche Internet-Radiostreams auf — vergleichbar mit dem zeitversetzten Hören (Time-Shifting) eines Radios oder DVR-Geräts.
+
+- **Du bist allein verantwortlich** dafür, dass die Nutzung dieser Software mit den Urheberrechtsgesetzen und Nutzungsbedingungen der von dir aufgerufenen Streams in deinem Land vereinbar ist.
+- **Gib keine Mitschnitte weiter, veröffentliche sie nicht und vermarkte sie nicht.**
+- **Umgehe kein DRM und greife nicht auf zugriffsgeschützte Inhalte zu.**
+- Die Autoren und Mitwirkenden von Radio-Ripper übernehmen **keine Haftung** für die missbräuchliche Verwendung dieser Software.
+
+---
+
+**EN:** This software is intended for **private, non-commercial, educational and personal testing purposes only**. It records publicly available internet radio streams — analogous to time-shifting with a radio or DVR device.
+
+- **You are solely responsible** for ensuring that your use complies with applicable copyright laws and the terms of service of any streams you access in your jurisdiction.
+- **Do not** distribute, publish, or monetize recordings made with this tool.
+- **Do not** bypass DRM or access restricted content.
+- The authors and contributors of Radio-Ripper assume **no liability** for any misuse of this software.
