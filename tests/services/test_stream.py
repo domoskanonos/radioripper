@@ -134,6 +134,9 @@ class FakeRepoThatSaysExisting(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def list_all(self) -> list[TrackRecord]:
+        return []
+
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
 
@@ -196,6 +199,9 @@ class FakeRepoFresh(TrackRepository):
         return None
 
     async def list_untested(self) -> list:
+        return []
+
+    async def list_all(self) -> list[TrackRecord]:
         return []
 
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
@@ -591,6 +597,9 @@ class _FingerprintRepo(TrackRepository):
         return self.Find_by_id_returns
 
     async def list_untested(self) -> list:
+        return []
+
+    async def list_all(self) -> list[TrackRecord]:
         return []
 
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:

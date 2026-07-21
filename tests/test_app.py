@@ -83,6 +83,9 @@ class FakeRepo(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def list_all(self) -> list[TrackRecord]:
+        return []
+
     async def find_by_file_path(self, file_path: str) -> None:
         return None
 
@@ -248,6 +251,9 @@ class _StubRepo(TrackRepository):
     async def list_untested(self) -> list[TrackRecord]:
         return list(self.untested)
 
+    async def list_all(self) -> list[TrackRecord]:
+        return list(self.untested)
+
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
 
@@ -387,6 +393,9 @@ class _LookupStubRepo(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def list_all(self) -> list[TrackRecord]:
+        return list(self.records.values())
+
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
 
@@ -427,10 +436,10 @@ class TestReprocessAll:
         settings = _make_settings(tmp_path, reprocess_all=True)
         app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
         await app._reprocess_all()
-        untested = dest / "Artist" / "Artist - Title.untested.mp3"
-        assert untested.exists(), "File must be restructured + renamed to .untested.mp3"
+        restructured = dest / "Artist" / "Artist - Title.mp3"
+        assert restructured.exists(), "File must be restructured into artist folder"
         assert not mp3_file.exists(), "Original .mp3 must be gone"
-        assert repo.updated_paths == [("TestStation", "Artist - Title", str(untested))]
+        assert repo.updated_paths == [("TestStation", "Artist - Title", str(restructured))]
 
     async def test_skips_untested_files(self, tmp_path) -> None:
         dest = tmp_path / "recordings"

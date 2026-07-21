@@ -317,6 +317,18 @@ class StreamRecorder:
                             max_rec,
                             d.name,
                         )
+                        try:
+                            rec = await self._repo.find_by_file_path(str(d))
+                            if rec is not None:
+                                await self._repo.remove(
+                                    rec.station_name, rec.track.stream_title
+                                )
+                        except Exception as exc:
+                            self._log.debug(
+                                "[%s] db-remove for limit-deleted file: %s",
+                                self.station_name,
+                                exc,
+                            )
                 # Kick off async fingerprinting (non-blocking)
                 if self._fingerprint is not None:
                     fp_task = asyncio.create_task(

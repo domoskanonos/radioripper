@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from radio_ripper.infra.config import Settings
+from radio_ripper.infra.errors import ConfigurationError
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.fingerprint import (
     AcoustidFingerprintProvider,
@@ -101,13 +102,14 @@ class RadioRipperApp:
 
             load_dotenv()
         api_key = settings.acoustid_api_key or os.environ.get("ACCOUST_ID", "")
-        fingerprint: FingerprintProvider = (
-            AcoustidFingerprintProvider(
-                api_key,
-                min_score=settings.acoustid_min_score,
+        if not api_key:
+            raise ConfigurationError(
+                "AcoustID API-Key required. Set acoustid_api_key in config.json "
+                "or ACCOUST_ID environment variable."
             )
-            if api_key
-            else NullFingerprintProvider()
+        fingerprint: FingerprintProvider = AcoustidFingerprintProvider(
+            api_key,
+            min_score=settings.acoustid_min_score,
         )
         # Cover Art Archive: secondary cover-art source keyed on MusicBrainz
         # recording IDs returned by AcoustID. Used by StreamRecorder when
@@ -133,21 +135,20 @@ class RadioRipperApp:
         return list(self._recorders)
 
     async def _reprocess_all(self) -> None:
-        """Restructure all existing ``.mp3`` files and reset to ``.untested.mp3``.
+        """Restructure existing ``.mp3`` files to the new folder layout.
 
         Triggered by ``settings.reprocess_all``. For each file:
         1. Looks up the DB record.
         2. If enrichment data is missing, fetches it from iTunes.
         3. Computes the new path without the station fallback folder
            (``{Artist}[/{Album}]/{Song}.mp3``).
-        4. Moves the file and removes empty old directories.
-        5. Renames ``.mp3`` to ``.untested.mp3`` for a fresh fingerprint pass.
+        4. Moves the file, removes empty old directories, updates the DB.
 
-        Runs before :meth:`reprocess_untested`.
+        Files keep their ``.mp3`` extension — no ``.untested`` reset.
         """
         if not self.settings.reprocess_all:
             return
-        self.logger.info("Reprocess-all enabled — restructuring + resetting to .untested…")
+        self.logger.info("Reprocess-all enabled — restructuring files…")
         count = 0
         for mp3 in sorted(self.settings.destination.rglob("*.mp3")):
             if mp3.suffix != ".mp3" or mp3.name.endswith(".untested.mp3"):
@@ -157,7 +158,6 @@ class RadioRipperApp:
                 self.logger.warning("No DB entry for %s — skipping", mp3)
                 continue
 
-            # Enrichment: use stored album or fetch from iTunes
             album = record.track.album
             if not album and not isinstance(self.metadata, NullMetadataProvider):
                 async with self._enrich_sem:
@@ -171,7 +171,6 @@ class RadioRipperApp:
                             "[%s] enrichment fetch failed: %s", record.station_name, exc
                         )
 
-            # Compute new path without station fallback
             new_path = compute_file_path(
                 self.settings.destination,
                 record.track.artist,
@@ -180,27 +179,16 @@ class RadioRipperApp:
                 album=album,
                 overwrite=True,
             )
-            new_untested = new_path.with_name(new_path.stem + ".untested.mp3")
 
-            # Move + rename to .untested (or just rename if path unchanged)
-            if mp3 != new_untested:
-                new_untested.parent.mkdir(parents=True, exist_ok=True)
+            if mp3 != new_path:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    shutil.move(str(mp3), str(new_untested))
+                    shutil.move(str(mp3), str(new_path))
                     remove_empty_parents(mp3, self.settings.destination)
                 except OSError as exc:
-                    self.logger.warning("Move %s -> %s failed: %s", mp3, new_untested, exc)
-                    continue
-            else:
-                try:
-                    mp3.rename(new_untested)
-                except OSError as exc:
-                    self.logger.warning(
-                        "Rename %s -> %s failed: %s", mp3, new_untested.name, exc
-                    )
+                    self.logger.warning("Move %s -> %s failed: %s", mp3, new_path, exc)
                     continue
 
-            # Persist album to DB if enrichment succeeded
             if album:
                 try:
                     await self.repository.update_enrichment(
@@ -212,10 +200,10 @@ class RadioRipperApp:
                 except Exception as exc:
                     self.logger.debug("[%s] db enrichment update: %s", record.station_name, exc)
             await self.repository.update_file_path(
-                record.station_name, record.track.stream_title, str(new_untested)
+                record.station_name, record.track.stream_title, str(new_path)
             )
             count += 1
-        self.logger.info("Reprocess-all: %d files restructured + reset to .untested.", count)
+        self.logger.info("Reprocess-all: %d files restructured.", count)
 
     async def reprocess_untested(self) -> None:
         """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
@@ -231,7 +219,13 @@ class RadioRipperApp:
         for rec in records:
             p = Path(rec.track.file_path)
             if not p.is_file():
-                self.logger.warning("Untested file missing: %s", p)
+                self.logger.warning(
+                    "Untested file missing, removing DB record: %s", p
+                )
+                with contextlib.suppress(Exception):
+                    await self.repository.remove(
+                        rec.station_name, rec.track.stream_title
+                    )
                 continue
             if min_interval > 0:
                 now = time.monotonic()
@@ -306,10 +300,30 @@ class RadioRipperApp:
             self.logger.info("Re-fingerprinted OK: %s", new_path.name)
         self.logger.info("Untested reprocess complete (%d files).", len(records))
 
+    async def _cleanup_orphans(self) -> None:
+        """Remove DB records whose ``file_path`` no longer exists on disk."""
+        count = 0
+        for rec in await self.repository.list_all():
+            if not Path(rec.track.file_path).is_file():
+                with contextlib.suppress(Exception):
+                    await self.repository.remove(
+                        rec.station_name, rec.track.stream_title
+                    )
+                self.logger.info(
+                    "Removed orphan DB record (file missing): %s",
+                    rec.track.file_path,
+                )
+                count += 1
+        if count:
+            self.logger.info("Orphan cleanup: removed %d stale records.", count)
+        else:
+            self.logger.debug("Orphan cleanup: no stale records found.")
+
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
         await self._reprocess_all()
         await self.reprocess_untested()
+        await self._cleanup_orphans()
         if not self.settings.streams:
             discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
             if not discovered:
