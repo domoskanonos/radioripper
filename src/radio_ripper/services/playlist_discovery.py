@@ -16,7 +16,6 @@ import hashlib
 import json
 import logging
 import os
-import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,6 +91,98 @@ def _filter_keywords(entries: list[M3uEntry], keywords: list[str]) -> list[M3uEn
     return result
 
 
+def _match_keywords(
+    entries: list[M3uEntry], keywords: list[str]
+) -> list[tuple[M3uEntry, set[str]]]:
+    """Return (entry, set_of_matched_keywords) for entries matching any keyword."""
+    if not keywords:
+        return [(e, set()) for e in entries]
+    lowered = [k.lower().strip() for k in keywords if k.strip()]
+    if not lowered:
+        return [(e, set()) for e in entries]
+    result: list[tuple[M3uEntry, set[str]]] = []
+    for e in entries:
+        text = (e.name + " " + e.extinf).lower()
+        matched: set[str] = set()
+        for kw in lowered:
+            if kw in text:
+                matched.add(kw)
+        if matched:
+            result.append((e, matched))
+    return result
+
+
+def _distribute_probe_pool(
+    matched: list[tuple[M3uEntry, set[str]]],
+    keywords: list[str],
+    max_needed: int,
+) -> list[M3uEntry]:
+    """Build a probe pool that gives each keyword a fair chance.
+
+    Allocates up to ``ceil(max_needed / len(keywords))`` slots per keyword
+    and round-robins entries so no single keyword dominates the probe.
+    """
+    lowered = [k.lower().strip() for k in keywords if k.strip()]
+    if not lowered or max_needed <= 0:
+        return [e for e, _ in matched]
+
+    per_keyword: dict[str, list[M3uEntry]] = {kw: [] for kw in lowered}
+    for entry, matched_set in matched:
+        for kw in matched_set:
+            per_keyword[kw].append(entry)
+
+    seen: set[str] = set()
+    pool: list[M3uEntry] = []
+    # Round-robin until we have enough or run out
+    while len(pool) < max_needed:
+        added = 0
+        for kw in lowered:
+            bucket = per_keyword[kw]
+            remaining = [e for e in bucket if e.name.lower().strip() not in seen]
+            if not remaining:
+                continue
+            entry = remaining.pop(0)
+            # Rotate the bucket so we don't pick the same entry next round
+            bucket.remove(entry)
+            seen.add(entry.name.lower().strip())
+            pool.append(entry)
+            added += 1
+            if len(pool) >= max_needed:
+                break
+        if added == 0:
+            break
+
+    for kw in lowered:
+        count = sum(
+            1 for e in pool
+            if any(kw in matched for e2, matched in matched if e2.name == e.name)
+        )
+        if count < 5:
+            _LOGGER.warning("Keyword '%s' has only %d station(s) in probe pool (< 5).", kw, count)
+
+    return pool
+
+
+def _keyword_coverage(
+    good: list[tuple[M3uEntry, dict[str, Any]]],
+    keywords: list[str],
+) -> None:
+    """Log per-keyword station counts after probing."""
+    lowered = [k.lower().strip() for k in keywords if k.strip()]
+    for kw in lowered:
+        text_key = kw
+        count = sum(
+            1 for entry, _ in good
+            if text_key in (entry.name + " " + entry.extinf).lower()
+        )
+        if count < 5:
+            _LOGGER.warning(
+                "Keyword '%s' has only %d probed station(s) (< 5).", kw, count
+            )
+        else:
+            _LOGGER.info("Keyword '%s': %d stations", kw, count)
+
+
 def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
     seen: set[str] = set()
     result: list[M3uEntry] = []
@@ -157,14 +248,12 @@ async def _probe_batch(
 
     tasks = [asyncio.create_task(_probe_one(e)) for e in entries]
     ok: list[tuple[M3uEntry, dict[str, Any]]] = []
-    done: set[asyncio.Task[Any]] = set()
     pending = set(tasks)
 
     while pending and len(ok) < max_ok:
         done_set, pending = await asyncio.wait(
             pending, timeout=3, return_when=asyncio.FIRST_COMPLETED
         )
-        done.update(done_set)
         for t in done_set:
             try:
                 result = t.result()
@@ -284,11 +373,14 @@ class PlaylistDiscoveryService:
         entries = [M3uEntry(name=s.name, url=str(s.url), source=s.source) for s in stations]
         good = await _probe_batch(entries, len(stations), semaphore)
         alive_map = {g[0].url: g[1] for g in good}
+        min_bps = self._settings.discovery_min_bitrate
         result: list[StreamConfig] = []
         for s in stations:
             url = str(s.url)
             if url in alive_map:
                 probe = alive_map[url]
+                if min_bps > 0 and probe.get("bitrate", 0) < min_bps:
+                    continue
                 result.append(
                     StreamConfig(
                         name=s.name,
@@ -307,7 +399,9 @@ class PlaylistDiscoveryService:
         all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
         self._log.info("Parsed %d total M3U entries", len(all_entries))
 
-        filtered = _filter_keywords(all_entries, self._settings.stream_keywords)
+        keywords = self._settings.stream_keywords
+        matched = _match_keywords(all_entries, keywords)
+        filtered = [e for e, _ in matched]
         self._log.info("After keyword filter: %d entries", len(filtered))
 
         unique = _deduplicate_by_name(filtered)
@@ -317,28 +411,44 @@ class PlaylistDiscoveryService:
             self._log.warning("No stations matched the configured keywords.")
             return []
 
-        random.shuffle(unique)
         max_needed = self._settings.discovery_max_stations
-        semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
+        probe_pool = _distribute_probe_pool(matched, keywords, max_needed)
 
-        self._log.info("Probing for ICY-capable streams (need %d)…", max_needed)
-        good = await _probe_batch(unique, max_needed, semaphore)
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
+        self._log.info("Probing for ICY-capable streams (need %d, pool=%d)…", max_needed, len(probe_pool))
+        good = await _probe_batch(probe_pool, max_needed, semaphore)
         self._log.info("Probing done: %d ICY-capable streams found", len(good))
+
+        _keyword_coverage(good, keywords)
+
+        min_bps = self._settings.discovery_min_bitrate
+        if min_bps > 0:
+            before = len(good)
+            good = [(e, p) for e, p in good if p.get("bitrate", 0) >= min_bps]
+            if len(good) < before:
+                self._log.info(
+                    "Filtered %d stations below %d kbps bitrate",
+                    before - len(good),
+                    min_bps,
+                )
 
         good.sort(key=lambda x: x[1].get("bitrate", 0), reverse=True)
 
         stations: list[StreamConfig] = []
         for entry, probe in good[:max_needed]:
-            stations.append(
-                StreamConfig(
-                    name=entry.name[:64],
-                    url=entry.url,  # type: ignore[arg-type]
-                    enabled=True,
-                    bitrate=probe.get("bitrate", 0),
-                    icy=True,
-                    source=entry.source,
+            try:
+                stations.append(
+                    StreamConfig(
+                        name=entry.name[:64],
+                        url=entry.url,  # type: ignore[arg-type]
+                        enabled=True,
+                        bitrate=probe.get("bitrate", 0),
+                        icy=True,
+                        source=entry.source,
+                    )
                 )
-            )
+            except Exception as exc:
+                _LOGGER.warning("Skipping %s: invalid config: %s", entry.name, exc)
         return stations
 
 
