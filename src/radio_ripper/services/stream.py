@@ -287,8 +287,8 @@ class StreamRecorder:
 
                 saved = SavedTrack(
                     stream_title=track.stream_title,
-                    artist=info.artist if info else track.artist,
-                    title=info.title if info else track.title,
+                    artist=info.artist if info and info.artist else track.artist,
+                    title=info.title if info and info.title else track.title,
                     file_path=str(final_path),
                     file_size=final_path.stat().st_size,
                     album=info.album if info else None,

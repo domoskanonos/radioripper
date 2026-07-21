@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,7 +36,10 @@ from radio_ripper.services.metadata import (
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 from radio_ripper.services.repository import SQLiteTrackRepository, TrackRepository
-from radio_ripper.services.storage import remove_empty_parents
+from radio_ripper.services.storage import (
+    compute_file_path,
+    remove_empty_parents,
+)
 from radio_ripper.services.stream import StreamRecorder
 from radio_ripper.services.tagging import ID3Tagger, TrackTagger
 
@@ -129,34 +133,89 @@ class RadioRipperApp:
         return list(self._recorders)
 
     async def _reprocess_all(self) -> None:
-        """Rename all already-processed ``.mp3`` files back to ``.untested.mp3``.
+        """Restructure all existing ``.mp3`` files and reset to ``.untested.mp3``.
 
-        Triggered by ``settings.reprocess_all``. Runs before
-        :meth:`reprocess_untested` so every file gets a fresh fingerprint pass.
+        Triggered by ``settings.reprocess_all``. For each file:
+        1. Looks up the DB record.
+        2. If enrichment data is missing, fetches it from iTunes.
+        3. Computes the new path without the station fallback folder
+           (``{Artist}[/{Album}]/{Song}.mp3``).
+        4. Moves the file and removes empty old directories.
+        5. Renames ``.mp3`` to ``.untested.mp3`` for a fresh fingerprint pass.
+
+        Runs before :meth:`reprocess_untested`.
         """
         if not self.settings.reprocess_all:
             return
-        self.logger.info("Reprocess-all enabled — resetting all .mp3 files to .untested…")
-        pattern = "*.mp3"
+        self.logger.info("Reprocess-all enabled — restructuring + resetting to .untested…")
         count = 0
-        for mp3 in sorted(self.settings.destination.rglob(pattern)):
+        for mp3 in sorted(self.settings.destination.rglob("*.mp3")):
             if mp3.suffix != ".mp3" or mp3.name.endswith(".untested.mp3"):
                 continue
             record = await self.repository.find_by_file_path(str(mp3))
             if record is None:
                 self.logger.warning("No DB entry for %s — skipping", mp3)
                 continue
-            untested = mp3.with_name(mp3.stem + ".untested.mp3")
-            try:
-                mp3.rename(untested)
-            except OSError as exc:
-                self.logger.warning("Rename %s -> %s failed: %s", mp3.name, untested.name, exc)
-                continue
+
+            # Enrichment: use stored album or fetch from iTunes
+            album = record.track.album
+            if not album and not isinstance(self.metadata, NullMetadataProvider):
+                async with self._enrich_sem:
+                    try:
+                        info = await self.metadata.fetch(
+                            record.track.artist, record.track.title
+                        )
+                        album = info.album if info else None
+                    except Exception as exc:
+                        self.logger.debug(
+                            "[%s] enrichment fetch failed: %s", record.station_name, exc
+                        )
+
+            # Compute new path without station fallback
+            new_path = compute_file_path(
+                self.settings.destination,
+                record.track.artist,
+                record.track.title,
+                record.track.stream_title,
+                album=album,
+                overwrite=True,
+            )
+            new_untested = new_path.with_name(new_path.stem + ".untested.mp3")
+
+            # Move + rename to .untested (or just rename if path unchanged)
+            if mp3 != new_untested:
+                new_untested.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.move(str(mp3), str(new_untested))
+                    remove_empty_parents(mp3, self.settings.destination)
+                except OSError as exc:
+                    self.logger.warning("Move %s -> %s failed: %s", mp3, new_untested, exc)
+                    continue
+            else:
+                try:
+                    mp3.rename(new_untested)
+                except OSError as exc:
+                    self.logger.warning(
+                        "Rename %s -> %s failed: %s", mp3, new_untested.name, exc
+                    )
+                    continue
+
+            # Persist album to DB if enrichment succeeded
+            if album:
+                try:
+                    await self.repository.update_enrichment(
+                        record.station_name,
+                        record.track.stream_title,
+                        album=album,
+                        enrichment="itunes",
+                    )
+                except Exception as exc:
+                    self.logger.debug("[%s] db enrichment update: %s", record.station_name, exc)
             await self.repository.update_file_path(
-                record.station_name, record.track.stream_title, str(untested)
+                record.station_name, record.track.stream_title, str(new_untested)
             )
             count += 1
-        self.logger.info("Reprocess-all: %d files reset to .untested.", count)
+        self.logger.info("Reprocess-all: %d files restructured + reset to .untested.", count)
 
     async def reprocess_untested(self) -> None:
         """Re-fingerprint ``.untested.mp3`` files left from a previous run."""

@@ -427,8 +427,8 @@ class TestReprocessAll:
         settings = _make_settings(tmp_path, reprocess_all=True)
         app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
         await app._reprocess_all()
-        untested = dest / "Artist - Title.untested.mp3"
-        assert untested.exists(), "File must be renamed to .untested.mp3"
+        untested = dest / "Artist" / "Artist - Title.untested.mp3"
+        assert untested.exists(), "File must be restructured + renamed to .untested.mp3"
         assert not mp3_file.exists(), "Original .mp3 must be gone"
         assert repo.updated_paths == [("TestStation", "Artist - Title", str(untested))]
 
