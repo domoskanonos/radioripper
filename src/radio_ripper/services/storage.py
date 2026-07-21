@@ -206,28 +206,9 @@ def remove_empty_parents(file_path: Path, root: Path) -> None:
         child = child.parent
 
 
-def enforce_recording_limit(station_dir: Path, max_count: int) -> list[Path]:
-    """Delete the oldest MP3 files in *station_dir* when the count exceeds *max_count*.
-
-    Files are sorted by modification time (oldest first). Searches recursively
-    through artist/album subdirectories.
-    Returns the list of deleted paths.
-    """
-    mp3_files = sorted(station_dir.rglob("*.mp3"), key=lambda p: p.stat().st_mtime)
-    deleted: list[Path] = []
-    while len(mp3_files) > max_count:
-        oldest = mp3_files.pop(0)
-        with contextlib.suppress(OSError):
-            oldest.unlink(missing_ok=True)
-        deleted.append(oldest)
-        remove_empty_parents(oldest, station_dir)
-    return deleted
-
-
 __all__ = [
     "TrackWriter",
     "compute_file_path",
-    "enforce_recording_limit",
     "get_mp3_duration",
     "remove_empty_parents",
     "remux_mp3",

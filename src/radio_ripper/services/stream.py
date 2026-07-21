@@ -22,6 +22,7 @@ import contextlib
 import logging
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,6 @@ from radio_ripper.services.repository import TrackRepository
 from radio_ripper.services.storage import (
     TrackWriter,
     compute_file_path,
-    enforce_recording_limit,
     get_mp3_duration,
     remove_empty_parents,
     remux_mp3,
@@ -92,6 +92,7 @@ class StreamRecorder:
         # Per-file locks: serialize enrichment vs fingerprinting on the same path
         # so rename (in _fingerprint_song) doesn't race with write_full (in _enrich_song).
         self._file_locks: dict[Path, asyncio.Lock] = {}
+        self._last_limit_log = 0.0
 
     def _lock_for(self, path: Path) -> asyncio.Lock:
         """Get (or create) the asyncio.Lock for *path*."""
@@ -306,29 +307,6 @@ class StreamRecorder:
                     final_path.name,
                     final_path.stat().st_size,
                 )
-                # Enforce global recording limit
-                max_rec = self.settings.max_recordings
-                if max_rec is not None:
-                    deleted = enforce_recording_limit(self.settings.destination, max_rec)
-                    for d in deleted:
-                        self._log.info(
-                            "[%s] Limit %d reached - deleted oldest: %s",
-                            self.station_name,
-                            max_rec,
-                            d.name,
-                        )
-                        try:
-                            rec = await self._repo.find_by_file_path(str(d))
-                            if rec is not None:
-                                await self._repo.remove(
-                                    rec.station_name, rec.track.stream_title
-                                )
-                        except Exception as exc:
-                            self._log.debug(
-                                "[%s] db-remove for limit-deleted file: %s",
-                                self.station_name,
-                                exc,
-                            )
                 # Kick off async fingerprinting (non-blocking)
                 if self._fingerprint is not None:
                     fp_task = asyncio.create_task(
@@ -449,6 +427,20 @@ class StreamRecorder:
                                 )
                             recording = False
                             continue
+                        # ---- max_recordings guard ----
+                        if self.settings.max_recordings is not None:
+                            all_records = await self._repo.list_all()
+                            if len(all_records) >= self.settings.max_recordings:
+                                now = time.monotonic()
+                                if now - self._last_limit_log >= 60.0:
+                                    self._log.warning(
+                                        "[%s] Max recordings (%d) reached — not recording more.",
+                                        self.station_name,
+                                        self.settings.max_recordings,
+                                    )
+                                    self._last_limit_log = now
+                                recording = False
+                                continue
                         try:
                             writer = TrackWriter(
                                 file_path,
