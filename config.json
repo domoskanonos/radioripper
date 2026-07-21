@@ -17,5 +17,6 @@
   "enrichment_workers": 4,
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
-  "no_icy_disable_after": 10
+  "no_icy_disable_after": 10,
+  "reprocess_all": false
 }

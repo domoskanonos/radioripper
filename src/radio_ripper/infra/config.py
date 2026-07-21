@@ -76,6 +76,7 @@ class Settings(BaseModel):
     cover_timeout: float = Field(default=15.0, ge=0.5)
 
     reprobe_on_start: bool = True
+    reprocess_all: bool = False
     min_duration_s: float = Field(default=30, ge=0)
     github_pat: str = ""
     acoustid_api_key: str = ""

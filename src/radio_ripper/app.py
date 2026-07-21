@@ -128,6 +128,36 @@ class RadioRipperApp:
     def recorders(self) -> Sequence[StreamRecorder]:
         return list(self._recorders)
 
+    async def _reprocess_all(self) -> None:
+        """Rename all already-processed ``.mp3`` files back to ``.untested.mp3``.
+
+        Triggered by ``settings.reprocess_all``. Runs before
+        :meth:`reprocess_untested` so every file gets a fresh fingerprint pass.
+        """
+        if not self.settings.reprocess_all:
+            return
+        self.logger.info("Reprocess-all enabled — resetting all .mp3 files to .untested…")
+        pattern = "*.mp3"
+        count = 0
+        for mp3 in sorted(self.settings.destination.rglob(pattern)):
+            if mp3.suffix != ".mp3" or mp3.name.endswith(".untested.mp3"):
+                continue
+            record = await self.repository.find_by_file_path(str(mp3))
+            if record is None:
+                self.logger.warning("No DB entry for %s — skipping", mp3)
+                continue
+            untested = mp3.with_name(mp3.stem + ".untested.mp3")
+            try:
+                mp3.rename(untested)
+            except OSError as exc:
+                self.logger.warning("Rename %s -> %s failed: %s", mp3.name, untested.name, exc)
+                continue
+            await self.repository.update_file_path(
+                record.station_name, record.track.stream_title, str(untested)
+            )
+            count += 1
+        self.logger.info("Reprocess-all: %d files reset to .untested.", count)
+
     async def reprocess_untested(self) -> None:
         """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
         if self.fingerprint is None or isinstance(self.fingerprint, NullFingerprintProvider):
@@ -215,6 +245,7 @@ class RadioRipperApp:
 
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
+        await self._reprocess_all()
         await self.reprocess_untested()
         if not self.settings.streams:
             discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()

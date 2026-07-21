@@ -129,6 +129,9 @@ class FakeRepoThatSaysExisting(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def find_by_file_path(self, file_path: str) -> None:
+        return None
+
     async def update_file_path(
         self, station_name: str, stream_title: str, new_path: str
     ) -> None:
@@ -175,6 +178,9 @@ class FakeRepoFresh(TrackRepository):
 
     async def list_untested(self) -> list:
         return []
+
+    async def find_by_file_path(self, file_path: str) -> None:
+        return None
 
     async def update_file_path(
         self, station_name: str, stream_title: str, new_path: str
@@ -554,6 +560,9 @@ class _FingerprintRepo(TrackRepository):
 
     async def list_untested(self) -> list:
         return []
+
+    async def find_by_file_path(self, file_path: str) -> None:
+        return None
 
     async def update_file_path(
         self, station_name: str, stream_title: str, new_path: str

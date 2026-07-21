@@ -69,6 +69,9 @@ class FakeRepo(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def find_by_file_path(self, file_path: str) -> None:
+        return None
+
     async def update_file_path(
         self, station_name: str, stream_title: str, new_path: str
     ) -> None:
@@ -229,6 +232,9 @@ class _StubRepo(TrackRepository):
     async def list_untested(self) -> list[TrackRecord]:
         return list(self.untested)
 
+    async def find_by_file_path(self, file_path: str) -> None:
+        return None
+
     async def update_file_path(
         self, station_name: str, stream_title: str, new_path: str
     ) -> None:
@@ -322,6 +328,118 @@ def _make_app(
         fingerprint_provider=fingerprint,
         playlist_resolver=StaticPlaylistResolver(["http://x"]),
     )
+
+
+class _LookupStubRepo(TrackRepository):
+    """Repo stub that returns records by file_path."""
+
+    def __init__(self, records: dict[str, TrackRecord]) -> None:
+        self.records = records
+        self.updated_paths: list[tuple[str, str, str]] = []
+
+    async def exists(self, *args, **kwargs) -> bool:
+        return False
+    async def register(self, *args, **kwargs) -> None:
+        pass
+    async def update_enrichment(self, *args, **kwargs) -> None:
+        pass
+    async def remove(self, *args, **kwargs) -> None:
+        pass
+    async def aclose(self) -> None:
+        pass
+    async def update_fingerprint(self, **kwargs) -> None:
+        pass
+    async def exists_by_recording_id(self, **kwargs) -> bool:
+        return False
+    async def find_by_recording_id(self, **kwargs) -> None:
+        return None
+    async def list_untested(self) -> list:
+        return []
+
+    async def find_by_file_path(self, file_path: str) -> TrackRecord | None:
+        return self.records.get(file_path)
+
+    async def update_file_path(
+        self, station_name: str, stream_title: str, new_path: str
+    ) -> None:
+        self.updated_paths.append((station_name, stream_title, new_path))
+
+
+class TestReprocessAll:
+    """RadioRipperApp._reprocess_all() — reset .mp3 → .untested.mp3."""
+
+    async def test_renames_and_updates_db(self, tmp_path) -> None:
+        dest = tmp_path / "recordings"
+        mp3_file = dest / "Artist - Title.mp3"
+        mp3_file.parent.mkdir(parents=True)
+        mp3_file.write_bytes(b"\xff\xfb" + b"\x00" * 100)
+        record = TrackRecord(
+            station_name="TestStation",
+            track=SavedTrack(
+                stream_title="Artist - Title", artist="Artist", title="Title",
+                file_path=str(mp3_file), file_size=102,
+            ),
+        )
+        repo = _LookupStubRepo(records={str(mp3_file): record})
+        settings = _make_settings(tmp_path, reprocess_all=True)
+        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
+        await app._reprocess_all()
+        untested = dest / "Artist - Title.untested.mp3"
+        assert untested.exists(), "File must be renamed to .untested.mp3"
+        assert not mp3_file.exists(), "Original .mp3 must be gone"
+        assert repo.updated_paths == [
+            ("TestStation", "Artist - Title", str(untested))
+        ]
+
+    async def test_skips_untested_files(self, tmp_path) -> None:
+        dest = tmp_path / "recordings"
+        untested = dest / "Artist - Title.untested.mp3"
+        untested.parent.mkdir(parents=True)
+        untested.write_bytes(b"\x00" * 32)
+        record = TrackRecord(
+            station_name="TestStation",
+            track=SavedTrack(
+                stream_title="Artist - Title", artist="Artist", title="Title",
+                file_path=str(untested), file_size=32,
+            ),
+        )
+        repo = _LookupStubRepo(records={})
+        settings = _make_settings(tmp_path, reprocess_all=True)
+        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
+        await app._reprocess_all()
+        assert untested.exists(), ".untested.mp3 must not be touched"
+        assert repo.updated_paths == []
+
+    async def test_skips_orphan_files_without_db_entry(self, tmp_path) -> None:
+        dest = tmp_path / "recordings"
+        mp3_file = dest / "Orphan - File.mp3"
+        mp3_file.parent.mkdir(parents=True)
+        mp3_file.write_bytes(b"\x00" * 32)
+        repo = _LookupStubRepo(records={})
+        settings = _make_settings(tmp_path, reprocess_all=True)
+        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
+        await app._reprocess_all()
+        assert mp3_file.exists(), "Orphan .mp3 without DB entry must not be renamed"
+        assert repo.updated_paths == []
+
+    async def test_noop_when_disabled(self, tmp_path) -> None:
+        dest = tmp_path / "recordings"
+        mp3_file = dest / "Artist - Title.mp3"
+        mp3_file.parent.mkdir(parents=True)
+        mp3_file.write_bytes(b"\x00" * 32)
+        record = TrackRecord(
+            station_name="TestStation",
+            track=SavedTrack(
+                stream_title="Artist - Title", artist="Artist", title="Title",
+                file_path=str(mp3_file), file_size=32,
+            ),
+        )
+        repo = _LookupStubRepo(records={str(mp3_file): record})
+        settings = _make_settings(tmp_path, reprocess_all=False)
+        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
+        await app._reprocess_all()
+        assert mp3_file.exists(), ".mp3 must stay untouched when reprocess_all=False"
+        assert repo.updated_paths == []
 
 
 class TestReprocessUntested:

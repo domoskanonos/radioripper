@@ -105,6 +105,10 @@ class TrackRepository(ABC):
         """Update a previously-registered track with enrichment results."""
 
     @abstractmethod
+    async def find_by_file_path(self, file_path: str) -> TrackRecord | None:
+        """Return the record for an exact *file_path*, or ``None``."""
+
+    @abstractmethod
     async def list_untested(self) -> list[TrackRecord]:
         """Return all records whose file_path ends with ``.untested.mp3``."""
 
@@ -362,6 +366,43 @@ class SQLiteTrackRepository(TrackRepository):
             )
         except sqlite3.Error as exc:
             raise RepositoryError(f"update_fingerprint() failed: {exc}") from exc
+
+    async def find_by_file_path(self, file_path: str) -> TrackRecord | None:
+        async with self._lock:
+            return await asyncio.to_thread(self._find_by_file_path_sync, file_path)
+
+    def _find_by_file_path_sync(self, file_path: str) -> TrackRecord | None:
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT station_name, stream_title, artist, title,
+                       file_path, file_size, album, year, has_cover,
+                       enrichment, acoustid_recording_id, acoustid_score
+                FROM songs WHERE file_path=? LIMIT 1
+                """,
+                (file_path,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return TrackRecord(
+                station_name=row["station_name"],
+                track=SavedTrack(
+                    stream_title=row["stream_title"],
+                    artist=row["artist"] or "",
+                    title=row["title"] or "",
+                    file_path=row["file_path"],
+                    file_size=row["file_size"] or 0,
+                    album=row["album"],
+                    year=row["year"],
+                    has_cover=bool(row["has_cover"]),
+                    enrichment=row["enrichment"],
+                    acoustid_recording_id=row["acoustid_recording_id"],
+                    acoustid_score=row["acoustid_score"],
+                ),
+            )
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"find_by_file_path() failed: {exc}") from exc
 
     async def list_untested(self) -> list[TrackRecord]:
         async with self._lock:
