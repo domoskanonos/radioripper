@@ -11,12 +11,12 @@
   "min_file_size_bytes": 1024,
   "log_level": "INFO",
   "log_file": "./radio_ripper.log",
-  "max_recordings": 500,
+  "max_recordings": 50000,
   "enrich_metadata": true,
   "embed_cover_art": true,
   "enrichment_workers": 4,
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
   "no_icy_disable_after": 10,
-  "reprocess_all": true
+  "reprocess_all": false
 }
