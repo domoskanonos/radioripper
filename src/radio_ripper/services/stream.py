@@ -371,14 +371,6 @@ class StreamRecorder:
                             recording = False
                             continue
                         track = TrackInfo.from_stream_title(clean)
-                        if await self._repo.exists(self.station_name, clean):
-                            self._log.info(
-                                "[%s] Skipping duplicate: %s",
-                                self.station_name,
-                                clean,
-                            )
-                            recording = False
-                            continue
                         file_path = compute_file_path(
                             self.settings.destination,
                             track.artist,
@@ -602,6 +594,43 @@ class StreamRecorder:
                             self.station_name,
                             file_path.name,
                         )
+                        # Fallback dedup: check if the same artist+title already exists
+                        # and has an AcoustID match.  A matched recording is always
+                        # preferable to an unmatched one.
+                        if track.artist and track.title:
+                            try:
+                                all_artist_title = await self._repo.find_all_by_artist_title(
+                                    track.artist, track.title,
+                                )
+                            except Exception:
+                                all_artist_title = []
+                            # If ANY existing recording already has an AcoustID match,
+                            # discard this new, unmatched copy.
+                            has_matched = any(
+                                e.track.acoustid_recording_id for e in all_artist_title
+                                if not (e.station_name == self.station_name
+                                        and e.track.stream_title.lower() == track.stream_title.lower())
+                            )
+                            if has_matched:
+                                self._log.info(
+                                    "[%s] AcoustID unmatched, but a matched version"
+                                    " already exists — discarding new: %s",
+                                    self.station_name,
+                                    file_path.name,
+                                )
+                                with contextlib.suppress(OSError):
+                                    file_path.unlink(missing_ok=True)
+                                    remove_empty_parents(file_path, self.settings.destination)
+                                try:
+                                    await self._repo.remove(
+                                        self.station_name, track.stream_title
+                                    )
+                                except Exception as exc:
+                                    self._log.debug(
+                                        "[%s] db remove after fallback-dup: %s",
+                                        self.station_name, exc,
+                                    )
+                                return
                         if self.settings.discard_unmatched:
                             with contextlib.suppress(OSError):
                                 file_path.unlink(missing_ok=True)
@@ -700,71 +729,100 @@ class StreamRecorder:
     
                     if not result.recording_id:
                         return
-    
-                    # Cross-station dedup: if same recording_id exists from another station
-                    # with a score >= current, discard this file.
+
+                    # Cross-station dedup: among ALL existing records with the same
+                    # recording_id plus the new recording, keep only the one with the
+                    # highest AcoustID score.  This guarantees there is never more than
+                    # one copy of the same identified recording on disk.
                     try:
-                        existing = await self._repo.find_by_recording_id(result.recording_id)
+                        all_existing = await self._repo.find_all_by_recording_id(
+                            result.recording_id
+                        )
                     except Exception as exc:
                         self._log.debug(
-                            "[%s] find_by_recording_id: %s", self.station_name, exc
+                            "[%s] find_all_by_recording_id: %s", self.station_name, exc
                         )
                         return
-    
-                    if existing is not None:
-                        old_score = existing.track.acoustid_score or 0.0
-                        # Exclude this very recording (same station + title) from comparison
-                        same_song = (
-                            existing.track.stream_title.lower() == track.stream_title.lower()
-                            and existing.station_name == self.station_name
-                        )
-                        if same_song:
-                            return
-    
-                        if result.score <= old_score:
-                            # Existing recording is same quality or better — discard new one
+
+                    if all_existing:
+                        candidates: list[tuple[float, str, str, Path]] = [
+                            (
+                                e.track.acoustid_score or 0.0,
+                                e.station_name,
+                                e.track.stream_title,
+                                Path(e.track.file_path),
+                            )
+                            for e in all_existing
+                        ]
+                        # Add the current (new) recording as a candidate.
+                        # new_path is the already-renamed file.
+                        candidates.append((
+                            result.score,
+                            self.station_name,
+                            track.stream_title,
+                            new_path,
+                        ))
+                        # Sort descending by score so the best is first.
+                        candidates.sort(key=lambda c: c[0], reverse=True)
+
+                        # The best score wins — keep that one, delete all others.
+                        (best_score, best_station, best_stream, best_path) = candidates[0]
+                        for score, station, stream_title, p in candidates:
+                            if (score, station, stream_title, p) == (
+                                best_score, best_station, best_stream, best_path,
+                            ):
+                                continue
                             self._log.info(
-                                "[%s] Duplicate via AcoustID (existing score=%.2f >= %.2f) — "
-                                "discarding new: %s",
-                                self.station_name,
-                                old_score,
-                                result.score,
-                                file_path.name,
+                                "[%s] AcoustID dedup: discarding inferior"
+                                " (score %.2f < best %.2f): %s",
+                                self.station_name, score, best_score, p.name,
                             )
                             with contextlib.suppress(OSError):
-                                file_path.unlink(missing_ok=True)
-                                remove_empty_parents(file_path, self.settings.destination)
+                                p.unlink(missing_ok=True)
+                                remove_empty_parents(p, self.settings.destination)
                             try:
-                                await self._repo.remove(self.station_name, track.stream_title)
+                                await self._repo.remove(station, stream_title)
                             except Exception as exc:
                                 self._log.debug(
-                                    "[%s] db remove after acoustid-dup: %s",
+                                    "[%s] db remove dedup: %s", self.station_name, exc,
+                                )
+
+                    # After recording_id dedup: remove any existing recording with the
+                    # same artist+title that has NO AcoustID match.  A matched version
+                    # (the current one) is always preferable to an unmatched one.
+                    if track.artist and track.title:
+                        try:
+                            unmatched = await self._repo.find_all_by_artist_title(
+                                track.artist, track.title,
+                            )
+                        except Exception:
+                            unmatched = []
+                        for rec in unmatched:
+                            # Skip the current recording itself
+                            if (rec.station_name == self.station_name
+                                    and rec.track.stream_title.lower() == track.stream_title.lower()):
+                                continue
+                            # If it already has a recording_id, it's handled by the
+                            # dedup above (or it's a different version — keep it).
+                            if rec.track.acoustid_recording_id:
+                                continue
+                            self._log.info(
+                                "[%s] Replacing unmatched recording with matched version: %s",
+                                self.station_name, rec.track.file_path,
+                            )
+                            old_path = Path(rec.track.file_path)
+                            with contextlib.suppress(OSError):
+                                old_path.unlink(missing_ok=True)
+                                remove_empty_parents(old_path, self.settings.destination)
+                            try:
+                                await self._repo.remove(
+                                    rec.station_name, rec.track.stream_title
+                                )
+                            except Exception as exc:
+                                self._log.debug(
+                                    "[%s] db remove unmatched for replacement: %s",
                                     self.station_name, exc,
                                 )
-                            return
-    
-                        # New recording has a better score — replace the old one
-                        old_path = Path(existing.track.file_path)
-                        self._log.info(
-                            "[%s] Better AcoustID match (%.2f > %.2f) — "
-                            "replacing existing: %s",
-                            self.station_name,
-                            result.score,
-                            old_score,
-                            old_path.name,
-                        )
-                        with contextlib.suppress(OSError):
-                            old_path.unlink(missing_ok=True)
-                            remove_empty_parents(old_path, self.settings.destination)
-                        try:
-                            await self._repo.remove(
-                                existing.station_name, existing.track.stream_title
-                            )
-                        except Exception as exc:
-                            self._log.debug(
-                                "[%s] db remove old for replacement: %s",
-                                self.station_name, exc,
-                            )
             finally:
                 self._release_lock(file_path)
 

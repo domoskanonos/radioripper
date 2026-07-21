@@ -83,10 +83,29 @@ class TrackRepository(ABC):
         """Return True if *recording_id* is already stored (optionally excluding a station)."""
 
     @abstractmethod
+    async def find_all_by_recording_id(
+        self, recording_id: str
+    ) -> list[TrackRecord]:
+        """Return ALL track records matching *recording_id* (empty list if none)."""
+
+    @abstractmethod
     async def find_by_recording_id(
         self, recording_id: str
     ) -> TrackRecord | None:
         """Return the existing track record for a recording_id, or None."""
+
+    @abstractmethod
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        """Return a track matching *artist* and *title* from any station
+        (optionally excluding *exclude_station*), or ``None``."""
+
+    @abstractmethod
+    async def find_all_by_artist_title(
+        self, artist: str, title: str
+    ) -> list[TrackRecord]:
+        """Return ALL track records matching *artist* and *title* (empty list if none)."""
 
     @abstractmethod
     async def update_enrichment(
@@ -328,6 +347,47 @@ class SQLiteTrackRepository(TrackRepository):
         except sqlite3.Error as exc:
             raise RepositoryError(f"exists_by_recording_id() failed: {exc}") from exc
 
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._find_all_by_recording_id_sync, recording_id
+            )
+
+    def _find_all_by_recording_id_sync(self, recording_id: str) -> list[TrackRecord]:
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT station_name, stream_title, artist, title,
+                       file_path, file_size, album, year, has_cover,
+                       enrichment, acoustid_recording_id, acoustid_score
+                FROM songs WHERE acoustid_recording_id=?
+                """,
+                (recording_id,),
+            )
+            result: list[TrackRecord] = []
+            for row in cur.fetchall():
+                result.append(
+                    TrackRecord(
+                        station_name=row["station_name"],
+                        track=SavedTrack(
+                            stream_title=row["stream_title"],
+                            artist=row["artist"] or "",
+                            title=row["title"] or "",
+                            file_path=row["file_path"],
+                            file_size=row["file_size"] or 0,
+                            album=row["album"],
+                            year=row["year"],
+                            has_cover=bool(row["has_cover"]),
+                            enrichment=row["enrichment"],
+                            acoustid_recording_id=row["acoustid_recording_id"],
+                            acoustid_score=row["acoustid_score"],
+                        ),
+                    )
+                )
+            return result
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"find_all_by_recording_id() failed: {exc}") from exc
+
     async def find_by_recording_id(self, recording_id: str) -> TrackRecord | None:
         async with self._lock:
             return await asyncio.to_thread(
@@ -366,6 +426,116 @@ class SQLiteTrackRepository(TrackRepository):
             )
         except sqlite3.Error as exc:
             raise RepositoryError(f"update_fingerprint() failed: {exc}") from exc
+
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._find_by_artist_title_any_station_sync,
+                artist, title, exclude_station,
+            )
+
+    def _find_by_artist_title_any_station_sync(
+        self, artist: str, title: str, exclude_station: str | None
+    ) -> TrackRecord | None:
+        try:
+            if exclude_station:
+                cur = self._conn.execute(
+                    """
+                    SELECT station_name, stream_title, artist, title,
+                           file_path, file_size, album, year, has_cover,
+                           enrichment, acoustid_recording_id, acoustid_score
+                    FROM songs
+                    WHERE LOWER(artist)=LOWER(?) AND LOWER(title)=LOWER(?)
+                      AND station_name!=?
+                    LIMIT 1
+                    """,
+                    (artist, title, exclude_station),
+                )
+            else:
+                cur = self._conn.execute(
+                    """
+                    SELECT station_name, stream_title, artist, title,
+                           file_path, file_size, album, year, has_cover,
+                           enrichment, acoustid_recording_id, acoustid_score
+                    FROM songs
+                    WHERE LOWER(artist)=LOWER(?) AND LOWER(title)=LOWER(?)
+                    LIMIT 1
+                    """,
+                    (artist, title),
+                )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return TrackRecord(
+                station_name=row["station_name"],
+                track=SavedTrack(
+                    stream_title=row["stream_title"],
+                    artist=row["artist"] or "",
+                    title=row["title"] or "",
+                    file_path=row["file_path"],
+                    file_size=row["file_size"] or 0,
+                    album=row["album"],
+                    year=row["year"],
+                    has_cover=bool(row["has_cover"]),
+                    enrichment=row["enrichment"],
+                    acoustid_recording_id=row["acoustid_recording_id"],
+                    acoustid_score=row["acoustid_score"],
+                ),
+            )
+        except sqlite3.Error as exc:
+            raise RepositoryError(
+                f"find_by_artist_title_any_station() failed: {exc}"
+            ) from exc
+
+    async def find_all_by_artist_title(
+        self, artist: str, title: str
+    ) -> list[TrackRecord]:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._find_all_by_artist_title_sync, artist, title,
+            )
+
+    def _find_all_by_artist_title_sync(
+        self, artist: str, title: str
+    ) -> list[TrackRecord]:
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT station_name, stream_title, artist, title,
+                       file_path, file_size, album, year, has_cover,
+                       enrichment, acoustid_recording_id, acoustid_score
+                FROM songs
+                WHERE LOWER(artist)=LOWER(?) AND LOWER(title)=LOWER(?)
+                """,
+                (artist, title),
+            )
+            result: list[TrackRecord] = []
+            for row in cur.fetchall():
+                result.append(
+                    TrackRecord(
+                        station_name=row["station_name"],
+                        track=SavedTrack(
+                            stream_title=row["stream_title"],
+                            artist=row["artist"] or "",
+                            title=row["title"] or "",
+                            file_path=row["file_path"],
+                            file_size=row["file_size"] or 0,
+                            album=row["album"],
+                            year=row["year"],
+                            has_cover=bool(row["has_cover"]),
+                            enrichment=row["enrichment"],
+                            acoustid_recording_id=row["acoustid_recording_id"],
+                            acoustid_score=row["acoustid_score"],
+                        ),
+                    )
+                )
+            return result
+        except sqlite3.Error as exc:
+            raise RepositoryError(
+                f"find_all_by_artist_title() failed: {exc}"
+            ) from exc
 
     async def find_by_file_path(self, file_path: str) -> TrackRecord | None:
         async with self._lock:
