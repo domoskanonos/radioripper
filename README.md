@@ -114,20 +114,6 @@ uv run radio-ripper --config config.json --log-level DEBUG
 uv run radio-ripper --no-enrich        # ohne iTunes-Cover-Art
 ```
 
-### GUI (Web-Interface)
-
-```bash
-uv sync --extra gui
-uv run radio-ripper-gui --config config.json
-```
-
-Öffnet **`http://localhost:7860`** im Browser. Vier Tabs:
-
-1. **Sender** — Stationen anzeigen/hinzufügen/löschen
-2. **Konfiguration** — Einstellungen live bearbeiten
-3. **Bibliothek** — aufgenommene Songs durchsuchen
-4. **Ripper-Steuerung** — Start/Stopp + Live-Status
-
 ### run.sh (Legacy)
 
 ```bash
@@ -160,10 +146,103 @@ sudo systemctl daemon-reload && sudo systemctl enable --now radio-ripper
 
 ### Docker
 
+#### Image von Docker Hub beziehen (empfohlen)
+
 ```bash
-docker build -t radio-ripper .
-docker run -v ./config.json:/app/config.json -v ./recordings:/app/recordings radio-ripper
+docker pull domoskanonos/radioripper:latest
 ```
+
+#### Schnellstart (Headless-CLI)
+
+```bash
+# 1. Config vorbereiten
+cp config.example.json ./config.json
+#   → Pfade in config.json anpassen (destination, database, streams)
+
+# 2. Container starten
+docker run -d --name radio-ripper --restart unless-stopped \
+  -v "$PWD/config.json:/app/config.json:ro" \
+  -v "$PWD/recordings:/app/recordings" \
+  domoskanonos/radioripper:latest
+
+# Logs verfolgen
+docker logs -f radio-ripper
+
+# Stoppen
+docker stop radio-ripper
+```
+
+#### Volumes
+
+| Mount | Zweck | Beispiel |
+|---|---|---|
+| `config.json:ro` | **Read-only**-Konfiguration (Stationen, Pfade, Log-Level) | `-v ./config.json:/app/config.json:ro` |
+| `recordings/` | Aufgenommene MP3-Dateien + SQLite-Datenbank | `-v ./recordings:/app/recordings` |
+
+> **Hinweis:** Die SQLite-Datenbank (`ripper.db`) liegt standardmäßig im Recording-Pfad. Wenn du sie separat mounten möchtest, setze `"database": "/app/recordings/ripper.db"` in der config.json.
+
+#### docker compose (empfohlen)
+
+```yaml
+# docker-compose.yml
+services:
+  radio-ripper:
+    image: domoskanonos/radioripper:latest
+    container_name: radio-ripper
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./recordings:/app/recordings
+```
+
+```bash
+# Starten
+docker compose up -d
+
+# Logs
+docker compose logs -f
+
+# Stoppen
+docker compose down
+```
+
+#### Selbst bauen
+
+#### Selbst bauen
+
+```bash
+git clone https://github.com/domoskanonos/radioripper.git
+cd radioripper
+docker build -t radio-ripper:latest .
+```
+
+#### Umgebungsvariablen
+
+Das Image unterstützt keine nativen ENV-Overrides – alle Einstellungen steuert die `config.json`.  
+Die folgenden CLI-Argumente können jedoch über den Docker-`entrypoint` gesetzt werden:
+
+| Argument | Wirkung |
+|---|---|
+| `--log-level DEBUG` | Überschreibt Log-Level aus config |
+| `--no-enrich` | Deaktiviert iTunes-Cover-Art |
+| `--version` | Zeigt Version an |
+
+```bash
+# Beispiel: DEBUG-Logging im Container
+docker run --rm \
+  -v "$PWD/config.json:/app/config.json:ro" \
+  domoskanonos/radioripper:latest \
+  --log-level DEBUG
+```
+
+#### Graceful Shutdown
+
+```bash
+docker stop radio-ripper          # sendet SIGTERM → Graceful Shutdown
+docker compose down               # für compose-Setup
+```
+
+Der Container fängt `SIGTERM` ab, finalisiert alle laufenden Aufnahmen, taggt die MP3s und schreibt die Datenbank sauber weg.
 
 ---
 

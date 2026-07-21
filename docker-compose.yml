@@ -1,0 +1,10 @@
+services:
+  radio-ripper:
+    image: domoskanonos/radioripper:latest
+    container_name: radio-ripper
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./recordings:/app/recordings
+    stop_signal: SIGTERM
+    stop_grace_period: 30s

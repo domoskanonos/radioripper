@@ -38,9 +38,6 @@ dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
-gui = [
-    "gradio>=4.44.0",
-]
 
 [project.urls]
 Homepage = "https://github.com/radioripper/radioripper"
@@ -49,7 +46,6 @@ Issues = "https://github.com/radioripper/radioripper/issues"
 
 [project.scripts]
 radio-ripper = "radio_ripper.cli:main"
-radio-ripper-gui = "radio_ripper.gui:main"
 
 [build-system]
 requires = ["hatchling>=1.21"]
@@ -116,7 +112,7 @@ warn_unused_ignores = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["mutagen.*", "respx.*", "gradio.*", "huggingface_hub.*", "numpy.*", "pandas.*", "gradio_client.*", "fastapi.*", "starlette.*", "pydub.*", "typer.*"]
+module = ["mutagen.*", "respx.*", "pydub.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 

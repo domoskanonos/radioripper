@@ -39,9 +39,9 @@ RUN uv sync --quiet
 FROM python:3.12-slim AS runtime
 
 LABEL org.opencontainers.image.title="radio-ripper" \
-      org.opencontainers.image.version="2.0" \
-      org.opencontainers.image.description="Webradio-Ripper with ICY parsing, SQLite dedup, ID3v2 tagging" \
-      org.opencontainers.image.source="https://github.com/radioripper/radioripper"
+      org.opencontainers.image.version="2.1.0" \
+      org.opencontainers.image.description="Webradio-Ripper with ICY parsing, SQLite dedup, ID3v2 tagging & Gradio GUI" \
+      org.opencontainers.image.source="https://github.com/domoskanonos/radioripper"
 
 # Non-root user for security
 RUN groupadd --system --gid 1001 ripper \
