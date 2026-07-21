@@ -121,6 +121,10 @@ class TrackTagger(ABC):
     ) -> None:
         """Add AcoustID/MusicBrainz tags to an already-tagged file."""
 
+    @abstractmethod
+    def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
+        """Embed cover-art bytes into an existing file (replaces any APIC)."""
+
 
 def _load_or_create(file_path: Path) -> ID3:
     """Load an existing ID3 tag or create a fresh one.
@@ -146,6 +150,7 @@ class ID3Tagger(TrackTagger):
         audio.delall("TPE1")
         audio.delall("TPE2")
         audio.delall("TIT2")
+        audio.delall("TALB")
         audio.delall("TRSN")
         audio.delall("TPUB")
         audio.delall("COMM")
@@ -155,6 +160,9 @@ class ID3Tagger(TrackTagger):
             audio.add(TPE2(encoding=3, text=track.artist))
         if track.title:
             audio.add(TIT2(encoding=3, text=track.title))
+        # Album fallback: prefer the song title (without artist) over empty,
+        # so the player doesn't fall back to the station name.
+        audio.add(TALB(encoding=3, text=track.title or track.stream_title))
         # Extract station name from provenance (format: "station@url")
         station_name = provenance.split("@")[0] if "@" in provenance else provenance
         audio.add(TRSN(encoding=3, text=station_name))
@@ -200,6 +208,10 @@ class ID3Tagger(TrackTagger):
             audio.add(TIT2(encoding=3, text=title))
         if enriched.album:
             audio.add(TALB(encoding=3, text=enriched.album))
+        else:
+            # Fallback: prefer song title (no artist) over empty so the player
+            # doesn't fall back to the station name as album placeholder.
+            audio.add(TALB(encoding=3, text=track.title or track.stream_title))
         if enriched.year:
             audio.add(TDRC(encoding=3, text=enriched.year))
         # Extract station name from provenance (format: "station@url")
@@ -237,6 +249,24 @@ class ID3Tagger(TrackTagger):
         except Exception as exc:
             raise TaggingError(f"failed to save acoustid tags to {file_path}: {exc}") from exc
 
+    def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
+        """Replace any existing APIC frame with the supplied cover bytes."""
+        try:
+            audio = _load_or_create(file_path)
+        except Exception as exc:
+            raise TaggingError(f"failed to load {file_path} for cover embed: {exc}") from exc
+        audio.delall("APIC")
+        scaled = _scale_cover(cover_bytes)
+        if scaled is not None:
+            scaled_data, mime = scaled
+            audio.add(
+                APIC(encoding=3, mime=mime, type=3, desc="Cover", data=scaled_data)
+            )
+        try:
+            audio.save(file_path, v2_version=3, v1=2)
+        except Exception as exc:
+            raise TaggingError(f"failed to save cover to {file_path}: {exc}") from exc
+
 
 class NullTagger(TrackTagger):
     """No-op tagger (used when tagging is disabled)."""
@@ -259,6 +289,9 @@ class NullTagger(TrackTagger):
     def update_acoustid(
         self, file_path: Path, recording_id: str, score: float
     ) -> None:
+        return None
+
+    def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
         return None
 
 

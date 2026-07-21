@@ -100,7 +100,63 @@ class NullMetadataProvider(MetadataProvider):
         return None
 
 
+class CoverArtArchiveProvider:
+    """Fetch album cover art from coverartarchive.org via a MusicBrainz recording MBID.
+
+    Used as a secondary source when iTunes enrichment returned no artwork.
+    The flow is: MBID -> MusicBrainz /ws/2/recording lookup (to get releases)
+    -> for each release, fetch its front-cover bytes from coverartarchive.org.
+    """
+
+    _MBZ_RECORDING_URL = "https://musicbrainz.org/ws/2/recording/{mbid}"
+    _CAA_RELEASE_FRONT = "https://coverartarchive.org/release/{mbid}/front"
+    _USER_AGENT = "Radio-Ripper/2.0 (https://github.com/artokun/radioripper)"
+    _MAX_RELEASES_TO_TRY = 5
+
+    def __init__(self, client: AsyncHttpClient, *, timeout: float = 8.0) -> None:
+        self._client = client
+        self._timeout = timeout
+
+    async def fetch_cover_by_recording_id(self, recording_id: str) -> bytes | None:
+        """Look up the MusicBrainz recording, then fetch front cover bytes.
+
+        Returns ``None`` if *recording_id* is empty, the MBZ lookup fails,
+        there are no releases, or none of the cover-art fetches yield bytes.
+        """
+        if not recording_id:
+            return None
+        try:
+            payload = await self._client.get_json(
+                self._MBZ_RECORDING_URL.format(mbid=recording_id),
+                params={"fmt": "json", "inc": "releases"},
+                timeout=self._timeout,
+            )
+        except Exception:
+            return None
+        releases = (payload or {}).get("releases") or []
+        for rel in releases[: self._MAX_RELEASES_TO_TRY]:
+            mbid = rel.get("id")
+            if not mbid:
+                continue
+            cover = await self.download_image(
+                self._CAA_RELEASE_FRONT.format(mbid=mbid)
+            )
+            if cover:
+                return cover
+        return None
+
+    async def download_image(self, url: str) -> bytes | None:
+        try:
+            data = await self._client.get_bytes(url, timeout=self._timeout)
+        except Exception:
+            return None
+        if not data or len(data) < 64:
+            return None
+        return data
+
+
 __all__ = [
+    "CoverArtArchiveProvider",
     "ITunesMetadataProvider",
     "MetadataProvider",
     "NullMetadataProvider",

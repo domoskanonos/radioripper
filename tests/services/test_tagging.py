@@ -198,6 +198,48 @@ class TestGuessMime:
             tagger.write_full(f, track, enriched, None, "S@u")
 
 
+class TestAlbumFallback:
+    """TALB must always be written, falling back to track.title / stream_title."""
+
+    def test_write_basic_writes_talb_from_track_title(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo(stream_title="Adele - Hello", artist="Adele", title="Hello")
+        tagger.write_basic(f, track, "Rock@x")
+        audio = ID3(f)
+        assert audio.get("TALB").text == ["Hello"]
+
+    def test_write_basic_talb_falls_back_to_stream_title(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo(stream_title="Radio Stream", artist="", title="")
+        tagger.write_basic(f, track, "S@u")
+        audio = ID3(f)
+        assert audio.get("TALB").text == ["Radio Stream"]
+
+    def test_write_full_album_uses_enriched_over_track(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo(stream_title="A - B", artist="A", title="B")
+        enriched = EnrichedInfo(artist="A", title="B", album="RealAlbum")
+        tagger.write_full(f, track, enriched, None, "S@u")
+        audio = ID3(f)
+        assert audio.get("TALB").text == ["RealAlbum"]
+
+    def test_write_full_album_falls_back_to_track_title(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo(stream_title="Jazz - Mood", artist="Jazz", title="Mood")
+        enriched = EnrichedInfo(artist="Jazz", title="Mood", album="")
+        tagger.write_full(f, track, enriched, None, "S@u")
+        audio = ID3(f)
+        assert audio.get("TALB").text == ["Mood"]
+
+
 class TestNullTagger:
     def test_write_basic_does_nothing(self, tmp_path: Path):
         f = tmp_path / "song.mp3"

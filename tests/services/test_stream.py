@@ -509,6 +509,9 @@ class _RecordingTagger(TrackTagger):
     def update_acoustid(self, file_path: Path, recording_id: str, score: float) -> None:
         self.update_acoustid_calls.append((file_path, recording_id, score))
 
+    def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
+        pass
+
 
 class _FingerprintRepo(TrackRepository):
     """Repo stub recording remove / update_file_path / update_fingerprint."""
@@ -689,3 +692,46 @@ class TestFingerprintSong:
         # No db update / tag since rename was refused
         assert tagger.update_acoustid_calls == []
         assert repo.updated_paths == []
+
+
+class TestFileLocks:
+    """Per-file asyncio.Lock management in StreamRecorder."""
+
+    async def test_lock_for_returns_same_lock_for_same_path(self):
+        settings = _make_settings(Path("/tmp"))
+        repo = _FingerprintRepo()
+        tagger = _RecordingTagger()
+        provider = _ScriptedFingerprint(result=None)
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        path = Path("/some/file.mp3")
+        lock1 = rec._lock_for(path)
+        lock2 = rec._lock_for(path)
+        assert lock1 is lock2
+
+    async def test_lock_for_different_paths_different_locks(self):
+        settings = _make_settings(Path("/tmp"))
+        repo = _FingerprintRepo()
+        tagger = _RecordingTagger()
+        provider = _ScriptedFingerprint(result=None)
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        lock_a = rec._lock_for(Path("/a.mp3"))
+        lock_b = rec._lock_for(Path("/b.mp3"))
+        assert lock_a is not lock_b
+
+    async def test_release_lock_removes_lock(self):
+        settings = _make_settings(Path("/tmp"))
+        repo = _FingerprintRepo()
+        tagger = _RecordingTagger()
+        provider = _ScriptedFingerprint(result=None)
+        rec = _make_fp_recorder(
+            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
+        )
+        path = Path("/some/file.mp3")
+        rec._lock_for(path)
+        assert path in rec._file_locks
+        rec._release_lock(path)
+        assert path not in rec._file_locks

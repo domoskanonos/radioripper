@@ -82,6 +82,7 @@ class Settings(BaseModel):
     acoustid_min_score: float = Field(default=0.8, ge=0.0, le=1.0)
     acoustid_min_interval_s: float = Field(default=0.40, ge=0.0)
     discard_unmatched: bool = True
+    enable_coverartarchive: bool = True
 
     @field_validator("log_level")
     @classmethod

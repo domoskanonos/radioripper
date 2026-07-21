@@ -28,6 +28,7 @@ from radio_ripper.services.fingerprint import (
 )
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 from radio_ripper.services.metadata import (
+    CoverArtArchiveProvider,
     ITunesMetadataProvider,
     MetadataProvider,
     NullMetadataProvider,
@@ -56,6 +57,7 @@ class RadioRipperApp:
         tagger: TrackTagger,
         metadata_provider: MetadataProvider,
         fingerprint_provider: FingerprintProvider | None = None,
+        cover_provider: Any | None = None,
         playlist_resolver: PlaylistResolver,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -65,6 +67,7 @@ class RadioRipperApp:
         self.tagger = tagger
         self.metadata = metadata_provider
         self.fingerprint = fingerprint_provider
+        self.cover_provider = cover_provider
         self.resolver = playlist_resolver
         self.logger = logger or _LOGGER
         self._enrich_sem = asyncio.Semaphore(settings.enrichment_workers)
@@ -102,6 +105,14 @@ class RadioRipperApp:
             if api_key
             else NullFingerprintProvider()
         )
+        # Cover Art Archive: secondary cover-art source keyed on MusicBrainz
+        # recording IDs returned by AcoustID. Used by StreamRecorder when
+        # iTunes enrichment returned no artwork.
+        cover_provider: Any | None = (
+            CoverArtArchiveProvider(client, timeout=settings.cover_timeout)
+            if settings.enable_coverartarchive
+            else None
+        )
         return cls(
             settings=settings,
             client=client,
@@ -109,6 +120,7 @@ class RadioRipperApp:
             tagger=tagger,
             metadata_provider=metadata,
             fingerprint_provider=fingerprint,
+            cover_provider=cover_provider,
             playlist_resolver=resolver,
             logger=log,
         )
@@ -230,6 +242,7 @@ class RadioRipperApp:
                 tagger=self.tagger,
                 metadata_provider=self.metadata,
                 fingerprint_provider=self.fingerprint,
+                cover_provider=self.cover_provider,
                 enrich_semaphore=self._enrich_sem,
                 logger=self.logger,
                 ad_title_patterns=effective_patterns,

@@ -282,6 +282,9 @@ class _RecordingTagger(TrackTagger):
     def update_acoustid(self, file_path: Path, recording_id: str, score: float) -> None:
         self.update_acoustid_calls.append((file_path, recording_id, score))
 
+    def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
+        pass
+
 
 def _untested_record(
     tmp_path: Path, name: str = "Artist - Title"
