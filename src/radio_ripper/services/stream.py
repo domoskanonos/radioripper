@@ -370,6 +370,21 @@ class StreamRecorder:
                             )
                             recording = False
                             continue
+                        try:
+                            if await self._repo.exists(self.station_name, clean):
+                                self._log.info(
+                                    "[%s] Skipping duplicate (already in DB): %s",
+                                    self.station_name,
+                                    clean,
+                                )
+                                recording = False
+                                continue
+                        except Exception:
+                            self._log.exception(
+                                "[%s] repo.exists failed for: %s",
+                                self.station_name,
+                                clean,
+                            )
                         track = TrackInfo.from_stream_title(clean)
                         file_path = compute_file_path(
                             self.settings.destination,
