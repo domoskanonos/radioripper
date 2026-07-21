@@ -36,29 +36,30 @@ def compute_file_path(
     stream_title_clean: str,
     *,
     album: str | None = None,
-    fallback_album: str = "Radio-Aufnahmen",
     overwrite: bool = False,
 ) -> Path:
-    """Build a safe path ``{dest}/{Artist}/{Album}/{Artist} - {Title}.mp3``.
+    """Build a safe path ``{dest}/{Artist}[/{Album}]/{Artist} - {Title}.mp3``.
 
-    The recording directory structure uses per-artist and per-album subfolders.
-    If *album* is not provided, *fallback_album* is used (defaults to
-    ``"Radio-Aufnahmen"`` or the station name passed by the caller).
+    When *album* is provided a per-album subfolder is created; without it the
+    file is placed directly in the artist folder.
     If the candidate already exists and ``overwrite`` is False, append ``(2)``,
     ``(3)``… to the base name until a free slot is found.
     """
-    album_name = sanitize_filename(album if album else fallback_album)
     if artist and title:
         artist_dir = sanitize_filename(artist)
         base = f"{sanitize_filename(artist)} - {sanitize_filename(title)}"
     else:
         artist_dir = "Unknown"
         base = sanitize_filename(stream_title_clean)
-    candidate = destination / artist_dir / album_name / f"{base}.mp3"
+    if album:
+        parent = destination / artist_dir / sanitize_filename(album)
+    else:
+        parent = destination / artist_dir
+    candidate = parent / f"{base}.mp3"
     if not overwrite:
         i = 2
         while candidate.exists():
-            candidate = destination / artist_dir / album_name / f"{base} ({i}).mp3"
+            candidate = parent / f"{base} ({i}).mp3"
             i += 1
     return candidate
 

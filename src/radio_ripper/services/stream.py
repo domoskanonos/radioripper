@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,7 @@ from radio_ripper.services.storage import (
     get_mp3_duration,
     remove_empty_parents,
     remux_mp3,
+    sanitize_filename,
 )
 from radio_ripper.services.tagging import TrackTagger
 
@@ -267,12 +269,32 @@ class StreamRecorder:
                     self._tagger.write_basic(final_path, track, provenance)
                 except Exception as exc:
                     self._log.warning("[%s] tag failed: %s", self.station_name, exc)
+                # Synchronous enrichment: fetch metadata, write ID3 tags
+                info: EnrichedInfo | None = None
+                if self._metadata and self.settings.enrich_metadata:
+                    info = await self._enrich_song(final_path, track, provenance)
+
+                # Move file into album subfolder if enrichment found an album
+                if info and info.album:
+                    artist_dir = sanitize_filename(info.artist or track.artist)
+                    album_dir = sanitize_filename(info.album)
+                    new_dir = self.settings.destination / artist_dir / album_dir
+                    new_dir.mkdir(parents=True, exist_ok=True)
+                    new_path = new_dir / final_path.name
+                    shutil.move(str(final_path), str(new_path))
+                    remove_empty_parents(final_path, self.settings.destination)
+                    final_path = new_path
+
                 saved = SavedTrack(
                     stream_title=track.stream_title,
-                    artist=track.artist,
-                    title=track.title,
+                    artist=info.artist if info else track.artist,
+                    title=info.title if info else track.title,
                     file_path=str(final_path),
                     file_size=final_path.stat().st_size,
+                    album=info.album if info else None,
+                    year=info.year if info else None,
+                    has_cover=(info is not None),
+                    enrichment="itunes" if info else None,
                 )
                 try:
                     await self._repo.register(saved, self.station_name)
@@ -295,13 +317,6 @@ class StreamRecorder:
                             max_rec,
                             d.name,
                         )
-                # Kick off async enrichment (non-blocking)
-                if self._metadata and self.settings.enrich_metadata:
-                    enrich_task = asyncio.create_task(
-                        self._enrich_song(final_path, track, provenance)
-                    )
-                    self._enrichment_tasks.add(enrich_task)
-                    enrich_task.add_done_callback(self._enrichment_tasks.discard)
                 # Kick off async fingerprinting (non-blocking)
                 if self._fingerprint is not None:
                     fp_task = asyncio.create_task(
@@ -391,7 +406,6 @@ class StreamRecorder:
                             track.artist,
                             track.title,
                             clean,
-                            fallback_album=self.station_name,
                             overwrite=self.settings.overwrite_existing_files,
                         )
                         # Write as .untested.mp3 until AcoustID confirms the match
@@ -462,19 +476,18 @@ class StreamRecorder:
         file_path: Path,
         track: TrackInfo,
         provenance: str,
-    ) -> None:
+    ) -> EnrichedInfo | None:
         if self._metadata is None:
-            return
+            return None
         sem = self._enrich_sem
         try:
             if sem is not None:
                 await sem.acquire()
-            # Hold the per-file lock so _fingerprint_song (rename/unlink) can't
-            # race with our ID3 writes.
             async with self._lock_for(file_path):
-                await self._enrich_song_inner(file_path, track, provenance)
+                return await self._enrich_song_inner(file_path, track, provenance)
         except Exception:
             self._log.exception("[%s] enrichment failed for %s", self.station_name, file_path.name)
+            return None
         finally:
             if sem is not None:
                 sem.release()
@@ -484,7 +497,7 @@ class StreamRecorder:
         file_path: Path,
         track: TrackInfo,
         provenance: str,
-    ) -> None:
+    ) -> EnrichedInfo | None:
         assert self._metadata is not None
         info = await self._metadata.fetch(track.artist, track.title)
 
@@ -519,17 +532,7 @@ class StreamRecorder:
                         file_path.name,
                         exc,
                     )
-            try:
-                await self._repo.update_enrichment(
-                    self.station_name,
-                    track.stream_title,
-                    artist=track.artist,
-                    title=track.title,
-                    enrichment="miss",
-                )
-            except Exception as exc:
-                self._log.debug("[%s] db enrichment-miss update: %s", self.station_name, exc)
-            return
+            return None
         cover: bytes | None = None
         if self.settings.embed_cover_art and info.artwork_url:
             cover = await self._metadata.download_image(info.artwork_url)
@@ -557,20 +560,7 @@ class StreamRecorder:
             info.year or "-",
             "yes" if (cover or fallback_cover) else "no",
         )
-        try:
-            await self._repo.update_enrichment(
-                self.station_name,
-                track.stream_title,
-                artist=info.artist or track.artist,
-                title=info.title or track.title,
-                album=info.album,
-                year=info.year,
-                file_size=file_path.stat().st_size if file_path.exists() else None,
-                has_cover=cover is not None or fallback_cover is not None,
-                enrichment="itunes",
-            )
-        except Exception as exc:
-            self._log.debug("[%s] db enrichment update: %s", self.station_name, exc)
+        return info
 
     # ------------------------------------------------------------- fingerprinting
 
