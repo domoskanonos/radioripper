@@ -290,7 +290,7 @@ class StreamRecorder:
                     deleted = enforce_recording_limit(self.settings.destination, max_rec)
                     for d in deleted:
                         self._log.info(
-                            "[%s] Limit %d reached – deleted oldest: %s",
+                            "[%s] Limit %d reached - deleted oldest: %s",
                             self.station_name,
                             max_rec,
                             d.name,
@@ -380,7 +380,9 @@ class StreamRecorder:
                             overwrite=self.settings.overwrite_existing_files,
                         )
                         # Write as .untested.mp3 until AcoustID confirms the match
-                        file_path = file_path.with_name(file_path.stem + ".untested" + file_path.suffix)
+                        file_path = file_path.with_name(
+                            file_path.stem + ".untested" + file_path.suffix
+                        )
                         if file_path.exists() and not self.settings.overwrite_existing_files:
                             self._log.info(
                                 "[%s] File exists (no db record) - registering & skip: %s",
@@ -563,75 +565,68 @@ class StreamRecorder:
         track: TrackInfo,
         provenance: str,
     ) -> None:
-            if self._fingerprint is None:
-                return
-            # Hold the per-file lock for the entire body so enrichment (which may
-            # write ID3 tags to file_path) can't race with rename / unlink here.
-            # _fingerprint_song is the terminal operation on a recording, so we
-            # also pop the lock on exit.
-            lock = self._lock_for(file_path)
-            try:
-                async with lock:
-                    try:
-                        result = await self._fingerprint.fingerprint(file_path)
-                    except FingerprintError as exc:
-                        self._log.warning(
-                            "[%s] fingerprint infrastructure error for %s: %s "
-                            "(file kept as .untested.mp3 for retry)",
-                            self.station_name, file_path.name, exc,
-                            exc_info=True,
-                        )
-                        return
-                    except Exception:
-                        self._log.debug(
-                            "[%s] unexpected fingerprint error for %s",
-                            self.station_name, file_path.name,
-                        )
-                        return
-                    if result is None:
-                        self._log.info(
-                            "[%s] No AcoustID match: %s",
-                            self.station_name,
-                            file_path.name,
-                        )
-                        # Fallback dedup: check if the same artist+title already exists
-                        # and has an AcoustID match.  A matched recording is always
-                        # preferable to an unmatched one.
-                        if track.artist and track.title:
-                            try:
-                                all_artist_title = await self._repo.find_all_by_artist_title(
-                                    track.artist, track.title,
-                                )
-                            except Exception:
-                                all_artist_title = []
-                            # If ANY existing recording already has an AcoustID match,
-                            # discard this new, unmatched copy.
-                            has_matched = any(
-                                e.track.acoustid_recording_id for e in all_artist_title
-                                if not (e.station_name == self.station_name
-                                        and e.track.stream_title.lower() == track.stream_title.lower())
+        if self._fingerprint is None:
+            return
+        # Hold the per-file lock for the entire body so enrichment (which may
+        # write ID3 tags to file_path) can't race with rename / unlink here.
+        # _fingerprint_song is the terminal operation on a recording, so we
+        # also pop the lock on exit.
+        lock = self._lock_for(file_path)
+        try:
+            async with lock:
+                try:
+                    result = await self._fingerprint.fingerprint(file_path)
+                except FingerprintError as exc:
+                    self._log.warning(
+                        "[%s] fingerprint infrastructure error for %s: %s "
+                        "(file kept as .untested.mp3 for retry)",
+                        self.station_name,
+                        file_path.name,
+                        exc,
+                        exc_info=True,
+                    )
+                    return
+                except Exception:
+                    self._log.debug(
+                        "[%s] unexpected fingerprint error for %s",
+                        self.station_name,
+                        file_path.name,
+                    )
+                    return
+                if result is None:
+                    self._log.info(
+                        "[%s] No AcoustID match: %s",
+                        self.station_name,
+                        file_path.name,
+                    )
+                    # Fallback dedup: check if the same artist+title already exists
+                    # and has an AcoustID match.  A matched recording is always
+                    # preferable to an unmatched one.
+                    if track.artist and track.title:
+                        try:
+                            all_artist_title = await self._repo.find_all_by_artist_title(
+                                track.artist,
+                                track.title,
                             )
-                            if has_matched:
-                                self._log.info(
-                                    "[%s] AcoustID unmatched, but a matched version"
-                                    " already exists — discarding new: %s",
-                                    self.station_name,
-                                    file_path.name,
-                                )
-                                with contextlib.suppress(OSError):
-                                    file_path.unlink(missing_ok=True)
-                                    remove_empty_parents(file_path, self.settings.destination)
-                                try:
-                                    await self._repo.remove(
-                                        self.station_name, track.stream_title
-                                    )
-                                except Exception as exc:
-                                    self._log.debug(
-                                        "[%s] db remove after fallback-dup: %s",
-                                        self.station_name, exc,
-                                    )
-                                return
-                        if self.settings.discard_unmatched:
+                        except Exception:
+                            all_artist_title = []
+                        # If ANY existing recording already has an AcoustID match,
+                        # discard this new, unmatched copy.
+                        has_matched = any(
+                            e.track.acoustid_recording_id
+                            for e in all_artist_title
+                            if not (
+                                e.station_name == self.station_name
+                                and e.track.stream_title.lower() == track.stream_title.lower()
+                            )
+                        )
+                        if has_matched:
+                            self._log.info(
+                                "[%s] AcoustID unmatched, but a matched version"
+                                " already exists — discarding new: %s",
+                                self.station_name,
+                                file_path.name,
+                            )
                             with contextlib.suppress(OSError):
                                 file_path.unlink(missing_ok=True)
                                 remove_empty_parents(file_path, self.settings.destination)
@@ -639,192 +634,220 @@ class StreamRecorder:
                                 await self._repo.remove(self.station_name, track.stream_title)
                             except Exception as exc:
                                 self._log.debug(
-                                    "[%s] db remove after no-match: %s", self.station_name, exc
+                                    "[%s] db remove after fallback-dup: %s",
+                                    self.station_name,
+                                    exc,
                                 )
-                            self._log.info(
-                                "[%s] Discarded (no AcoustID match): %s",
-                                self.station_name,
-                                file_path.name,
-                            )
-                        return
-    
-                    self._log.info(
-                        "[%s] AcoustID match (score=%.2f): %s - %s (rec=%s)",
-                        self.station_name,
-                        result.score,
-                        result.artist,
-                        result.title,
-                        result.recording_id,
-                    )
-    
-                    # Rename .untested.mp3 → .mp3
-                    new_path = file_path.with_name(file_path.stem.replace(".untested", "") + ".mp3")
-                    if new_path.exists():
-                        self._log.warning(
-                            "[%s] Refuse to rename %s -> %s (target exists). "
-                            "Keeping .untested.mp3 for manual review.",
-                            self.station_name, file_path.name, new_path.name,
-                        )
-                        return
-                    try:
-                        file_path.rename(new_path)
-                    except OSError as exc:
-                        self._log.warning(
-                            "[%s] rename %s -> %s failed: %s",
-                            self.station_name, file_path.name, new_path.name, exc,
-                        )
-                        return
-                    # Write AcoustID info into ID3 tags on the new path
-                    try:
-                        self._tagger.update_acoustid(new_path, result.recording_id, result.score)
-                    except Exception as exc:
-                        self._log.debug("[%s] acoustid tag update: %s", self.station_name, exc)
-                    # Update DB file_path to the new name
-                    try:
-                        await self._repo.update_file_path(
-                            self.station_name, track.stream_title, str(new_path)
-                        )
-                    except Exception as exc:
-                        self._log.debug("[%s] db update_file_path: %s", self.station_name, exc)
-    
-                    # Persist fingerprint result in the DB
-                    try:
-                        await self._repo.update_fingerprint(
-                            self.station_name,
-                            track.stream_title,
-                            recording_id=result.recording_id,
-                            score=result.score,
-                        )
-                    except Exception as exc:
-                        self._log.debug(
-                            "[%s] db update_fingerprint: %s", self.station_name, exc
-                        )
-    
-                    # Try to fetch cover art from Cover Art Archive using the
-                    # MusicBrainz recording_id. Best effort — if it fails or no
-                    # cover is available, the file stays as-is.
-                    if result.recording_id and self._cover_provider is not None:
+                            return
+                    if self.settings.discard_unmatched:
+                        with contextlib.suppress(OSError):
+                            file_path.unlink(missing_ok=True)
+                            remove_empty_parents(file_path, self.settings.destination)
                         try:
-                            cover_bytes = await self._cover_provider.fetch_cover_by_recording_id(
-                                result.recording_id
-                            )
+                            await self._repo.remove(self.station_name, track.stream_title)
                         except Exception as exc:
                             self._log.debug(
-                                "[%s] Cover Art Archive lookup failed: %s",
-                                self.station_name, exc,
+                                "[%s] db remove after no-match: %s", self.station_name, exc
                             )
-                            cover_bytes = None
-                        if cover_bytes is not None:
-                            try:
-                                self._tagger.embed_cover(new_path, cover_bytes)
-                                self._log.info(
-                                    "[%s] Embedded CAA cover: %s",
-                                    self.station_name, new_path.name,
-                                )
-                            except Exception as exc:
-                                self._log.debug(
-                                    "[%s] embed CAA cover failed: %s",
-                                    self.station_name, exc,
-                                )
-    
-                    if not result.recording_id:
-                        return
+                        self._log.info(
+                            "[%s] Discarded (no AcoustID match): %s",
+                            self.station_name,
+                            file_path.name,
+                        )
+                    return
 
-                    # Cross-station dedup: among ALL existing records with the same
-                    # recording_id plus the new recording, keep only the one with the
-                    # highest AcoustID score.  This guarantees there is never more than
-                    # one copy of the same identified recording on disk.
+                self._log.info(
+                    "[%s] AcoustID match (score=%.2f): %s - %s (rec=%s)",
+                    self.station_name,
+                    result.score,
+                    result.artist,
+                    result.title,
+                    result.recording_id,
+                )
+
+                # Rename .untested.mp3 → .mp3
+                new_path = file_path.with_name(file_path.stem.replace(".untested", "") + ".mp3")
+                if new_path.exists():
+                    self._log.warning(
+                        "[%s] Refuse to rename %s -> %s (target exists). "
+                        "Keeping .untested.mp3 for manual review.",
+                        self.station_name,
+                        file_path.name,
+                        new_path.name,
+                    )
+                    return
+                try:
+                    file_path.rename(new_path)
+                except OSError as exc:
+                    self._log.warning(
+                        "[%s] rename %s -> %s failed: %s",
+                        self.station_name,
+                        file_path.name,
+                        new_path.name,
+                        exc,
+                    )
+                    return
+                # Write AcoustID info into ID3 tags on the new path
+                try:
+                    self._tagger.update_acoustid(new_path, result.recording_id, result.score)
+                except Exception as exc:
+                    self._log.debug("[%s] acoustid tag update: %s", self.station_name, exc)
+                # Update DB file_path to the new name
+                try:
+                    await self._repo.update_file_path(
+                        self.station_name, track.stream_title, str(new_path)
+                    )
+                except Exception as exc:
+                    self._log.debug("[%s] db update_file_path: %s", self.station_name, exc)
+
+                # Persist fingerprint result in the DB
+                try:
+                    await self._repo.update_fingerprint(
+                        self.station_name,
+                        track.stream_title,
+                        recording_id=result.recording_id,
+                        score=result.score,
+                    )
+                except Exception as exc:
+                    self._log.debug("[%s] db update_fingerprint: %s", self.station_name, exc)
+
+                # Try to fetch cover art from Cover Art Archive using the
+                # MusicBrainz recording_id. Best effort — if it fails or no
+                # cover is available, the file stays as-is.
+                if result.recording_id and self._cover_provider is not None:
                     try:
-                        all_existing = await self._repo.find_all_by_recording_id(
+                        cover_bytes = await self._cover_provider.fetch_cover_by_recording_id(
                             result.recording_id
                         )
                     except Exception as exc:
                         self._log.debug(
-                            "[%s] find_all_by_recording_id: %s", self.station_name, exc
+                            "[%s] Cover Art Archive lookup failed: %s",
+                            self.station_name,
+                            exc,
                         )
-                        return
-
-                    if all_existing:
-                        candidates: list[tuple[float, str, str, Path]] = [
-                            (
-                                e.track.acoustid_score or 0.0,
-                                e.station_name,
-                                e.track.stream_title,
-                                Path(e.track.file_path),
+                        cover_bytes = None
+                    if cover_bytes is not None:
+                        try:
+                            self._tagger.embed_cover(new_path, cover_bytes)
+                            self._log.info(
+                                "[%s] Embedded CAA cover: %s",
+                                self.station_name,
+                                new_path.name,
                             )
-                            for e in all_existing
-                        ]
-                        # Add the current (new) recording as a candidate.
-                        # new_path is the already-renamed file.
-                        candidates.append((
+                        except Exception as exc:
+                            self._log.debug(
+                                "[%s] embed CAA cover failed: %s",
+                                self.station_name,
+                                exc,
+                            )
+
+                if not result.recording_id:
+                    return
+
+                # Cross-station dedup: among ALL existing records with the same
+                # recording_id plus the new recording, keep only the one with the
+                # highest AcoustID score.  This guarantees there is never more than
+                # one copy of the same identified recording on disk.
+                try:
+                    all_existing = await self._repo.find_all_by_recording_id(result.recording_id)
+                except Exception as exc:
+                    self._log.debug("[%s] find_all_by_recording_id: %s", self.station_name, exc)
+                    return
+
+                if all_existing:
+                    candidates: list[tuple[float, str, str, Path]] = [
+                        (
+                            e.track.acoustid_score or 0.0,
+                            e.station_name,
+                            e.track.stream_title,
+                            Path(e.track.file_path),
+                        )
+                        for e in all_existing
+                    ]
+                    # Add the current (new) recording as a candidate.
+                    # new_path is the already-renamed file.
+                    candidates.append(
+                        (
                             result.score,
                             self.station_name,
                             track.stream_title,
                             new_path,
-                        ))
-                        # Sort descending by score so the best is first.
-                        candidates.sort(key=lambda c: c[0], reverse=True)
+                        )
+                    )
+                    # Sort descending by score so the best is first.
+                    candidates.sort(key=lambda c: c[0], reverse=True)
 
-                        # The best score wins — keep that one, delete all others.
-                        (best_score, best_station, best_stream, best_path) = candidates[0]
-                        for score, station, stream_title, p in candidates:
-                            if (score, station, stream_title, p) == (
-                                best_score, best_station, best_stream, best_path,
-                            ):
-                                continue
-                            self._log.info(
-                                "[%s] AcoustID dedup: discarding inferior"
-                                " (score %.2f < best %.2f): %s",
-                                self.station_name, score, best_score, p.name,
-                            )
-                            with contextlib.suppress(OSError):
-                                p.unlink(missing_ok=True)
-                                remove_empty_parents(p, self.settings.destination)
-                            try:
-                                await self._repo.remove(station, stream_title)
-                            except Exception as exc:
-                                self._log.debug(
-                                    "[%s] db remove dedup: %s", self.station_name, exc,
-                                )
-
-                    # After recording_id dedup: remove any existing recording with the
-                    # same artist+title that has NO AcoustID match.  A matched version
-                    # (the current one) is always preferable to an unmatched one.
-                    if track.artist and track.title:
+                    # The best score wins — keep that one, delete all others.
+                    (best_score, best_station, best_stream, best_path) = candidates[0]
+                    for score, station, stream_title, p in candidates:
+                        if (score, station, stream_title, p) == (
+                            best_score,
+                            best_station,
+                            best_stream,
+                            best_path,
+                        ):
+                            continue
+                        self._log.info(
+                            "[%s] AcoustID dedup: discarding inferior (score %.2f < best %.2f): %s",
+                            self.station_name,
+                            score,
+                            best_score,
+                            p.name,
+                        )
+                        with contextlib.suppress(OSError):
+                            p.unlink(missing_ok=True)
+                            remove_empty_parents(p, self.settings.destination)
                         try:
-                            unmatched = await self._repo.find_all_by_artist_title(
-                                track.artist, track.title,
+                            await self._repo.remove(station, stream_title)
+                        except Exception as exc:
+                            self._log.debug(
+                                "[%s] db remove dedup: %s",
+                                self.station_name,
+                                exc,
                             )
-                        except Exception:
-                            unmatched = []
-                        for rec in unmatched:
-                            # Skip the current recording itself
-                            if (rec.station_name == self.station_name
-                                    and rec.track.stream_title.lower() == track.stream_title.lower()):
-                                continue
-                            # If it already has a recording_id, it's handled by the
-                            # dedup above (or it's a different version — keep it).
-                            if rec.track.acoustid_recording_id:
-                                continue
-                            self._log.info(
-                                "[%s] Replacing unmatched recording with matched version: %s",
-                                self.station_name, rec.track.file_path,
+
+                # After recording_id dedup: remove any existing recording with the
+                # same artist+title that has NO AcoustID match.  A matched version
+                # (the current one) is always preferable to an unmatched one.
+                if track.artist and track.title:
+                    try:
+                        unmatched = await self._repo.find_all_by_artist_title(
+                            track.artist,
+                            track.title,
+                        )
+                    except Exception:
+                        unmatched = []
+                    for rec in unmatched:
+                        # Skip the current recording itself
+                        if (
+                            rec.station_name == self.station_name
+                            and rec.track.stream_title.lower() == track.stream_title.lower()
+                        ):
+                            continue
+                        # If it already has a recording_id, it's handled by the
+                        # dedup above (or it's a different version — keep it).
+                        if rec.track.acoustid_recording_id:
+                            continue
+                        self._log.info(
+                            "[%s] Replacing unmatched recording with matched version: %s",
+                            self.station_name,
+                            rec.track.file_path,
+                        )
+                        old_path = Path(rec.track.file_path)
+                        with contextlib.suppress(OSError):
+                            old_path.unlink(missing_ok=True)
+                            remove_empty_parents(old_path, self.settings.destination)
+                        try:
+                            await self._repo.remove(rec.station_name, rec.track.stream_title)
+                        except Exception as exc:
+                            self._log.debug(
+                                "[%s] db remove unmatched for replacement: %s",
+                                self.station_name,
+                                exc,
                             )
-                            old_path = Path(rec.track.file_path)
-                            with contextlib.suppress(OSError):
-                                old_path.unlink(missing_ok=True)
-                                remove_empty_parents(old_path, self.settings.destination)
-                            try:
-                                await self._repo.remove(
-                                    rec.station_name, rec.track.stream_title
-                                )
-                            except Exception as exc:
-                                self._log.debug(
-                                    "[%s] db remove unmatched for replacement: %s",
-                                    self.station_name, exc,
-                                )
-            finally:
-                self._release_lock(file_path)
+        finally:
+            self._release_lock(file_path)
+
 
 def _parse_metaint(headers: dict[str, str]) -> int | None:
     for key in ("icy-metaint", "Icy-Metaint", "ICY-METAINT"):

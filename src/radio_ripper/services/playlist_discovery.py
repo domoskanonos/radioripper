@@ -20,6 +20,7 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -102,35 +103,35 @@ def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
     return result
 
 
-async def _probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict:
-    result: dict = {"icy": False, "bitrate": 0, "error": None}
+async def _probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict[str, Any]:
+    result: dict[str, Any] = {"icy": False, "bitrate": 0, "error": None}
     headers = {"Icy-MetaData": "1", "User-Agent": "Radio-Ripper/2.0"}
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
-            follow_redirects=True,
-        ) as client:
-            async with client.stream("GET", url, headers=headers) as resp:
-                if resp.status_code != 200 and resp.status_code != 206:
-                    result["error"] = f"HTTP {resp.status_code}"
-                    return result
-                resp_headers = dict(resp.headers)
-                metaint = resp_headers.get("icy-metaint") or resp_headers.get("Icy-Metaint")
-                result["icy"] = metaint is not None
-                br_raw = resp_headers.get("icy-br") or resp_headers.get("Icy-Br")
-                if br_raw:
-                    try:
-                        result["bitrate"] = int(br_raw)
-                    except (ValueError, TypeError):
-                        pass
-                # Read one chunk to verify the stream actually sends data
-                try:
-                    async for chunk in resp.aiter_bytes():
-                        result["read_bytes"] = len(chunk)
-                        break
-                except Exception as exc:
-                    result["error"] = f"no data: {exc!s}"[:60]
-                    return result
+        async with (
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout),
+                follow_redirects=True,
+            ) as client,
+            client.stream("GET", url, headers=headers) as resp,
+        ):
+            if resp.status_code != 200 and resp.status_code != 206:
+                result["error"] = f"HTTP {resp.status_code}"
+                return result
+            resp_headers = dict(resp.headers)
+            metaint = resp_headers.get("icy-metaint") or resp_headers.get("Icy-Metaint")
+            result["icy"] = metaint is not None
+            br_raw = resp_headers.get("icy-br") or resp_headers.get("Icy-Br")
+            if br_raw:
+                with contextlib.suppress(ValueError, TypeError):
+                    result["bitrate"] = int(br_raw)
+            # Read one chunk to verify the stream actually sends data
+            try:
+                async for chunk in resp.aiter_bytes():
+                    result["read_bytes"] = len(chunk)
+                    break
+            except Exception as exc:
+                result["error"] = f"no data: {exc!s}"[:60]
+                return result
     except httpx.TimeoutException:
         result["error"] = "timeout"
     except httpx.ConnectError:
@@ -146,8 +147,8 @@ async def _probe_batch(
     entries: list[M3uEntry],
     max_ok: int,
     semaphore: asyncio.Semaphore,
-) -> list[tuple[M3uEntry, dict]]:
-    async def _probe_one(entry: M3uEntry) -> tuple[M3uEntry, dict] | None:
+) -> list[tuple[M3uEntry, dict[str, Any]]]:
+    async def _probe_one(entry: M3uEntry) -> tuple[M3uEntry, dict[str, Any]] | None:
         async with semaphore:
             probe = await _probe_icy(entry.url)
             if probe["icy"]:
@@ -155,12 +156,14 @@ async def _probe_batch(
             return None
 
     tasks = [asyncio.create_task(_probe_one(e)) for e in entries]
-    ok: list[tuple[M3uEntry, dict]] = []
-    done: set[asyncio.Task] = set()
+    ok: list[tuple[M3uEntry, dict[str, Any]]] = []
+    done: set[asyncio.Task[Any]] = set()
     pending = set(tasks)
 
     while pending and len(ok) < max_ok:
-        done_set, pending = await asyncio.wait(pending, timeout=3, return_when=asyncio.FIRST_COMPLETED)
+        done_set, pending = await asyncio.wait(
+            pending, timeout=3, return_when=asyncio.FIRST_COMPLETED
+        )
         done.update(done_set)
         for t in done_set:
             try:
@@ -197,7 +200,9 @@ async def _download_mega_m3u(github_pat: str = "") -> str:
         resp.raise_for_status()
         text = resp.text
     elapsed = time.monotonic() - t0
-    _LOGGER.info("Downloaded ---everything-checked-repo.m3u (%.1f KiB, %.1fs)", len(text) / 1024, elapsed)
+    _LOGGER.info(
+        "Downloaded ---everything-checked-repo.m3u (%.1f KiB, %.1fs)", len(text) / 1024, elapsed
+    )
     return text
 
 
@@ -228,9 +233,7 @@ def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
         return [], ""
 
 
-def _save_cache(
-    cache_file: Path, stations: list[StreamConfig], keywords_hash: str = ""
-) -> None:
+def _save_cache(cache_file: Path, stations: list[StreamConfig], keywords_hash: str = "") -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "_keywords_hash": keywords_hash,
@@ -259,9 +262,7 @@ class PlaylistDiscoveryService:
         if _is_cache_fresh(cache_file, self._settings.discovery_update_interval_days):
             cached_stations, cached_hash = _load_cache(cache_file)
             if cached_stations and cached_hash == kh:
-                self._log.info(
-                    "Using %d cached stations (keywords match)", len(cached_stations)
-                )
+                self._log.info("Using %d cached stations (keywords match)", len(cached_stations))
                 if self._settings.reprobe_on_start:
                     alive = await self._reprobe(cached_stations)
                     if alive:
@@ -275,17 +276,12 @@ class PlaylistDiscoveryService:
         )
         stations = await self._discover()
         _save_cache(cache_file, stations, keywords_hash=kh)
-        self._log.info(
-            "Discovery complete: %d stations", len(stations)
-        )
+        self._log.info("Discovery complete: %d stations", len(stations))
         return stations
 
     async def _reprobe(self, stations: list[StreamConfig]) -> list[StreamConfig]:
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
-        entries = [
-            M3uEntry(name=s.name, url=str(s.url), source=s.source)
-            for s in stations
-        ]
+        entries = [M3uEntry(name=s.name, url=str(s.url), source=s.source) for s in stations]
         good = await _probe_batch(entries, len(stations), semaphore)
         alive_map = {g[0].url: g[1] for g in good}
         result: list[StreamConfig] = []
@@ -336,7 +332,7 @@ class PlaylistDiscoveryService:
             stations.append(
                 StreamConfig(
                     name=entry.name[:64],
-                    url=entry.url,
+                    url=entry.url,  # type: ignore[arg-type]
                     enabled=True,
                     bitrate=probe.get("bitrate", 0),
                     icy=True,

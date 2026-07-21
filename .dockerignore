@@ -16,6 +16,6 @@ recordings/
 *.pid
 *.md
 !README.md
-LICENSE
+!LICENSE
 docs/
 .env

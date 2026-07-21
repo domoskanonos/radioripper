@@ -5,7 +5,7 @@
 repos:
   # ── Generic file hygiene ────────────────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
@@ -21,7 +21,7 @@ repos:
 
   # ── Ruff: lint + format ──────────────────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.5.7
+    rev: v0.15.22
     hooks:
       - id: ruff
         args: ["--fix"]

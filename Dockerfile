@@ -28,7 +28,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Install dependencies first (cache layer)
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml LICENSE README.md uv.lock* ./
 RUN uv sync --no-install-project --quiet
 
 # Install the project itself
@@ -52,7 +52,7 @@ WORKDIR /app
 # Copy the virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
-COPY pyproject.toml /app/pyproject.toml
+COPY --from=builder /app/pyproject.toml /app/LICENSE /app/
 
 # Put uv's python on PATH
 ENV PATH="/app/.venv/bin:$PATH" \

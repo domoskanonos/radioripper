@@ -16,7 +16,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
@@ -26,7 +26,6 @@ from radio_ripper.services.fingerprint import (
     FingerprintProvider,
     NullFingerprintProvider,
 )
-from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 from radio_ripper.services.metadata import (
     CoverArtArchiveProvider,
     ITunesMetadataProvider,
@@ -34,6 +33,7 @@ from radio_ripper.services.metadata import (
     NullMetadataProvider,
 )
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver
+from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 from radio_ripper.services.repository import SQLiteTrackRepository, TrackRepository
 from radio_ripper.services.storage import remove_empty_parents
 from radio_ripper.services.stream import StreamRecorder
@@ -186,13 +186,16 @@ class RadioRipperApp:
                 self.logger.warning(
                     "Fingerprint infrastructure error for %s: %s "
                     "(file kept as .untested.mp3 for next retry)",
-                    p.name, exc,
+                    p.name,
+                    exc,
                     exc_info=True,
                 )
                 continue
             except Exception:
                 self.logger.debug(
-                    "unexpected fingerprint error for %s", p.name, exc_info=True,
+                    "unexpected fingerprint error for %s",
+                    p.name,
+                    exc_info=True,
                 )
                 continue
             if result is None:
@@ -202,9 +205,7 @@ class RadioRipperApp:
                         p.unlink(missing_ok=True)
                         remove_empty_parents(p, self.settings.destination)
                     try:
-                        await self.repository.remove(
-                            rec.station_name, rec.track.stream_title
-                        )
+                        await self.repository.remove(rec.station_name, rec.track.stream_title)
                     except Exception as exc:
                         self.logger.debug("db remove after no-match: %s", exc)
                     self.logger.info("Discarded (still no match): %s", p.name)
@@ -215,7 +216,8 @@ class RadioRipperApp:
                 self.logger.warning(
                     "Refuse to rename %s -> %s (target exists). "
                     "Keeping .untested.mp3 for manual review.",
-                    p.name, new_path.name,
+                    p.name,
+                    new_path.name,
                 )
                 continue
             try:
@@ -235,8 +237,10 @@ class RadioRipperApp:
                 self.logger.debug("db update_file_path: %s", exc)
             try:
                 await self.repository.update_fingerprint(
-                    rec.station_name, rec.track.stream_title,
-                    recording_id=result.recording_id, score=result.score,
+                    rec.station_name,
+                    rec.track.stream_title,
+                    recording_id=result.recording_id,
+                    score=result.score,
                 )
             except Exception as exc:
                 self.logger.debug("db update_fingerprint: %s", exc)

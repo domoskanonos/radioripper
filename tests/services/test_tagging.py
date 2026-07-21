@@ -101,7 +101,7 @@ class TestID3Tagger:
         assert audio.get("TIT2").text == ["Y"]
 
 
-class TestGuessMime:
+class TestGuessMime2:
     def test_gif_cover_is_not_embedded(self, tmp_path: Path):
         f = tmp_path / "song.mp3"
         _write_blank_mp3(f)
@@ -155,13 +155,12 @@ class TestScaleCover:
         assert scaled_bytes == data  # Pillow decode fails → original returned
 
     def test_unknown_format_returns_none(self):
-        result = _scale_cover(b"\x00\x01\x02\x03" * 10)
-        # _guess_image_mime defaults to image/jpeg → should return data as-is
+        _scale_cover(b"\x00\x01\x02\x03" * 10)
         result2 = _scale_cover(b"\x00\x01\x02\x03" * 10)
-        assert result2 is not None  # default mime is jpeg, so not filtered
+        assert result2 is not None
 
 
-class TestGuessMime:
+class TestGuessJpegMime:
     def test_guess_image_mime_jpeg(self):
         from radio_ripper.services.tagging import _guess_image_mime
 

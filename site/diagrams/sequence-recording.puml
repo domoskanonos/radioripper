@@ -1,0 +1,50 @@
+@startuml sequence-recording
+!theme plain
+skinparam shadowing false
+hide footbox
+
+title Sequence: Song Recording (Happy Path)
+
+actor "CLI" as cli
+participant "StreamRecorder" as rec
+participant "AsyncHttpClient" as http
+participant "IcyParser" as parser
+participant "TrackWriter" as writer
+participant "TrackRepository" as repo
+participant "TrackTagger" as tagger
+participant "MetadataProvider" as md
+
+activate rec
+rec -> http : get_stream(url)
+http --> rec : async generator (bytes)
+
+loop stream chunks
+    rec -> parser : feed(chunk)
+    parser --> rec : AudioChunk
+    rec -> writer : feed(audio_bytes)
+    alt TitleChanged
+        parser --> rec : TitleChanged("Artist - Song")
+        rec -> writer : commit()  // close current song
+        writer --> rec : final_path (atomic rename)
+        rec -> repo : exists(station, title)
+        alt not duplicate
+            rec -> tagger : tag(final_path, TrackInfo)
+            tagger --> rec : ok
+            rec -> repo : register(SavedTrack, station)
+            opt enrich_metadata
+                rec -> md : create_task(enrich_song(...))
+                note right: non-blocking, fire-and-forget
+            end
+        else duplicate
+            rec -> rec : skip (log)
+        end
+        rec -> writer : new TrackWriter(next song)
+    end
+end
+
+rec -> http : close stream
+rec -> writer : discard()  // last in-flight song (incomplete)
+note right: only complete songs are saved
+
+deactivate rec
+@enduml

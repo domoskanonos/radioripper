@@ -12,7 +12,7 @@ Tags written:
     - ``TPUB``  (Publisher/Label) — radio station name for Jellyfin
     - ``COMM``  (Recorded via Radio-Ripper)
     - ``TXXX:RIPPEDBY`` (station@playlist) — provenance
-    - ``APIC``  (Cover art, JPEG or PNG only, scaled 500–1000 px) — optional
+    - ``APIC``  (Cover art, JPEG or PNG only, scaled 500-1000 px) — optional
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def _guess_image_mime(data: bytes) -> str:
 
 
 def _scale_cover(data: bytes) -> tuple[bytes, str] | None:
-    """Scale *data* to the 500–1000 px target range and return ``(bytes, mime)``.
+    """Scale *data* to the 500-1000 px target range and return ``(bytes, mime)``.
 
     Only ``image/jpeg`` and ``image/png`` are accepted; any other format
     (e.g. GIF) returns ``None`` so the cover is silently skipped.
@@ -66,19 +66,19 @@ def _scale_cover(data: bytes) -> tuple[bytes, str] | None:
     if mime not in ("image/jpeg", "image/png"):
         return None
     try:
-        from PIL import Image  # type: ignore[import-untyped]
+        from PIL import Image
 
-        img = Image.open(io.BytesIO(data))
+        img: Image.Image = Image.open(io.BytesIO(data))
         w, h = img.size
         long_side = max(w, h)
         if long_side < _MIN_COVER_PX:
             scale = _MIN_COVER_PX / long_side
-            img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
+            img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)  # type: ignore[attr-defined]
             w, h = img.size
             long_side = max(w, h)
         if long_side > _MAX_COVER_PX:
             scale = _MAX_COVER_PX / long_side
-            img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
+            img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)  # type: ignore[attr-defined]
         out = io.BytesIO()
         if mime == "image/jpeg":
             if img.mode not in ("RGB", "L"):
@@ -116,9 +116,7 @@ class TrackTagger(ABC):
         """Write enriched tags including album/year/genre and cover art."""
 
     @abstractmethod
-    def update_acoustid(
-        self, file_path: Path, recording_id: str, score: float
-    ) -> None:
+    def update_acoustid(self, file_path: Path, recording_id: str, score: float) -> None:
         """Add AcoustID/MusicBrainz tags to an already-tagged file."""
 
     @abstractmethod
@@ -231,10 +229,7 @@ class ID3Tagger(TrackTagger):
         except Exception as exc:
             raise TaggingError(f"failed to save enriched tags to {file_path}: {exc}") from exc
 
-
-    def update_acoustid(
-        self, file_path: Path, recording_id: str, score: float
-    ) -> None:
+    def update_acoustid(self, file_path: Path, recording_id: str, score: float) -> None:
         try:
             audio = _load_or_create(file_path)
         except Exception as exc:
@@ -259,9 +254,7 @@ class ID3Tagger(TrackTagger):
         scaled = _scale_cover(cover_bytes)
         if scaled is not None:
             scaled_data, mime = scaled
-            audio.add(
-                APIC(encoding=3, mime=mime, type=3, desc="Cover", data=scaled_data)
-            )
+            audio.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=scaled_data))
         try:
             audio.save(file_path, v2_version=3, v1=2)
         except Exception as exc:
@@ -286,9 +279,7 @@ class NullTagger(TrackTagger):
     ) -> None:
         return None
 
-    def update_acoustid(
-        self, file_path: Path, recording_id: str, score: float
-    ) -> None:
+    def update_acoustid(self, file_path: Path, recording_id: str, score: float) -> None:
         return None
 
     def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:

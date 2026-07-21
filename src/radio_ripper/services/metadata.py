@@ -138,9 +138,7 @@ class CoverArtArchiveProvider:
             mbid = rel.get("id")
             if not mbid:
                 continue
-            cover = await self.download_image(
-                self._CAA_RELEASE_FRONT.format(mbid=mbid)
-            )
+            cover = await self.download_image(self._CAA_RELEASE_FRONT.format(mbid=mbid))
             if cover:
                 return cover
         return None

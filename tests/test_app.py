@@ -11,7 +11,6 @@ from radio_ripper.app import RadioRipperApp
 from radio_ripper.domain.models import FingerprintResult, SavedTrack
 from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.services.fingerprint import (
-    AcoustidFingerprintProvider,
     FingerprintError,
     FingerprintProvider,
     NullFingerprintProvider,
@@ -53,8 +52,12 @@ class FakeRepo(TrackRepository):
         pass
 
     async def update_fingerprint(
-        self, station_name: str, stream_title: str, *,
-        recording_id: str, score: float,
+        self,
+        station_name: str,
+        stream_title: str,
+        *,
+        recording_id: str,
+        score: float,
     ) -> None:
         pass
 
@@ -66,15 +69,24 @@ class FakeRepo(TrackRepository):
     async def find_by_recording_id(self, recording_id: str) -> None:
         return None
 
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
+        return []
+
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        return None
+
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
+        return []
+
     async def list_untested(self) -> list:
         return []
 
     async def find_by_file_path(self, file_path: str) -> None:
         return None
 
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         pass
 
 
@@ -216,8 +228,12 @@ class _StubRepo(TrackRepository):
         pass
 
     async def update_fingerprint(
-        self, station_name: str, stream_title: str, *,
-        recording_id: str, score: float,
+        self,
+        station_name: str,
+        stream_title: str,
+        *,
+        recording_id: str,
+        score: float,
     ) -> None:
         self.updated_fps.append((station_name, stream_title, recording_id, score))
 
@@ -232,12 +248,21 @@ class _StubRepo(TrackRepository):
     async def list_untested(self) -> list[TrackRecord]:
         return list(self.untested)
 
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
+        return []
+
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        return None
+
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
+        return []
+
     async def find_by_file_path(self, file_path: str) -> None:
         return None
 
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         self.updated_paths.append((station_name, stream_title, new_path))
 
 
@@ -292,9 +317,7 @@ class _RecordingTagger(TrackTagger):
         pass
 
 
-def _untested_record(
-    tmp_path: Path, name: str = "Artist - Title"
-) -> tuple[TrackRecord, Path]:
+def _untested_record(tmp_path: Path, name: str = "Artist - Title") -> tuple[TrackRecord, Path]:
     """Create a real .untested.mp3 on disk and return (record, path)."""
     f = tmp_path / f"{name}.untested.mp3"
     f.write_bytes(b"\x00" * 32)
@@ -339,29 +362,46 @@ class _LookupStubRepo(TrackRepository):
 
     async def exists(self, *args, **kwargs) -> bool:
         return False
+
     async def register(self, *args, **kwargs) -> None:
         pass
+
     async def update_enrichment(self, *args, **kwargs) -> None:
         pass
+
     async def remove(self, *args, **kwargs) -> None:
         pass
+
     async def aclose(self) -> None:
         pass
+
     async def update_fingerprint(self, **kwargs) -> None:
         pass
+
     async def exists_by_recording_id(self, **kwargs) -> bool:
         return False
+
     async def find_by_recording_id(self, **kwargs) -> None:
         return None
+
     async def list_untested(self) -> list:
+        return []
+
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
+        return []
+
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        return None
+
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
         return []
 
     async def find_by_file_path(self, file_path: str) -> TrackRecord | None:
         return self.records.get(file_path)
 
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         self.updated_paths.append((station_name, stream_title, new_path))
 
 
@@ -376,8 +416,11 @@ class TestReprocessAll:
         record = TrackRecord(
             station_name="TestStation",
             track=SavedTrack(
-                stream_title="Artist - Title", artist="Artist", title="Title",
-                file_path=str(mp3_file), file_size=102,
+                stream_title="Artist - Title",
+                artist="Artist",
+                title="Title",
+                file_path=str(mp3_file),
+                file_size=102,
             ),
         )
         repo = _LookupStubRepo(records={str(mp3_file): record})
@@ -387,22 +430,13 @@ class TestReprocessAll:
         untested = dest / "Artist - Title.untested.mp3"
         assert untested.exists(), "File must be renamed to .untested.mp3"
         assert not mp3_file.exists(), "Original .mp3 must be gone"
-        assert repo.updated_paths == [
-            ("TestStation", "Artist - Title", str(untested))
-        ]
+        assert repo.updated_paths == [("TestStation", "Artist - Title", str(untested))]
 
     async def test_skips_untested_files(self, tmp_path) -> None:
         dest = tmp_path / "recordings"
         untested = dest / "Artist - Title.untested.mp3"
         untested.parent.mkdir(parents=True)
         untested.write_bytes(b"\x00" * 32)
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Artist - Title", artist="Artist", title="Title",
-                file_path=str(untested), file_size=32,
-            ),
-        )
         repo = _LookupStubRepo(records={})
         settings = _make_settings(tmp_path, reprocess_all=True)
         app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
@@ -430,8 +464,11 @@ class TestReprocessAll:
         record = TrackRecord(
             station_name="TestStation",
             track=SavedTrack(
-                stream_title="Artist - Title", artist="Artist", title="Title",
-                file_path=str(mp3_file), file_size=32,
+                stream_title="Artist - Title",
+                artist="Artist",
+                title="Title",
+                file_path=str(mp3_file),
+                file_size=32,
             ),
         )
         repo = _LookupStubRepo(records={str(mp3_file): record})
@@ -449,9 +486,7 @@ class TestReprocessUntested:
         """NullFingerprintProvider → no list_untested call at all."""
         settings = _make_settings(tmp_path)
         repo = _StubRepo()
-        app = _make_app(
-            settings, repo, NullTagger(), NullFingerprintProvider()
-        )
+        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
         await app.reprocess_untested()
         assert repo.removed == []
         assert repo.updated_paths == []
@@ -533,12 +568,8 @@ class TestReprocessUntested:
         assert expected.exists(), "Happy path: .mp3 must exist after rename"
         assert not f.exists(), "Happy path: .untested.mp3 must be gone"
         assert tagger.update_acoustid_calls == [(expected, "rec-42", 0.95)]
-        assert repo.updated_paths == [
-            ("TestStation", "Artist - Title", str(expected))
-        ]
-        assert repo.updated_fps == [
-            ("TestStation", "Artist - Title", "rec-42", 0.95)
-        ]
+        assert repo.updated_paths == [("TestStation", "Artist - Title", str(expected))]
+        assert repo.updated_fps == [("TestStation", "Artist - Title", "rec-42", 0.95)]
 
     async def test_respects_rate_limit_interval(self, tmp_path) -> None:
         """With acoustid_min_interval_s=0.05, calls must be >=0.05s apart."""

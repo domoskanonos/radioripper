@@ -73,8 +73,10 @@ class TrackWriter:
     def __init__(self, final_path: Path, *, min_size: int = 1024) -> None:
         self.final_path = final_path
         self.min_size = min_size
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".mp3.tmp", prefix="radio-ripper-", delete=False,
+        tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
+            suffix=".mp3.tmp",
+            prefix="radio-ripper-",
+            delete=False,
         )
         self._tmp_path = Path(tmp.name)
         self._fh = tmp
@@ -142,7 +144,7 @@ def remux_mp3(path: Path) -> None:
     """
     tmp = path.with_suffix(".remux.tmp")
     try:
-        from pydub import AudioSegment  # type: ignore[import-untyped]
+        from pydub import AudioSegment
 
         audio = AudioSegment.from_file(str(path), format="mp3")
         audio.export(str(tmp), format="mp3", tags={})

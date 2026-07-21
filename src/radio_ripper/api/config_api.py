@@ -81,6 +81,8 @@ class ConfigApi:
             destination=Path("./recordings"),
             database=Path("./recordings/ripper.db"),
             streams=[
-                StreamConfig(name="TopHits", url=HttpUrl("http://tophits.radiomonster.fm/listen.m3u")),
+                StreamConfig(
+                    name="TopHits", url=HttpUrl("http://tophits.radiomonster.fm/listen.m3u")
+                ),
             ],
         )

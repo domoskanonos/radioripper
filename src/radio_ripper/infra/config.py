@@ -41,10 +41,21 @@ class Settings(BaseModel):
     destination: Path = Field(default=Path("./recordings"))
     database: Path = Field(default=Path("./recordings/ripper.db"))
 
-    stream_keywords: list[str] = Field(default_factory=lambda: [
-        "rock", "50", "60", "70", "80", "90", "10",
-        "dance", "pop", "top hits", "charts",
-    ])
+    stream_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "rock",
+            "50",
+            "60",
+            "70",
+            "80",
+            "90",
+            "10",
+            "dance",
+            "pop",
+            "top hits",
+            "charts",
+        ]
+    )
     discovery_enabled: bool = True
     temp_dir: Path = Field(default=Path.home() / ".cache" / "radio-ripper")
     discovery_max_stations: int = Field(default=150, ge=1, le=500)

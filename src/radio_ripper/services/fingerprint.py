@@ -51,7 +51,7 @@ class AcoustidFingerprintProvider(FingerprintProvider):
 
     Args:
         api_key: AcoustID API key.
-        min_score: Minimum confidence score (0.0–1.0) to accept a match.
+        min_score: Minimum confidence score (0.0-1.0) to accept a match.
     """
 
     def __init__(self, api_key: str, *, min_score: float = 0.8) -> None:
@@ -63,14 +63,11 @@ class AcoustidFingerprintProvider(FingerprintProvider):
             import acoustid  # type: ignore[import-untyped]
         except ImportError as exc:
             raise FingerprintError(
-                "acoustid library not installed "
-                "(pip install pyacoustid + system chromaprint)"
+                "acoustid library not installed (pip install pyacoustid + system chromaprint)"
             ) from exc
         loop = asyncio.get_running_loop()
         try:
-            gen = await loop.run_in_executor(
-                None, acoustid.match, self._api_key, str(path)
-            )
+            gen = await loop.run_in_executor(None, acoustid.match, self._api_key, str(path))
             # acoustid.match returns a generator (parse_lookup_result uses yield).
             # Materialize it so we can subscript and len-check properly.
             # This also surfaces any WebServiceError raised during iteration.

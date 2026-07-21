@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from radio_ripper.domain.models import FingerprintResult
 from radio_ripper.services.fingerprint import (
     AcoustidFingerprintProvider,
     FingerprintError,
@@ -55,9 +54,11 @@ class TestAcoustidFingerprintProvider:
     async def test_raises_fingerprint_error_on_acoustid_exception(self) -> None:
         """Infrastructure failures (API down, network) must raise, NOT return None."""
         provider = AcoustidFingerprintProvider("test-key")
-        with patch("acoustid.match", side_effect=RuntimeError("API down")):
-            with pytest.raises(FingerprintError, match="acoustid lookup failed"):
-                await provider.fingerprint(Path("/tmp/test.mp3"))
+        with (
+            patch("acoustid.match", side_effect=RuntimeError("API down")),
+            pytest.raises(FingerprintError, match="acoustid lookup failed"),
+        ):
+            await provider.fingerprint(Path("/tmp/test.mp3"))
 
     async def test_raises_fingerprint_error_on_import_error(self) -> None:
         """Missing acoustid library is an infrastructure failure, not a no-match."""
@@ -86,9 +87,11 @@ class TestAcoustidFingerprintProvider:
         """Ensure the original acoustid exception is chained for debugging."""
         provider = AcoustidFingerprintProvider("test-key")
         original_exc = ValueError("bad api key")
-        with patch("acoustid.match", side_effect=original_exc):
-            with pytest.raises(FingerprintError) as exc_info:
-                await provider.fingerprint(Path("/tmp/test.mp3"))
+        with (
+            patch("acoustid.match", side_effect=original_exc),
+            pytest.raises(FingerprintError) as exc_info,
+        ):
+            await provider.fingerprint(Path("/tmp/test.mp3"))
         assert exc_info.value.__cause__ is original_exc
 
     async def test_handles_generator_return_value_correctly(self) -> None:
@@ -126,9 +129,11 @@ class TestAcoustidFingerprintProvider:
             from acoustid import WebServiceError
         except ImportError:
             pytest.skip("acoustid not installed; WebServiceError unavailable")
-        with patch("acoustid.match", side_effect=WebServiceError("error 5: invalid key")):
-            with pytest.raises(FingerprintError, match="acoustid lookup failed"):
-                await provider.fingerprint(Path("/tmp/test.mp3"))
+        with (
+            patch("acoustid.match", side_effect=WebServiceError("error 5: invalid key")),
+            pytest.raises(FingerprintError, match="acoustid lookup failed"),
+        ):
+            await provider.fingerprint(Path("/tmp/test.mp3"))
 
     async def test_generator_iteration_error_wrapped_as_fingerprint_error(self) -> None:
         """If materializing the generator (list()) raises (e.g. WebServiceError
@@ -141,8 +146,11 @@ class TestAcoustidFingerprintProvider:
             def _gen():
                 yield  # first yield succeeds
                 raise RuntimeError("iteration failed")
+
             return _gen()
 
-        with patch("acoustid.match", side_effect=fake_match):
-            with pytest.raises(FingerprintError, match="acoustid lookup failed"):
-                await provider.fingerprint(Path("/tmp/test.mp3"))
+        with (
+            patch("acoustid.match", side_effect=fake_match),
+            pytest.raises(FingerprintError, match="acoustid lookup failed"),
+        ):
+            await provider.fingerprint(Path("/tmp/test.mp3"))

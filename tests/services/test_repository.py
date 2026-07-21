@@ -139,9 +139,7 @@ class TestSQLiteTrackRepository:
         await sqlite_repo.update_fingerprint("Rock", "A - B", recording_id="abc123", score=0.9)
         assert await sqlite_repo.exists_by_recording_id("abc123")
 
-    async def test_exists_by_recording_id_exclude_station(
-        self, sqlite_repo: SQLiteTrackRepository
-    ):
+    async def test_exists_by_recording_id_exclude_station(self, sqlite_repo: SQLiteTrackRepository):
         track = SavedTrack("A - B", "A", "B", "/x", 1)
         await sqlite_repo.register(track, "Rock")
         await sqlite_repo.update_fingerprint("Rock", "A - B", recording_id="abc123", score=0.9)

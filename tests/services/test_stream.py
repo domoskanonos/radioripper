@@ -12,7 +12,7 @@ from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.services.fingerprint import FingerprintError, FingerprintProvider
 from radio_ripper.services.metadata import NullMetadataProvider
 from radio_ripper.services.playlist import StaticPlaylistResolver
-from radio_ripper.services.repository import TrackRepository
+from radio_ripper.services.repository import TrackRecord, TrackRepository
 from radio_ripper.services.stream import StreamRecorder, _parse_metaint
 from radio_ripper.services.tagging import NullTagger, TrackTagger
 
@@ -105,7 +105,8 @@ class FakeRepoThatSaysExisting(TrackRepository):
 
     async def remove(self, station_name: str, stream_title: str) -> None:
         self.registered = [
-            (sn, t) for sn, t in self.registered
+            (sn, t)
+            for sn, t in self.registered
             if not (sn == station_name and t.stream_title == stream_title)
         ]
 
@@ -113,8 +114,12 @@ class FakeRepoThatSaysExisting(TrackRepository):
         pass
 
     async def update_fingerprint(
-        self, station_name: str, stream_title: str, *,
-        recording_id: str, score: float,
+        self,
+        station_name: str,
+        stream_title: str,
+        *,
+        recording_id: str,
+        score: float,
     ) -> None:
         pass
 
@@ -129,12 +134,21 @@ class FakeRepoThatSaysExisting(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
+        return []
+
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        return None
+
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
+        return []
+
     async def find_by_file_path(self, file_path: str) -> None:
         return None
 
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         pass
 
 
@@ -155,7 +169,8 @@ class FakeRepoFresh(TrackRepository):
 
     async def remove(self, station_name: str, stream_title: str) -> None:
         self.registered = [
-            (sn, t) for sn, t in self.registered
+            (sn, t)
+            for sn, t in self.registered
             if not (sn == station_name and t.stream_title == stream_title)
         ]
 
@@ -163,8 +178,12 @@ class FakeRepoFresh(TrackRepository):
         pass
 
     async def update_fingerprint(
-        self, station_name: str, stream_title: str, *,
-        recording_id: str, score: float,
+        self,
+        station_name: str,
+        stream_title: str,
+        *,
+        recording_id: str,
+        score: float,
     ) -> None:
         pass
 
@@ -179,12 +198,21 @@ class FakeRepoFresh(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
+        return []
+
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        return None
+
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
+        return []
+
     async def find_by_file_path(self, file_path: str) -> None:
         return None
 
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         pass
 
 
@@ -545,8 +573,12 @@ class _FingerprintRepo(TrackRepository):
         pass
 
     async def update_fingerprint(
-        self, station_name: str, stream_title: str, *,
-        recording_id: str, score: float,
+        self,
+        station_name: str,
+        stream_title: str,
+        *,
+        recording_id: str,
+        score: float,
     ) -> None:
         self.updated_fps.append((station_name, stream_title, recording_id, score))
 
@@ -561,12 +593,21 @@ class _FingerprintRepo(TrackRepository):
     async def list_untested(self) -> list:
         return []
 
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
+        return []
+
+    async def find_by_artist_title_any_station(
+        self, artist: str, title: str, exclude_station: str | None = None
+    ) -> TrackRecord | None:
+        return None
+
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
+        return []
+
     async def find_by_file_path(self, file_path: str) -> None:
         return None
 
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         self.updated_paths.append((station_name, stream_title, new_path))
 
 
@@ -602,9 +643,7 @@ class TestFingerprintSong:
         repo = _FingerprintRepo()
         tagger = _RecordingTagger()
         provider = _ScriptedFingerprint(error=FingerprintError("API down"))
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         track = TrackInfo.from_stream_title("Artist - Title")
         await rec._fingerprint_song(f, track, "prov")
         assert f.exists(), "FingerprintError must keep .untested.mp3"
@@ -621,9 +660,7 @@ class TestFingerprintSong:
         repo = _FingerprintRepo()
         tagger = _RecordingTagger()
         provider = _ScriptedFingerprint(result=None)
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         track = TrackInfo.from_stream_title("Artist - Title")
         await rec._fingerprint_song(f, track, "prov")
         assert not f.exists(), "Genuine no-match must delete file"
@@ -639,9 +676,7 @@ class TestFingerprintSong:
         repo = _FingerprintRepo()
         tagger = _RecordingTagger()
         provider = _ScriptedFingerprint(result=None)
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         track = TrackInfo.from_stream_title("Artist - Title")
         await rec._fingerprint_song(f, track, "prov")
         assert f.exists(), "discard_unmatched=False must keep the file"
@@ -662,9 +697,7 @@ class TestFingerprintSong:
             artist="Real Artist", title="Real Title", score=0.95, recording_id="rec-42"
         )
         provider = _ScriptedFingerprint(result=result)
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         track = TrackInfo.from_stream_title("Artist - Title")
         await rec._fingerprint_song(f, track, "prov")
         expected = tmp_path / "Artist - Title.mp3"
@@ -690,9 +723,7 @@ class TestFingerprintSong:
             artist="Real Artist", title="Real Title", score=0.95, recording_id="rec-42"
         )
         provider = _ScriptedFingerprint(result=result)
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         track = TrackInfo.from_stream_title("Artist - Title")
         await rec._fingerprint_song(f, track, "prov")
         # Both files must still exist
@@ -711,9 +742,7 @@ class TestFileLocks:
         repo = _FingerprintRepo()
         tagger = _RecordingTagger()
         provider = _ScriptedFingerprint(result=None)
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         path = Path("/some/file.mp3")
         lock1 = rec._lock_for(path)
         lock2 = rec._lock_for(path)
@@ -724,9 +753,7 @@ class TestFileLocks:
         repo = _FingerprintRepo()
         tagger = _RecordingTagger()
         provider = _ScriptedFingerprint(result=None)
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         lock_a = rec._lock_for(Path("/a.mp3"))
         lock_b = rec._lock_for(Path("/b.mp3"))
         assert lock_a is not lock_b
@@ -736,9 +763,7 @@ class TestFileLocks:
         repo = _FingerprintRepo()
         tagger = _RecordingTagger()
         provider = _ScriptedFingerprint(result=None)
-        rec = _make_fp_recorder(
-            settings=settings, repo=repo, tagger=tagger, fingerprint=provider
-        )
+        rec = _make_fp_recorder(settings=settings, repo=repo, tagger=tagger, fingerprint=provider)
         path = Path("/some/file.mp3")
         rec._lock_for(path)
         assert path in rec._file_locks

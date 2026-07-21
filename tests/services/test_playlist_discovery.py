@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -24,7 +25,6 @@ from radio_ripper.services.playlist_discovery import (
     _probe_icy,
     _save_cache,
 )
-
 
 # ---------------------------------------------------------------------------
 # _parse_m3u_text
@@ -57,11 +57,7 @@ class TestParseM3uText:
         assert _parse_m3u_text(text, "test.m3u") == []
 
     def test_parse_multiple_entries(self) -> None:
-        text = (
-            "#EXTM3U\n"
-            "#EXTINF:-1,One\nhttp://a\n"
-            "#EXTINF:-1,Two\nhttp://b\n"
-        )
+        text = "#EXTM3U\n#EXTINF:-1,One\nhttp://a\n#EXTINF:-1,Two\nhttp://b\n"
         entries = _parse_m3u_text(text, "test.m3u")
         assert len(entries) == 2
         assert entries[0].name == "One"
@@ -77,7 +73,7 @@ class TestParseM3uText:
 
 
 class TestFilterKeywords:
-    ENTRIES = [
+    ENTRIES: ClassVar[list[M3uEntry]] = [
         M3uEntry(name="Classic Rock", url="http://a", source="x"),
         M3uEntry(name="Pop Hits", url="http://b", source="x"),
         M3uEntry(name="Jazz", url="http://c", source="x"),
@@ -90,7 +86,12 @@ class TestFilterKeywords:
 
     def test_match_extinf(self) -> None:
         entries = [
-            M3uEntry(name="Some FM", url="http://a", source="x", extinf='#EXTINF:-1 tvg-id="rock.fm",Rock FM'),
+            M3uEntry(
+                name="Some FM",
+                url="http://a",
+                source="x",
+                extinf='#EXTINF:-1 tvg-id="rock.fm",Rock FM',
+            ),
         ]
         result = _filter_keywords(entries, ["rock"])
         assert len(result) == 1
@@ -246,6 +247,7 @@ class TestCacheHelpers:
 
     def test_is_cache_stale(self, tmp_path: Path) -> None:
         import os
+
         cf = tmp_path / "cache.json"
         cf.write_text("{}")
         old = time.time() - 8 * 86400
@@ -327,11 +329,18 @@ class TestDownloadMegaM3u:
         mock_client = MagicMock(spec=httpx.AsyncClient)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client.get = AsyncMock(side_effect=httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=MagicMock(status_code=404),
-        ))
+        mock_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "404",
+                request=MagicMock(),
+                response=MagicMock(status_code=404),
+            )
+        )
 
-        with patch("httpx.AsyncClient", return_value=mock_client), pytest.raises(httpx.HTTPStatusError):
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
             await _download_mega_m3u()
 
 

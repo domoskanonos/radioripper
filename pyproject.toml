@@ -1,6 +1,6 @@
 [project]
 name = "radio-ripper"
-version = "2.0.0"
+version = "2.1.0"
 description = "Production-grade Webradio-Ripper: dauerhaftes paralleles Aufzeichnen von ICY-Metadaten-Streams mit Song-Trennung, Duplikats-DB, ID3v2-Tagging und iTunes-Enrichment."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -122,8 +122,12 @@ follow_imports = "skip"
 
 [dependency-groups]
 dev = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.7",
+    "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "respx>=0.23.1",
+    "ruff>=0.15.22",
 ]

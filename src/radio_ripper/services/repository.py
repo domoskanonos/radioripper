@@ -26,6 +26,7 @@ class TrackRecord:
     station_name: str
     track: SavedTrack
 
+
 _CREATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS songs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,15 +84,11 @@ class TrackRepository(ABC):
         """Return True if *recording_id* is already stored (optionally excluding a station)."""
 
     @abstractmethod
-    async def find_all_by_recording_id(
-        self, recording_id: str
-    ) -> list[TrackRecord]:
+    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         """Return ALL track records matching *recording_id* (empty list if none)."""
 
     @abstractmethod
-    async def find_by_recording_id(
-        self, recording_id: str
-    ) -> TrackRecord | None:
+    async def find_by_recording_id(self, recording_id: str) -> TrackRecord | None:
         """Return the existing track record for a recording_id, or None."""
 
     @abstractmethod
@@ -102,9 +99,7 @@ class TrackRepository(ABC):
         (optionally excluding *exclude_station*), or ``None``."""
 
     @abstractmethod
-    async def find_all_by_artist_title(
-        self, artist: str, title: str
-    ) -> list[TrackRecord]:
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
         """Return ALL track records matching *artist* and *title* (empty list if none)."""
 
     @abstractmethod
@@ -132,9 +127,7 @@ class TrackRepository(ABC):
         """Return all records whose file_path ends with ``.untested.mp3``."""
 
     @abstractmethod
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         """Update the file path after renaming (e.g. .untested.mp3 → .mp3)."""
 
     @abstractmethod
@@ -328,14 +321,11 @@ class SQLiteTrackRepository(TrackRepository):
                 self._exists_by_recording_id_sync, recording_id, exclude_station
             )
 
-    def _exists_by_recording_id_sync(
-        self, recording_id: str, exclude_station: str | None
-    ) -> bool:
+    def _exists_by_recording_id_sync(self, recording_id: str, exclude_station: str | None) -> bool:
         try:
             if exclude_station:
                 cur = self._conn.execute(
-                    "SELECT 1 FROM songs "
-                    "WHERE acoustid_recording_id=? AND station_name!=? LIMIT 1",
+                    "SELECT 1 FROM songs WHERE acoustid_recording_id=? AND station_name!=? LIMIT 1",
                     (recording_id, exclude_station),
                 )
             else:
@@ -349,9 +339,7 @@ class SQLiteTrackRepository(TrackRepository):
 
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         async with self._lock:
-            return await asyncio.to_thread(
-                self._find_all_by_recording_id_sync, recording_id
-            )
+            return await asyncio.to_thread(self._find_all_by_recording_id_sync, recording_id)
 
     def _find_all_by_recording_id_sync(self, recording_id: str) -> list[TrackRecord]:
         try:
@@ -390,9 +378,7 @@ class SQLiteTrackRepository(TrackRepository):
 
     async def find_by_recording_id(self, recording_id: str) -> TrackRecord | None:
         async with self._lock:
-            return await asyncio.to_thread(
-                self._find_by_recording_id_sync, recording_id
-            )
+            return await asyncio.to_thread(self._find_by_recording_id_sync, recording_id)
 
     def _find_by_recording_id_sync(self, recording_id: str) -> TrackRecord | None:
         try:
@@ -433,7 +419,9 @@ class SQLiteTrackRepository(TrackRepository):
         async with self._lock:
             return await asyncio.to_thread(
                 self._find_by_artist_title_any_station_sync,
-                artist, title, exclude_station,
+                artist,
+                title,
+                exclude_station,
             )
 
     def _find_by_artist_title_any_station_sync(
@@ -485,21 +473,17 @@ class SQLiteTrackRepository(TrackRepository):
                 ),
             )
         except sqlite3.Error as exc:
-            raise RepositoryError(
-                f"find_by_artist_title_any_station() failed: {exc}"
-            ) from exc
+            raise RepositoryError(f"find_by_artist_title_any_station() failed: {exc}") from exc
 
-    async def find_all_by_artist_title(
-        self, artist: str, title: str
-    ) -> list[TrackRecord]:
+    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
         async with self._lock:
             return await asyncio.to_thread(
-                self._find_all_by_artist_title_sync, artist, title,
+                self._find_all_by_artist_title_sync,
+                artist,
+                title,
             )
 
-    def _find_all_by_artist_title_sync(
-        self, artist: str, title: str
-    ) -> list[TrackRecord]:
+    def _find_all_by_artist_title_sync(self, artist: str, title: str) -> list[TrackRecord]:
         try:
             cur = self._conn.execute(
                 """
@@ -533,9 +517,7 @@ class SQLiteTrackRepository(TrackRepository):
                 )
             return result
         except sqlite3.Error as exc:
-            raise RepositoryError(
-                f"find_all_by_artist_title() failed: {exc}"
-            ) from exc
+            raise RepositoryError(f"find_all_by_artist_title() failed: {exc}") from exc
 
     async def find_by_file_path(self, file_path: str) -> TrackRecord | None:
         async with self._lock:
@@ -612,17 +594,13 @@ class SQLiteTrackRepository(TrackRepository):
         except sqlite3.Error as exc:
             raise RepositoryError(f"list_untested() failed: {exc}") from exc
 
-    async def update_file_path(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
         async with self._lock:
             await asyncio.to_thread(
                 self._update_file_path_sync, station_name, stream_title, new_path
             )
 
-    def _update_file_path_sync(
-        self, station_name: str, stream_title: str, new_path: str
-    ) -> None:
+    def _update_file_path_sync(self, station_name: str, stream_title: str, new_path: str) -> None:
         try:
             self._conn.execute(
                 "UPDATE songs SET file_path=? WHERE station_name=? AND LOWER(stream_title)=LOWER(?)",

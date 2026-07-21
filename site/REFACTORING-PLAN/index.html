@@ -1,0 +1,1614 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production-grade Webradio-Ripper – Dauerhafte parallele Aufzeichnung von ICY-Metadaten-Streams">
+      
+      
+        <meta name="author" content="Radio-Ripper Contributors">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Refactoring-Architekturplan — radio_ripper - Radio-Ripper</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#refactoring-architekturplan-radio_ripper" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Radio-Ripper" class="md-header__button md-logo" aria-label="Radio-Ripper" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Radio-Ripper
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Refactoring-Architekturplan — radio_ripper
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/domoskanonos/radioripper" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    domoskanonos/radioripper
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../arc42/01_introduction_and_goals/" class="md-tabs__link">
+          
+  
+  
+  Architektur (arc42)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Radio-Ripper" class="md-nav__button md-logo" aria-label="Radio-Ripper" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Radio-Ripper
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/domoskanonos/radioripper" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    domoskanonos/radioripper
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architektur (arc42)
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architektur (arc42)
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/01_introduction_and_goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Einfuhrung und Ziele
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/02_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Randbedingungen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/03_context/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Kontext
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/04_solution_strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Losungsstrategie
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/05_building_block_view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Bausteinsicht
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/06_runtime_view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Laufzeitsicht
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/07_deployment_view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Verteilungssicht
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/08_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Querschnittskonzepte
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/09_design_decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Architekturentscheidungen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/10_quality_requirements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Qualitatsanforderungen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/11_risks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Risiken
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc42/12_glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Glossar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-auftrags-rahmenklarung" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Auftrags- &amp; Rahmenklärung
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-ist-zustand-schwachenmatrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Ist-Zustand &amp; Schwächenmatrix
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Ist-Zustand &amp; Schwächenmatrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-ist-stand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Ist-Stand
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-schwachenmatrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Schwächenmatrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-ziel-architektur" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Ziel-Architektur
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Ziel-Architektur">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-layered-hexagon-ports-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Layered Hexagon (Ports &amp; Adapters)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-modulplan-src-layout-unter-srcradio_ripper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Modulplan (src-Layout unter src/radio_ripper/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-auswahl-begrundet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Auswahl begründet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-datenmodell-pydantic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 Datenmodell (Pydantic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-icy-parser-zustandsbasiert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 ICY-Parser (zustandsbasiert)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#36-fehlerhierarchie-infraerrorspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.6 Fehlerhierarchie (infra/errors.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#37-testing-strategie" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.7 Testing-Strategie
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#38-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.8 Tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#39-dokumentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.9 Dokumentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-migrations-plan-phasen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Migrations-Plan (Phasen)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-risikoanalyse-nichteintritt-der-funktionsminderung" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Risikoanalyse &amp; Nichteintritt der Funktionsminderung
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-offene-punkte-ruckfragen-an-auftrag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Offene Punkte / Rückfragen an Auftrag
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="refactoring-architekturplan-radio_ripper">Refactoring-Architekturplan — <code>radio_ripper</code><a class="headerlink" href="#refactoring-architekturplan-radio_ripper" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Stand: 2026-07-17 · Autor: Architect-Role · Status: Entwurf, durch Code-Agent umsetzbar.</p>
+</blockquote>
+<hr />
+<h2 id="1-auftrags-rahmenklarung">1. Auftrags- &amp; Rahmenklärung<a class="headerlink" href="#1-auftrags-rahmenklarung" title="Permanent link">&para;</a></h2>
+<p>keeps existing behaviour intact:
+- Multi-Stream dauerhaftes Rippen via <code>.m3u</code> / <code>.pls</code>
+- ICY-Metadaten-Trennung an <code>StreamTitle</code>-Wechseln
+- SQLite Duplikats-DB pro Station
+- ID3v2-Tagging (<code>mutagen</code>)
+- iTunes-Enrichment &amp; Cover-APIC
+- Nur <strong>komplette</strong> Lieder speichern
+- <code>uv</code>-Build, <code>run.sh</code>-Helper</p>
+<hr />
+<h2 id="2-ist-zustand-schwachenmatrix">2. Ist-Zustand &amp; Schwächenmatrix<a class="headerlink" href="#2-ist-zustand-schwachenmatrix" title="Permanent link">&para;</a></h2>
+<h3 id="21-ist-stand">2.1 Ist-Stand<a class="headerlink" href="#21-ist-stand" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Aspekt</th>
+<th>Zustand</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Struktur</td>
+<td>Monolith <code>radio_ripper.py</code> (1214 LOC, 1 Datei, 7 Top-Level-Klassen)</td>
+</tr>
+<tr>
+<td>Concurrency</td>
+<td><code>requests</code> (sync) + <code>threading.Thread</code> pro Stream + <code>ThreadPoolExecutor</code> für Enrichment</td>
+</tr>
+<tr>
+<td>Persistenz</td>
+<td><code>sqlite3</code> roh, Wrapper <code>DupDB</code> mit eigenem Lock</td>
+</tr>
+<tr>
+<td>Validation</td>
+<td>Plain <code>dataclass</code>, manuelle Cast im <code>Config.load()</code></td>
+</tr>
+<tr>
+<td>Testabdeckung</td>
+<td><strong>0 %</strong></td>
+</tr>
+<tr>
+<td>CI/CD</td>
+<td>nicht vorhanden</td>
+</tr>
+<tr>
+<td>Tooling</td>
+<td>Ruff (lint+format), Pyright (basic), kein pre-commit, kein mypy</td>
+</tr>
+<tr>
+<td>Doku</td>
+<td>README nur, keine arc42, kein PlantUML, keine ADRs</td>
+</tr>
+<tr>
+<td>Containerisierung</td>
+<td>keine</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-schwachenmatrix">2.2 Schwächenmatrix<a class="headerlink" href="#22-schwachenmatrix" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Kategorie</th>
+<th>Befund</th>
+<th>Auswirkung</th>
+<th>Maßnahme</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>SoC</strong></td>
+<td><code>StreamRecorder</code> (≈400 LOC) vereint HTTP, Icy-Parser, File-IO, ID3-Tagging, DB-Register, Enrichment-Orchestrierung</td>
+<td>Nicht testbar, schwer erweiterbar</td>
+<td>Aufspalten in <code>icy.IcyParser</code>, <code>storage.TrackWriter</code>, <code>tagging.ID3Tagger</code>, <code>services.StreamRecorder</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Abstraktion</strong></td>
+<td><code>MetadataFetcher</code> hartcodiert iTunes; <code>PlaylistResolver</code>, <code>TrackRepository</code> keine Interfaces</td>
+<td>Provider nicht austauschbar</td>
+<td>ABCs für Metadata, Playlist, Repository, Tagger, HttpClient</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Concurrency</strong></td>
+<td><code>requests</code> + Threads + ThreadPoolExecutor</td>
+<td>Memory-overhead pro Stream, keine saubere Cancellation, Blockierungen im GIL für JSON-Parse</td>
+<td>Migration auf <code>httpx.AsyncClient</code> + <code>asyncio.Task</code> pro Stream, single Event-Loop</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Validation</strong></td>
+<td><code>Config.load</code> casted int/float/path manuell, keine Range-Checks, URLs unvalidiert</td>
+<td>Konfigurationsfehler erst zur Laufzeit</td>
+<td>Pydantic v2 <code>BaseSettings</code> mit Feld-Validatoren</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>Error-Handling</strong></td>
+<td><code>except Exception</code> reaktiv, ad-hoc in jeder Methode</td>
+<td>Keine kohärente Resilienz-Strategie; Retry ist Custom-While-Loop</td>
+<td>Eigene Fehlerhierarchie <code>errors.py</code> + <code>resilience.retry_async</code> Decorator</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>Logging</strong></td>
+<td>Rotating-file + Console, OK</td>
+<td>--</td>
+<td>Beibehalten, zentral in <code>infra/logging.py</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><strong>Testing</strong></td>
+<td>0</td>
+<td>Höchstes Risiko</td>
+<td>Pytest + pytest-asyncio + respx + golden MP3; Spiegelung in <code>tests/</code>-Struktur; Coverage ≥ 85 %</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>Bugs</strong></td>
+<td>(a) <code>bytes_until_meta</code> kann negativ werden, wenn <code>take</code> nach Clamping immer noch zu groß; (b) <code>_stream_no_meta</code> schreibt untagged Dump ohne ID3 <em>und</em> ohne Begrenzung; (c) <code>current_size</code> wird immer hochgezählt aber nie gelesen (dead state); (d) <code>requirements.txt</code> stale gegenüber <code>pyproject.toml</code>; (e) Phase-1-Join-State-Maschine ohne Test</td>
+<td>Datenverlust beim Join, kaputte Fallback-Dateien, Duplikate möglich</td>
+<td>IcyParser extract + Property-Tests (Hypothesis), <code>requirements.txt</code> aus generated source entfernen</td>
+</tr>
+<tr>
+<td>9</td>
+<td><strong>Duplikate</strong></td>
+<td><code>_close_current</code> vs <code>_safe_close_current</code> historisch; <code>current_size</code> redundant; setzt <code>stream_title</code> 3× (DB-Register dupliziert mit Varianten); <code>_stream_no_meta</code> schreibt nicht durch Tagger</td>
+<td>DRY-Verletzung, 2 Code-Pfade fürs Tagging</td>
+<td>Single <code>_close_current</code> Logik, alle Songs über <code>TrackWriter</code> + <code>ID3Tagger</code></td>
+</tr>
+<tr>
+<td>10</td>
+<td><strong>Inline-Doku</strong></td>
+<td>vorhanden aber Parser-Logik nicht diagrammiert</td>
+<td>Kein Onboarding-Contxt</td>
+<td>Pydoc + PlantUML-State-Diagramm in docs/</td>
+</tr>
+<tr>
+<td>11</td>
+<td><strong>Unbenutzt</strong></td>
+<td><code>requirements.txt</code>, <code>Iterable</code>-Import (bereits entfernt), <code>current_size</code>, <code>first_title_seen</code>-Redundanz (information schon in <code>current_title</code>) mit unpassender Initialisierung</td>
+<td>Wartungs-Ballast</td>
+<td>Löschen / vereinheitlichen</td>
+</tr>
+<tr>
+<td>12</td>
+<td><strong>Probleme gleichzeitig</strong></td>
+<td>ripper + tagging + db + metadata + resilience in einem Projekt-Job</td>
+<td>Erweiterungen boomen; SRP verletzt</td>
+<td>Layered: cli / app / services / domain / infra</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-ziel-architektur">3. Ziel-Architektur<a class="headerlink" href="#3-ziel-architektur" title="Permanent link">&para;</a></h2>
+<h3 id="31-layered-hexagon-ports-adapters">3.1 Layered Hexagon (Ports &amp; Adapters)<a class="headerlink" href="#31-layered-hexagon-ports-adapters" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>                 ┌─────────────────────────────┐
+                 │       CLI / Entry           │  radio_ripper/cli.py
+                 │  argparse, asyncio.run      │
+                 └───────────────┬─────────────┘
+                                 │
+                 ┌───────────────▼─────────────┐
+                 │        Application          │  radio_ripper/app.py
+                 │  RadioRipperApp: orchestriert│  – start/stop
+                 └───────────────┬─────────────┘
+                                 │
+   ┌─────────────────────────────▼────────────────────────────────┐
+   │                      Services (Use-Cases)                     │
+   │  stream.StreamRecorder   playlist.PlaylistResolver           │
+   │  icy.IcyParser           metadata.MetadataProvider           │
+   │  tagging.ID3Tagger       repository.TrackRepository          │
+   │  storage.TrackWriter                                        │
+   └───┬───────────────────────┬─────────────────────┬──────────┬─┘
+       │ (Port ABCs)           │ (Port ABCs)         │ (Ports)  │
+   ┌───▼────┐ ┌─────────────┐ ┌▼──────────────┐ ┌▼────────▼─────┐
+   │ Domain │ │ Infra/HTTP  │ │ Infra/Persist │ │ Infra/Tagging │
+   │ models │ │ httpx-Async │ │ SQLite Repo   │ │ mutagen       │
+   └────────┘ └─────────────┘ └───────────────┘ └───────────────┘
+</code></pre></div>
+<h3 id="32-modulplan-src-layout-unter-srcradio_ripper">3.2 Modulplan (src-Layout unter <code>src/radio_ripper/</code>)<a class="headerlink" href="#32-modulplan-src-layout-unter-srcradio_ripper" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>radioripper/
+├── pyproject.toml
+├── uv.lock
+├── config.json
+├── run.sh
+├── radio_ripper.py            # BWC-Dünnschicht: ruft radio_ripper.cli:main
+├── src/
+│   └── radio_ripper/
+│       ├── __init__.py
+│       ├── __main__.py         # python -m radio_ripper
+│       ├── cli.py              # argparse, signal handling, asyncio.run
+│       ├── app.py              # RadioRipperApp (orchestration)
+│       ├── domain/
+│       │   ├── __init__.py
+│       │   └── models.py       # Pydantic-Modelle: StreamConfig, Settings,
+│       │                        #   Track, EnrichedInfo
+│       ├── services/
+│       │   ├── __init__.py
+│       │   ├── icy.py           # IcyParser State-Machine (reiner Pure-Python)
+│       │   ├── stream.py        # StreamRecorder (asyncio)
+│       │   ├── playlist.py     # PlaylistResolver ABC +
+│       │   │                    #   HttpPlaylistResolver, StaticPlaylistResolver
+│       │   ├── metadata.py      # MetadataProvider ABC,
+│       │   │                    #   ITunesMetadataProvider, NullMetadataProvider
+│       │   ├── tagging.py       # Tagger ABC, ID3Tagger
+│       │   ├── repository.py    # TrackRepository ABC, SQLiteTrackRepository
+│       │   └── storage.py       # TrackWriter (Datei-IO, atomicity)
+│       ├── infra/
+│       │   ├── __init__.py
+│       │   ├── config.py        # load_settings(path) -&gt; Settings
+│       │   ├── logging.py       # configure_logging()
+│       │   ├── http.py           # AsyncHttpClient ABC + HttpxClient (respx-friendly)
+│       │   ├── resilience.py    # retry_async decorator
+│       │   └── errors.py        # Fehlerhierarchie
+│       └── _logging_adapter.py  # Python-logging bridge for asyncio
+├── tests/
+│   ├── conftest.py             # gemeinsame Fixtures
+│   ├── domain/
+│   │   ├── test_models.py
+│   ├── services/
+│   │   ├── test_icy.py          # golden byte-stream fixtures
+│   │   ├── test_stream.py       # respx + asyncio Mock-Stream
+│   │   ├── test_playlist.py
+│   │   ├── test_metadata.py     # respx iTunes-API
+│   │   ├── test_tagging.py      # golden MP3 checks
+│   │   ├── test_repository.py    # in-memory sqlite
+│   │   └── test_storage.py
+│   ├── infra/
+│   │   ├── test_config.py
+│   │   ├── test_http.py
+│   │   ├── test_logging.py
+│   │   ├── test_resilience.py
+│   │   └── test_errors.py
+│   └── test_cli.py              # argparse smoke-tests, end-to-end
+├── docs/
+│   ├── book.toml                # mdBook
+│   ├── arc42/
+│   │   ├── 01_introduction.md
+│   │   ├── 02_context.md
+│   │   ├── 03_constraints.md
+│   │   ├── 04_strategy.md
+│   │   ├── 05_building-blocks.md
+│   │   ├── 06_runtime.md
+│   │   ├── 07_deployment.md
+│   │   ├── 08_concepts.md
+│   │   ├── 09_architecture-decisions.md
+│   │   ├── 10_quality.md
+│   │   ├── 11_risks.md
+│   │   └── 12_glossary.md
+│   ├── diagrams/
+│   │   ├── container.puml
+│   │   ├── components.puml
+│   │   ├── icy_state.puml
+│   │   ├── sequence_record_song.puml
+│   │   └── deployment.puml
+│   └── adrs/
+│       ├── 0001-async-migration.md
+│       ├── 0002-pydantic-settings.md
+│       ├── 0003-ports-and-adapters.md
+│       └── 0004-sqlite-repository.md
+├── .github/workflows/ci.yml       # matrix 3.11/3.12: ruff, mypy, pytest
+├── .pre-commit-config.yaml         # ruff+format, mypy, eof-sort
+├── Dockerfile                       # multi-stage, non-root
+├── .dockerignore
+└── README.md
+</code></pre></div>
+<h3 id="33-auswahl-begrundet">3.3 Auswahl begründet<a class="headerlink" href="#33-auswahl-begrundet" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entscheidung</th>
+<th>Begründung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/</code>-Layout + installierbares Package</td>
+<td>Vermeidet versehentliches "import * .py"-Bug, mypy/pytest sauber</td>
+</tr>
+<tr>
+<td><code>httpx.AsyncClient</code> statt <code>requests</code></td>
+<td>Native Async-Cancellation, respx-mockbar, ein einziges Client-Objekt pro Stream</td>
+</tr>
+<tr>
+<td><code>asyncio.Task</code> pro Stream statt <code>threading.Thread</code></td>
+<td>Single-Loop, skalierbar, sauberes SIGINT/SIGTERM via <code>loop.add_signal_handler</code></td>
+</tr>
+<tr>
+<td>Pydantic v2 für Config</td>
+<td>Validierung, JSON-schema, error messages</td>
+</tr>
+<tr>
+<td>ABCs für externe Provider</td>
+<td>Testbarkeit + künftige Provider austauschbar (MusicBrainz, Last.FM)</td>
+</tr>
+<tr>
+<td>Eigene Fehlerhierarchie</td>
+<td>zentrale Resilienz, <code>retry_async</code> für Provider</td>
+</tr>
+<tr>
+<td>pytest + pytest-asyncio + respx</td>
+<td>Standard-Stack für async HTTP-Tests in Python &gt;= 3.11</td>
+</tr>
+<tr>
+<td>arc62 + mdBook + PlantUML</td>
+<td>Vom Architect gewünscht, generierbar</td>
+</tr>
+<tr>
+<td>BWC-Shim <code>radio_ripper.py</code></td>
+<td>Bestehende Doku/<code>run.sh</code>/<code>pyproject scripts</code> weiterhin nutzbar</td>
+</tr>
+</tbody>
+</table>
+<h3 id="34-datenmodell-pydantic">3.4 Datenmodell (Pydantic)<a class="headerlink" href="#34-datenmodell-pydantic" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">StreamConfig</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">min_length</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;^[A-Za-z0-9_\- ]+$&quot;</span><span class="p">)</span>
+    <span class="n">url</span><span class="p">:</span> <span class="n">HttpUrl</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Settings</span><span class="p">(</span><span class="n">BaseSettings</span><span class="p">):</span>
+    <span class="n">destination</span><span class="p">:</span> <span class="n">Path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;./recordings&quot;</span><span class="p">)</span>
+    <span class="n">database</span><span class="p">:</span> <span class="n">Path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;./recordings/ripper.db&quot;</span><span class="p">)</span>
+    <span class="n">streams</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StreamConfig</span><span class="p">]</span>
+    <span class="n">request_timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">read_chunk</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">65536</span><span class="p">)</span>
+    <span class="n">reconnect_base_delay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+    <span class="n">reconnect_max_delay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">user_agent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Radio-Ripper/2.0&quot;</span>
+    <span class="n">overwrite_existing_files</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">min_file_size_bytes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">log_level</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;INFO&quot;</span>
+    <span class="n">log_file</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">enrich_metadata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">embed_cover_art</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">enrichment_workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
+    <span class="n">metadata_timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">cover_timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mf">15.0</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">SettingsConfigDict</span><span class="p">(</span><span class="n">env_prefix</span><span class="o">=</span><span class="s2">&quot;RADIO_RIPPER_&quot;</span><span class="p">,</span> <span class="n">env_nested_delimiter</span><span class="o">=</span><span class="s2">&quot;__&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="35-icy-parser-zustandsbasiert">3.5 ICY-Parser (zustandsbasiert)<a class="headerlink" href="#35-icy-parser-zustandsbasiert" title="Permanent link">&para;</a></h3>
+<p>Extrahiert als pure-Funktion-Klasse <code>IcyParser</code> mit definierten States (<code>WAIT_AUDIO</code>, <code>READ_META_LEN</code>, <code>READ_META</code>). Testbar ohne HTTP &amp; Threads (golden byte-streams).</p>
+<div class="highlight"><pre><span></span><code>[WAIT_AUDIO] -- bytes_until_meta-&gt; 0 -&gt; [READ_META_LEN]
+[READ_META_LEN] -&gt; read 1 byte -&gt; meta_len = b*16 -&gt; [READ_META]
+[READ_META] -&gt; consume meta_len bytes -&gt; parse StreamTitle -&gt; [WAIT_AUDIO]
+</code></pre></div>
+<h3 id="36-fehlerhierarchie-infraerrorspy">3.6 Fehlerhierarchie (<code>infra/errors.py</code>)<a class="headerlink" href="#36-fehlerhierarchie-infraerrorspy" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>RadioRipperError
+├── ConfigurationError
+├── StreamError
+│   ├── StreamConnectionError
+│   ├── StreamProtocolError
+│   └── StreamInterruptedError
+├── MetadataProviderError
+├── TaggingError
+└── RepositoryError
+</code></pre></div>
+<h3 id="37-testing-strategie">3.7 Testing-Strategie<a class="headerlink" href="#37-testing-strategie" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Unit</strong>: domain/services/infra per Modul; pure-Funktionen pytest-default.</li>
+<li><strong>HTTP-Mocks</strong> via <code>respx</code> (httpx- mocker) — kein echtes Netz in CI.</li>
+<li><strong>Async</strong> via <code>pytest-asyncio(mode="auto")</code>.</li>
+<li><strong>Golden MP3</strong> in <code>tests/fixtures/</code>, vergleiche ID3-Frames per <code>mutagen</code>.</li>
+<li><strong>IcyParser</strong>: parametrierte Byte-Stream-Tests (Hypothesis optional/optional).</li>
+<li><strong>Coverage-Ziel</strong>: ≥ 85 % in src/radio_ripper.</li>
+<li><strong>Spiegelung</strong>: Tests liegen unter <code>tests/&lt;package&gt;/test_&lt;module&gt;.py</code>.</li>
+</ul>
+<h3 id="38-tooling">3.8 Tooling<a class="headerlink" href="#38-tooling" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Zweck</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ruff</td>
+<td>Lint + Format (ersetzt isort/flake8)</td>
+</tr>
+<tr>
+<td>mypy</td>
+<td>Statische Typ-Checks (strict subset)</td>
+</tr>
+<tr>
+<td>pytest + cov</td>
+<td>Tests + Coverage</td>
+</tr>
+<tr>
+<td>pytest-asyncio</td>
+<td>Async-Tests</td>
+</tr>
+<tr>
+<td>respx</td>
+<td>httpx-Mocking</td>
+</tr>
+<tr>
+<td>pre-commit</td>
+<td>Hooks: ruff, ruff-format, mypy, eof-fixer, trailing-whitespace</td>
+</tr>
+<tr>
+<td>GitHub Actions</td>
+<td>Matrix 3.11/3.12, Lint, Type, Tests, Coverage → Codecov</td>
+</tr>
+<tr>
+<td>Docker</td>
+<td>Multi-Stage: builder → runtime, slim base, non-root user</td>
+</tr>
+</tbody>
+</table>
+<h3 id="39-dokumentation">3.9 Dokumentation<a class="headerlink" href="#39-dokumentation" title="Permanent link">&para;</a></h3>
+<p><code>docs/</code> als mdBook mit <code>mdbook-plantuml</code>. arc62 nach Vorlage, PlantUML-Diagramme für Container, Komponenten, Icy-State, Sequence, Deployment. ADRs under <code>docs/adrs/NUMM-title.md</code> (Lightweight ADR).</p>
+<hr />
+<h2 id="4-migrations-plan-phasen">4. Migrations-Plan (Phasen)<a class="headerlink" href="#4-migrations-plan-phasen" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Inhalt</th>
+<th>Ergebnis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1</strong></td>
+<td><code>pyproject.toml</code> aufstellen (Deps: Pydantic, httpx, mutagen, pytest, ruff, mypy, respx, pytest-asyncio); <code>src/</code>-Layout + Hatch-Konfig; <code>radio_ripper.py</code> BWC-Shim</td>
+<td>Läuft noch wie bisher</td>
+</tr>
+<tr>
+<td><strong>2</strong></td>
+<td><code>infra/</code> Module: <code>errors.py</code>, <code>logging.py</code>, <code>config.py</code> (Pydantic), <code>http.py</code>, <code>resilience.py</code>; <code>domain/models.py</code></td>
+<td>Settings + Models testbar</td>
+</tr>
+<tr>
+<td><strong>3</strong></td>
+<td>Services-Layer ABCs + Default-Implementierungen (<code>playlist</code>, <code>metadata</code>, <code>tagging</code>, <code>repository</code>, <code>storage</code>, <code>icy</code>)</td>
+<td>Alle Services isoliert testbar</td>
+</tr>
+<tr>
+<td><strong>4</strong></td>
+<td><code>services/stream.py</code> asyncio-Version (<code>StreamRecorder</code> als Coroutine-Klasse); <code>app.py</code> orchestriert N Tasks; SIGINT-Via-Signal-Handler</td>
+<td>End-to-End &amp; Emit-Equivalent</td>
+</tr>
+<tr>
+<td><strong>5</strong></td>
+<td><code>cli.py</code> + <code>__main__.py</code> + BWC-Shim <code>radio_ripper.py</code> aufrufend</td>
+<td><code>./run.sh</code> &amp; <code>uv run radio-ripper</code> laufen unverändert</td>
+</tr>
+<tr>
+<td><strong>6</strong></td>
+<td>Comprehensive pytest-Suite; Coverage-Report; ruff/mypy clean</td>
+<td>CI reif</td>
+</tr>
+<tr>
+<td><strong>7</strong></td>
+<td>Pre-Commit, GitHub-Actions, Dockerfile</td>
+<td>Bereit für Produktion</td>
+</tr>
+<tr>
+<td><strong>8</strong></td>
+<td>arc62 + PlantUML-Diagramme + mdBook-Build</td>
+<td>Doku-Vorgabe erfüllt</td>
+</tr>
+<tr>
+<td><strong>9</strong></td>
+<td>README aktualisieren, Run.sh hinsichtlich neuer Module justieren</td>
+<td>Konsistenz</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-risikoanalyse-nichteintritt-der-funktionsminderung">5. Risikoanalyse &amp; Nichteintritt der Funktionsminderung<a class="headerlink" href="#5-risikoanalyse-nichteintritt-der-funktionsminderung" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Risiko</th>
+<th>Absicherung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Async-Migration verändert录音rythmik</td>
+<td>IcyParser bleibt identische Byte-State-Maschine; Stream-Lese-Loop rein sequenziell mit <code>async for chunk in response.aiter_bytes()</code></td>
+</tr>
+<tr>
+<td>Reconnect-Backoff ändert Semantik</td>
+<td>Decorator <code>retry_async</code> verwendet exakt dieselbe Formel <code>delay *= 2</code>, max cap wie bisher</td>
+</tr>
+<tr>
+<td>Komplette-Lieder-Logik bricht</td>
+<td>Phase-1-Join-State extrahiert in <code>IcyRecorderState</code>-Enum, mit Property-Test besetzt</td>
+</tr>
+<tr>
+<td>Pydantic vs. bestehendes <code>config.json</code></td>
+<td>Settings-Model direkt JSON-ladbar; <code>load_settings</code> akzeptiert dateipfad</td>
+</tr>
+<tr>
+<td>Duplikats-DB-Schema</td>
+<td>ALTER TABLE bleibt idempotent; Repositories nutzen bestehendes <code>songs</code>-Schema + neue Spalten via wiederverwendbare Migration</td>
+</tr>
+<tr>
+<td><code>run.sh</code> &amp; <code>pyproject.toml script</code></td>
+<td>BWC-Shim leitet <code>radio_ripper:main</code> auf <code>radio_ripper.cli:main</code> weiter</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-offene-punkte-ruckfragen-an-auftrag">6. Offene Punkte / Rückfragen an Auftrag<a class="headerlink" href="#6-offene-punkte-ruckfragen-an-auftrag" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Provider-Lizenz</strong>: iTunes Search API ist ok; MusicBrainz würde Offline-Cover-Mirror + zusätzliches Genre liefern — ist das erwünscht als zweiter Adapter?</li>
+<li><strong>DB-Migration</strong>: bestehende <code>ripper.db</code> existiert bereits in deinem Arbeitsordner — geplantes <code>ALTER TABLE</code> ist idempotent, aber solltes Du ein cls-Migration (encoded Schema-Version) bevorzugen? (Default: idempotent ALTER, kein alembic.)</li>
+<li><strong>mdBook vs. Antora</strong>: Beide erzeugen HTML-Output; mdBook einfacher (single binary). Wenn du Antora, Hugo oder Sphinx statt mdBook wünschst, bitte rückmelden.</li>
+<li><strong>Docker Registry</strong>: Soll das fertige Image nach ghcr.io gepusht werden (GitHub-Action)? Dafür bräuchte ich ggf. einen PAT.</li>
+<li><strong>Coverage-Gate</strong>: 85 % strikt via CI blockieren, oder als Information-only?</li>
+</ol>
+<p>Antwort auf 1-5 standardmäßig: iTunes-first, idempotent ALTER, mdBook, kein Image-Push, Coverage als Info.</p>
+<hr />
+<p>Ende des Plans. Nächster Schritt:<em>Phase 1</em> beginnen — Pyproject + Source-Layout aufsetzen.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Radio-Ripper Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/domoskanonos/radioripper" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.tabs", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -52,7 +52,7 @@ class FingerprintResult:
     Attributes:
         artist: Matched artist name.
         title: Matched track title.
-        score: Confidence score (0.0–1.0).
+        score: Confidence score (0.0-1.0).
         recording_id: MusicBrainz recording MBID.
     """
 

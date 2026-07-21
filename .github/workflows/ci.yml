@@ -1,6 +1,6 @@
-# .github/workflows/ci.yml — Radio-Ripper CI pipeline
-# Matrix: Python 3.11 + 3.12
-# Jobs:   ruff (lint) → mypy (types) → pytest (tests + coverage)
+# .github/workflows/ci.yml — Radio-Ripper CI/CD pipeline
+# Jobs: ruff (lint) → mypy (types) → pytest (tests + coverage)
+# + mkdocs GitHub Pages deploy
 
 name: CI
 
@@ -14,6 +14,9 @@ defaults:
   run:
     shell: bash
 
+env:
+  UV_LINK_MODE: copy
+
 jobs:
   lint:
     name: Lint (ruff)
@@ -21,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
@@ -39,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
@@ -54,11 +57,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
@@ -69,9 +72,69 @@ jobs:
         run: uv run pytest --cov -q
 
       - name: Upload coverage (HTML)
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-html
           path: htmlcov/
           retention-days: 30
+
+  docs:
+    name: Deploy docs (GitHub Pages)
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    needs: [lint, type-check, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --quiet
+
+      - name: Build docs (mkdocs)
+        run: uv run mkdocs build --site-dir _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  docker:
+    name: Docker Hub
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    needs: [lint, type-check, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract version
+        id: version
+        run: echo "version=$(grep ^version pyproject.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: domoskanonos/radioripper:${{ steps.version.outputs.version }},domoskanonos/radioripper:latest

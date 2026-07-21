@@ -1,0 +1,41 @@
+@startuml container-diagram
+!theme plain
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+title Radio-Ripper v2 — Container Diagram
+
+actor "User" as user
+
+package "Radio-Ripper v2" {
+    component "CLI\n(cli.py)" as cli
+    component "RadioRipperApp\n(app.py)" as app
+    component "Services Layer" as services
+    component "Infra Layer" as infra
+    component "Domain Models" as domain
+
+    cli --> app : "main()"
+    app --> services : "orchestrates"
+    services --> infra : "uses"
+    services --> domain : "uses"
+}
+
+cloud "Internet" as internet {
+    component "Webradio Stream\n(HTTP/ICY)" as stream
+    component "iTunes Search API\n(HTTPS)" as itunes
+}
+
+package "Filesystem" as fs {
+    database "songs.db\n(SQLite)" as db
+    storage "MP3 Files\n(recordings/)" as mp3
+    file "config.json" as config
+}
+
+user --> cli : "uv run radio-ripper\n--config config.json"
+cli --> config : "loads"
+services --> stream : "HTTP GET + ICY"
+services --> itunes : "enrich_metadata"
+services --> db : "dedup / register"
+services --> mp3 : "write / tag"
+
+@enduml
