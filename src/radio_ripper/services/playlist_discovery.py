@@ -4,15 +4,14 @@ Downloads the ``---everything-checked-repo.m3u`` file from
 ``junguler/m3u-radio-music-playlists``, parses the entries, filters by
 user-defined keywords (matching both station name and #EXTINF attributes),
 probes for ICY support + bitrate, and caches the top-N working stations
-together with a hash of the active keywords so the cache is invalidated
-when the keywords change.
+as ``discovered_stations.m3u``.  The cache is persistent — delete it
+manually to re-discover.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -41,12 +40,6 @@ class M3uEntry:
     source: str
     extinf: str = ""
 
-
-def _keywords_hash(keywords: list[str]) -> str:
-    h = hashlib.sha256()
-    for k in sorted(keywords):
-        h.update(k.lower().strip().encode())
-    return h.hexdigest()[:16]
 
 
 def _parse_m3u_text(text: str, source: str) -> list[M3uEntry]:
@@ -299,36 +292,66 @@ async def _download_mega_m3u(github_pat: str = "") -> str:
 
 
 def _cache_path(settings: Settings) -> Path:
-    return settings.temp_dir / "discovered_stations.json"
+    return settings.temp_dir / "discovered_stations.m3u"
 
 
-def _is_cache_fresh(cache_file: Path, max_age_days: int) -> bool:
-    if not cache_file.is_file():
-        return False
-    return (time.time() - cache_file.stat().st_mtime) < max_age_days * 86400
+def _raw_mega_path(settings: Settings) -> Path:
+    return settings.temp_dir / "---everything-checked-repo.m3u"
+
 
 
 def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
     try:
-        raw = json.loads(cache_file.read_text("utf-8"))
-        if isinstance(raw, dict):
-            stations = [StreamConfig(**s) for s in raw.get("stations", [])]
-            kh = raw.get("_keywords_hash", "")
-        else:
-            stations = [StreamConfig(**s) for s in raw if s.get("icy")]
-            kh = ""
-        return stations, kh
+        text = cache_file.read_text("utf-8")
+        # Support legacy JSON flat list detection: if the text starts with
+        # '[' treat it as the old flat JSON list and load compatibly.
+        if text.strip().startswith("["):
+            try:
+                raw = json.loads(text)
+                if isinstance(raw, list):
+                    stations = [StreamConfig(**s) for s in raw if s.get("icy")]
+                    return stations, ""
+            except Exception:
+                # fall through to M3U parsing
+                pass
+
+        entries = _parse_m3u_text(text, cache_file.name)
+        stations: list[StreamConfig] = []
+        for e in entries:
+            try:
+                stations.append(
+                    StreamConfig(
+                        name=e.name,
+                        url=e.url,
+                        enabled=True,
+                        bitrate=0,
+                        icy=True,
+                        source=e.source,
+                    )
+                )
+            except Exception:
+                continue
+        return stations, ""
     except Exception:
         return [], ""
 
 
-def _save_cache(cache_file: Path, stations: list[StreamConfig], keywords_hash: str = "") -> None:
+def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        "_keywords_hash": keywords_hash,
-        "stations": [s.model_dump(mode="json") for s in stations],
-    }
-    cache_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+    lines: list[str] = ["#EXTM3U"]
+    for s in stations:
+        attr = []
+        if getattr(s, "bitrate", 0):
+            attr.append(f"bitrate={s.bitrate}")
+        if getattr(s, "source", ""):
+            attr.append(f"source={s.source}")
+        attr_str = (" " + " ".join(attr)) if attr else ""
+        lines.append(f"#EXTINF:-1{attr_str},{s.name}")
+        lines.append(str(s.url))
+    # Atomic write
+    tmp = cache_file.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n", "utf-8")
+    tmp.replace(cache_file)
 
 
 # ---------------------------------------------------------------- service
@@ -346,56 +369,51 @@ class PlaylistDiscoveryService:
             return []
 
         cache_file = _cache_path(self._settings)
-        kh = _keywords_hash(self._settings.stream_keywords)
 
-        if _is_cache_fresh(cache_file, self._settings.discovery_update_interval_days):
-            cached_stations, cached_hash = _load_cache(cache_file)
-            if cached_stations and cached_hash == kh:
-                self._log.info("Using %d cached stations (keywords match)", len(cached_stations))
-                if self._settings.reprobe_on_start:
-                    alive = await self._reprobe(cached_stations)
-                    if alive:
-                        _save_cache(cache_file, alive, keywords_hash=kh)
-                    return alive or []
+        if cache_file.is_file():
+            cached_stations, _ = _load_cache(cache_file)
+            if cached_stations:
+                self._log.info("Using %d cached stations from %s", len(cached_stations), cache_file.name)
                 return cached_stations
 
-        self._log.info(
-            "Starting playlist discovery (keywords=%s)…",
-            self._settings.stream_keywords,
-        )
-        stations = await self._discover()
-        _save_cache(cache_file, stations, keywords_hash=kh)
+        self._log.info("No cached station list found, starting discovery…")
+
+        raw_mega = _raw_mega_path(self._settings)
+        if raw_mega.is_file():
+            text = raw_mega.read_text("utf-8")
+        else:
+            pat = self._settings.github_pat or os.environ.get("GITHUB_PAT", "")
+            text = await _download_mega_m3u(pat)
+            try:
+                raw_mega.parent.mkdir(parents=True, exist_ok=True)
+                raw_mega.write_text(text, "utf-8")
+            except Exception:
+                pass
+
+        stations = await self._discover_from_text(text)
+        if stations:
+            _save_cache(cache_file, stations)
         self._log.info("Discovery complete: %d stations", len(stations))
         return stations
 
-    async def _reprobe(self, stations: list[StreamConfig]) -> list[StreamConfig]:
-        semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
-        entries = [M3uEntry(name=s.name, url=str(s.url), source=s.source) for s in stations]
-        good = await _probe_batch(entries, len(stations), semaphore)
-        alive_map = {g[0].url: g[1] for g in good}
-        min_bps = self._settings.discovery_min_bitrate
-        result: list[StreamConfig] = []
-        for s in stations:
-            url = str(s.url)
-            if url in alive_map:
-                probe = alive_map[url]
-                if min_bps > 0 and probe.get("bitrate", 0) < min_bps:
-                    continue
-                result.append(
-                    StreamConfig(
-                        name=s.name,
-                        url=s.url,
-                        enabled=s.enabled,
-                        bitrate=probe.get("bitrate", s.bitrate),
-                        icy=True,
-                        source=s.source,
-                    )
-                )
-        return result
-
     async def _discover(self) -> list[StreamConfig]:
         pat = self._settings.github_pat or os.environ.get("GITHUB_PAT", "")
-        text = await _download_mega_m3u(pat)
+        raw_mega = _raw_mega_path(self._settings)
+        if raw_mega.is_file():
+            try:
+                text = raw_mega.read_text("utf-8")
+            except Exception:
+                text = await _download_mega_m3u(pat)
+        else:
+            text = await _download_mega_m3u(pat)
+            try:
+                raw_mega.parent.mkdir(parents=True, exist_ok=True)
+                raw_mega.write_text(text, "utf-8")
+            except Exception:
+                pass
+        return await self._discover_from_text(text)
+
+    async def _discover_from_text(self, text: str) -> list[StreamConfig]:
         all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
         self._log.info("Parsed %d total M3U entries", len(all_entries))
 

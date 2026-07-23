@@ -1,7 +1,7 @@
 {
   "destination": "/home/laptop/Musik",
   "database": "./recordings/ripper.db",
-  "stream_keywords": ["Charts", "New-Releases", "50", "60", "70", "80", "90", "2000", "2010", "2020", "Pop", "Synth-Pop", "Indie-Pop", "Dance-Pop", "K-Pop", "Rock", "Classic-Rock", "Hard-Rock", "Heavy-Metal", "Alternative-Rock", "Indie-Rock", "Punk-Rock", "Grunge", "Progressive-Rock", "Soft-Rock", "Death-Metal", "Hip-Hop", "Rap", "Old-School-Hip-Hop", "Trap", "Gangsta-Rap", "R&B", "Soul", "Funk", "Gospel", "Electronic", "EDM", "House", "Techno", "Trance", "Deep-House", "Electro-House", "Drum-and-Bass", "Dubstep", "Ambient", "Chillout", "Synthwave", "Jazz", "Blues", "Swing", "Country", "Bluegrass", "Folk", "Singer-Songwriter", "Reggae", "Ska", "Dancehall", "World-Music", "Latin-Pop", "Reggaeton", "Salsa", "Afrobeats", "Schlager", "Classical", "Soundtracks", "Musical", "Comedy", "Chill", "Workout", "Focus", "Lo-Fi", "Sleep", "Party", "Lounge", "Roadtrip"],
+  "stream_keywords": ["classic", "retro", "oldies", "Charts", "New-Releases", "50", "60", "70", "80", "90", "2000", "2010", "2020", "Pop", "Synth-Pop", "Indie-Pop", "Dance-Pop", "K-Pop", "Rock", "Classic-Rock", "Hard-Rock", "Heavy-Metal", "Alternative-Rock", "Indie-Rock", "Punk-Rock", "Grunge", "Progressive-Rock", "Soft-Rock", "Death-Metal", "Hip-Hop", "Rap", "Old-School-Hip-Hop", "Trap", "Gangsta-Rap", "R&B", "Soul", "Funk", "Gospel", "Electronic", "EDM", "House", "Techno", "Trance", "Deep-House", "Electro-House", "Drum-and-Bass", "Dubstep", "Ambient", "Chillout", "Synthwave", "Jazz", "Blues", "Swing", "Country", "Bluegrass", "Folk", "Singer-Songwriter", "Reggae", "Ska", "Dancehall", "World-Music", "Latin-Pop", "Reggaeton", "Salsa", "Afrobeats", "Schlager", "Classical", "Soundtracks", "Musical", "Comedy", "Chill", "Workout", "Focus", "Lo-Fi", "Sleep", "Party", "Lounge", "Roadtrip"],
   "request_timeout": 30,
   "read_chunk": 4096,
   "reconnect_base_delay": 1.0,
@@ -19,4 +19,13 @@
   "cover_timeout": 15.0,
   "no_icy_disable_after": 10,
   "reprocess_all": false
+  ,"temp_directory": "~/.cache/radio-ripper",
+  "discovery_enabled": true,
+  "discovery_max_stations": 150,
+  "discovery_min_bitrate": 0,
+  "discovery_update_interval_days": 7,
+  "reprobe_on_start": true,
+  "acoustid_api_key": "",
+  "acoustid_min_score": 0.8,
+  "discard_unmatched": true
 }

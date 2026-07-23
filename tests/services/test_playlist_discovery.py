@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,8 +17,6 @@ from radio_ripper.services.playlist_discovery import (
     _deduplicate_by_name,
     _download_mega_m3u,
     _filter_keywords,
-    _is_cache_fresh,
-    _keywords_hash,
     _load_cache,
     _parse_m3u_text,
     _probe_icy,
@@ -240,34 +237,17 @@ class TestProbeIcy:
 
 
 class TestCacheHelpers:
-    def test_is_cache_fresh_when_file_recent(self, tmp_path: Path) -> None:
-        cf = tmp_path / "cache.json"
-        cf.write_text("{}")
-        assert _is_cache_fresh(cf, max_age_days=7) is True
-
-    def test_is_cache_stale(self, tmp_path: Path) -> None:
-        import os
-
-        cf = tmp_path / "cache.json"
-        cf.write_text("{}")
-        old = time.time() - 8 * 86400
-        os.utime(cf, (old, old))
-        assert _is_cache_fresh(cf, max_age_days=7) is False
-
-    def test_is_cache_missing(self, tmp_path: Path) -> None:
-        assert _is_cache_fresh(tmp_path / "nope.json", max_age_days=7) is False
-
     def test_cache_roundtrip(self, tmp_path: Path) -> None:
         stations = [
             StreamConfig(name="Rock FM", url="http://a", icy=True),
             StreamConfig(name="Pop FM", url="http://b", icy=True),
         ]
         cf = tmp_path / "cache.json"
-        _save_cache(cf, stations, keywords_hash="abc")
+        _save_cache(cf, stations)
         loaded, kh = _load_cache(cf)
         assert len(loaded) == 2
         assert loaded[0].name == "Rock FM"
-        assert kh == "abc"
+        assert kh == ""
 
     def test_load_legacy_flat_list(self, tmp_path: Path) -> None:
         data = [
@@ -362,7 +342,7 @@ class TestPlaylistDiscoveryService:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_uses_cache_when_fresh(self, tmp_path: Path) -> None:
+    async def test_uses_cache_when_present(self, tmp_path: Path) -> None:
         stations = [
             StreamConfig(name="Rock FM", url="http://a", icy=True),
         ]
@@ -370,51 +350,43 @@ class TestPlaylistDiscoveryService:
             destination="./rec",
             database="./rec/ripper.db",
             discovery_enabled=True,
-            reprobe_on_start=False,
             temp_dir=tmp_path,
         )
-        kh = _keywords_hash(settings.stream_keywords)
-        cf = tmp_path / "discovered_stations.json"
-        _save_cache(cf, stations, keywords_hash=kh)
+        cf = tmp_path / "discovered_stations.m3u"
+        _save_cache(cf, stations)
 
-        with (
-            patch(
-                "radio_ripper.services.playlist_discovery._is_cache_fresh",
-                return_value=True,
-            ),
-            patch.object(PlaylistDiscoveryService, "_discover") as mock_discover,
-        ):
-            svc = PlaylistDiscoveryService(settings)
-            result = await svc.load_or_discover()
+        svc = PlaylistDiscoveryService(settings)
+        result = await svc.load_or_discover()
         assert len(result) == 1
         assert result[0].name == "Rock FM"
-        mock_discover.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_runs_discovery_when_cache_stale(self, tmp_path: Path) -> None:
+    async def test_runs_discovery_when_cache_missing(self, tmp_path: Path) -> None:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
             discovery_enabled=True,
             temp_dir=tmp_path,
+            stream_keywords=["rock"],
         )
-        cf = tmp_path / "discovered_stations.json"
-        _save_cache(cf, [], keywords_hash=_keywords_hash(settings.stream_keywords))
+        raw_mega = tmp_path / "---everything-checked-repo.m3u"
+        raw_mega.write_text(
+            "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
+        )
 
-        with (
-            patch(
-                "radio_ripper.services.playlist_discovery._is_cache_fresh",
-                return_value=False,
-            ),
-            patch.object(PlaylistDiscoveryService, "_discover") as mock_discover,
+        mock_entry = M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u")
+        mock_probe = {"icy": True, "bitrate": 128}
+
+        with patch(
+            "radio_ripper.services.playlist_discovery._probe_batch",
+            return_value=[(mock_entry, mock_probe)],
         ):
-            mock_discover.return_value = [
-                StreamConfig(name="Rock FM", url="http://a", icy=True),
-            ]
             svc = PlaylistDiscoveryService(settings)
             result = await svc.load_or_discover()
+
         assert len(result) == 1
-        mock_discover.assert_called_once()
+        assert result[0].name == "Classic Rock"
+        assert (tmp_path / "discovered_stations.m3u").is_file()
 
 
 # ---------------------------------------------------------------------------

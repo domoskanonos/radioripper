@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator, model_validator
 
 from radio_ripper.infra.errors import ConfigurationError
 
@@ -57,6 +57,8 @@ class Settings(BaseModel):
         ]
     )
     discovery_enabled: bool = True
+    # New user-facing config key. If set, it overrides the internal temp_dir.
+    temp_directory: Path | None = None
     temp_dir: Path = Field(default=Path.home() / ".cache" / "radio-ripper")
     discovery_max_stations: int = Field(default=150, ge=1, le=500)
     discovery_min_bitrate: int = Field(default=0, ge=0)
@@ -104,10 +106,24 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("database", "destination", "log_file", "fallback_cover_path", "temp_dir")
+    @field_validator("database", "destination", "log_file", "fallback_cover_path", "temp_dir", "temp_directory")
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
         return v.expanduser() if v is not None else None
+
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_temp_directory(cls, values: dict) -> dict:
+        # If the user provided `temp_directory` in the raw config, prefer it
+        # by copying it to the internal `temp_dir` key so the rest of the
+        # application keeps using `temp_dir`.
+        try:
+            if isinstance(values, dict) and values.get("temp_directory"):
+                values["temp_dir"] = values.get("temp_directory")
+        except Exception:
+            pass
+        return values
 
 
 def load_settings(path: str | Path) -> Settings:
