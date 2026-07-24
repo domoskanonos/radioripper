@@ -860,7 +860,9 @@ async def apply_fingerprint_match(
         try:
             file_path.rename(new_path)
         except OSError as exc:
-            logger.warning("[%s] rename %s -> %s failed: %s", station_name, file_path.name, new_path.name, exc)
+            logger.warning(
+                "[%s] rename %s -> %s failed: %s", station_name, file_path.name, new_path.name, exc
+            )
             return None
 
     logger.info("[%s] AcoustID match applied: %s", station_name, new_path.name)

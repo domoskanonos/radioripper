@@ -127,9 +127,7 @@ class RadioRipperApp:
             else None
         )
         popularity_provider: DeezerPopularityChecker | None = (
-            DeezerPopularityChecker(client)
-            if settings.min_popularity_rank > 0
-            else None
+            DeezerPopularityChecker(client) if settings.min_popularity_rank > 0 else None
         )
         return cls(
             settings=settings,
@@ -250,7 +248,9 @@ class RadioRipperApp:
                         info.genre or "-",
                     )
                 except Exception as exc:
-                    self.logger.debug("[%s] tag rewrite during reprocess: %s", record.station_name, exc)
+                    self.logger.debug(
+                        "[%s] tag rewrite during reprocess: %s", record.station_name, exc
+                    )
 
             # --- same post-match flow as live recording ---
             recording_id = record.track.acoustid_recording_id
