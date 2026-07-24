@@ -161,6 +161,7 @@ cp config.example.json ./config.json
 
 # 2. Container starten
 docker run -d --name radio-ripper --restart unless-stopped \
+  -e ACCOUST_ID="dein_acoustid_api_key" \
   -v "$PWD/config.json:/app/config.json:ro" \
   -v "$PWD/recordings:/app/recordings" \
   domoskanonos/radioripper:latest
@@ -190,6 +191,8 @@ services:
     image: domoskanonos/radioripper:latest
     container_name: radio-ripper
     restart: unless-stopped
+    environment:
+      - ACCOUST_ID=dein_acoustid_api_key
     volumes:
       - ./config.json:/app/config.json:ro
       - ./recordings:/app/recordings
@@ -218,8 +221,13 @@ docker build -t radio-ripper:latest .
 
 #### Umgebungsvariablen
 
-Das Image unterstützt keine nativen ENV-Overrides – alle Einstellungen steuert die `config.json`.  
-Die folgenden CLI-Argumente können jedoch über den Docker-`entrypoint` gesetzt werden:
+| Variable | Pflicht | Beschreibung |
+|---|---|---|
+| `ACCOUST_ID` | **ja** | AcoustID API-Key für Audio-Fingerprinting ([AcoustID-Key besorgen](https://acoustid.org/api-key)) |
+| `ACOUSTID_API_URL` | nein | AcoustID-API-Endpoint (default: `https://api.acoustid.org/v2/lookup`) |
+
+Der Key kann wahlweise als env var oder in der `config.json` unter `acoustid_api_key` gesetzt werden.  
+CLI-Argumente können über den Docker-`entrypoint` gesetzt werden:
 
 | Argument | Wirkung |
 |---|---|
@@ -230,6 +238,7 @@ Die folgenden CLI-Argumente können jedoch über den Docker-`entrypoint` gesetzt
 ```bash
 # Beispiel: DEBUG-Logging im Container
 docker run --rm \
+  -e ACCOUST_ID="dein_acoustid_api_key" \
   -v "$PWD/config.json:/app/config.json:ro" \
   domoskanonos/radioripper:latest \
   --log-level DEBUG

@@ -14,10 +14,13 @@ database" — callers may safely discard such files.
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from radio_ripper.domain.models import FingerprintResult
+
+_log = logging.getLogger(__name__)
 
 
 class FingerprintError(RuntimeError):
@@ -68,10 +71,13 @@ class AcoustidFingerprintProvider(FingerprintProvider):
         loop = asyncio.get_running_loop()
         try:
             gen = await loop.run_in_executor(None, acoustid.match, self._api_key, str(path))
-            # acoustid.match returns a generator (parse_lookup_result uses yield).
-            # Materialize it so we can subscript and len-check properly.
-            # This also surfaces any WebServiceError raised during iteration.
             results = list(gen)
+        except acoustid.WebServiceError as exc:
+            msg = str(exc)
+            if "status: error" in msg:
+                _log.warning("[fingerprint] AcoustID API error (invalid key?): %s", exc)
+                return None
+            raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
         except Exception as exc:
             raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
         if not results:

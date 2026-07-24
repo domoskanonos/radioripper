@@ -26,7 +26,6 @@ from radio_ripper.services.fingerprint import (
     AcoustidFingerprintProvider,
     FingerprintError,
     FingerprintProvider,
-    NullFingerprintProvider,
 )
 from radio_ripper.services.metadata import (
     CoverArtArchiveProvider,
@@ -102,13 +101,17 @@ class RadioRipperApp:
             from dotenv import load_dotenv
 
             load_dotenv()
-        api_key = settings.acoustid_api_key or os.environ.get("ACCOUST_ID", "")
+        api_key = os.environ.get("ACCOUST_ID", "") or settings.acoustid_api_key
         if not api_key:
             raise ConfigurationError(
-                "AcoustID API-Key required. Set acoustid_api_key in config.json "
-                "or ACCOUST_ID environment variable."
+                "AcoustID API-Key required. "
+                "Set ACCOUST_ID env var (docker: -e ACCOUST_ID=your_key) "
+                "or acoustid_api_key in config.json."
             )
-        fingerprint: FingerprintProvider = AcoustidFingerprintProvider(
+        os.environ.setdefault(
+            "ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup"
+        )
+        fp_provider: FingerprintProvider = AcoustidFingerprintProvider(
             api_key,
             min_score=settings.acoustid_min_score,
         )
@@ -126,7 +129,7 @@ class RadioRipperApp:
             repository=repository,
             tagger=tagger,
             metadata_provider=metadata,
-            fingerprint_provider=fingerprint,
+            fingerprint_provider=fp_provider,
             cover_provider=cover_provider,
             playlist_resolver=resolver,
             logger=log,
@@ -206,7 +209,7 @@ class RadioRipperApp:
 
     async def reprocess_untested(self) -> None:
         """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
-        if self.fingerprint is None or isinstance(self.fingerprint, NullFingerprintProvider):
+        if self.fingerprint is None:
             self.logger.debug("No AcoustID provider — skipping untested reprocess.")
             return
         records = await self.repository.list_untested()

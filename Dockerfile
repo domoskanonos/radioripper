@@ -58,7 +58,8 @@ COPY --from=builder /app/pyproject.toml /app/LICENSE /app/
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    ACOUSTID_API_URL="https://api.acoustid.org/v2/lookup"
 
 # ffmpeg for MP3 frame-alignment post-processing
 RUN apt-get update \
