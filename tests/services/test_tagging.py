@@ -61,6 +61,7 @@ class TestID3Tagger:
         assert audio.get("TALB").text == ["25"]
         assert str(audio.get("TDRC").text[0]) == "2015"
         assert audio.get("TPE2").text == ["Adele"]
+        assert audio.get("TCON").text == ["Pop"]
         apic = audio.get("APIC:Cover")
         assert apic is not None
         assert apic.mime == "image/jpeg"
@@ -70,11 +71,12 @@ class TestID3Tagger:
         _write_blank_mp3(f)
         tagger = ID3Tagger()
         track = TrackInfo(stream_title="A - B", artist="A", title="B")
-        enriched = EnrichedInfo(artist="A", title="B", album="alb", year="2020")
+        enriched = EnrichedInfo(artist="A", title="B", album="alb", year="2020", genre="Pop")
         tagger.write_full(f, track, enriched, None, "S@u")
         audio = ID3(f)
         assert str(audio.get("TDRC").text[0]) == "2020"
         assert audio.get("TPE2").text == ["A"]
+        assert audio.get("TCON").text == ["Pop"]
         assert "APIC:Cover" not in audio
 
     def test_write_full_prefers_enriched_over_track(self, tmp_path: Path):
@@ -87,6 +89,7 @@ class TestID3Tagger:
         audio = ID3(f)
         assert audio.get("TPE1").text == ["New"]
         assert audio.get("TIT2").text == ["NewT"]
+        assert "TCON" not in audio, "TCON must be absent when genre is not set"
 
     def test_write_overwrites_previous_tags(self, tmp_path: Path):
         f = tmp_path / "song.mp3"

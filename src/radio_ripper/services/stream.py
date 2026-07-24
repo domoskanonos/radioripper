@@ -37,6 +37,7 @@ from radio_ripper.services.fingerprint import (
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.metadata import MetadataProvider
 from radio_ripper.services.playlist import PlaylistResolver
+from radio_ripper.services.popularity import maybe_delete_obscure
 from radio_ripper.services.repository import TrackRepository
 from radio_ripper.services.storage import (
     TrackWriter,
@@ -67,6 +68,7 @@ class StreamRecorder:
         metadata_provider: MetadataProvider | None = None,
         fingerprint_provider: FingerprintProvider | None = None,
         cover_provider: Any | None = None,
+        popularity_provider: Any | None = None,
         enrich_semaphore: asyncio.Semaphore | None = None,
         logger: logging.Logger | None = None,
         ad_title_patterns: list[str] | None = None,
@@ -82,6 +84,7 @@ class StreamRecorder:
         self._metadata = metadata_provider
         self._fingerprint = fingerprint_provider
         self._cover_provider = cover_provider
+        self._popularity = popularity_provider
         self._enrich_sem = enrich_semaphore
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
@@ -688,81 +691,26 @@ class StreamRecorder:
                     result.recording_id,
                 )
 
-                # Rename .untested.mp3 → .mp3
                 new_path = file_path.with_name(file_path.stem.replace(".untested", "") + ".mp3")
-                if new_path.exists():
-                    self._log.warning(
-                        "[%s] Refuse to rename %s -> %s (target exists). "
-                        "Keeping .untested.mp3 for manual review.",
-                        self.station_name,
-                        file_path.name,
-                        new_path.name,
-                    )
+                applied = await apply_fingerprint_match(
+                    recording_id=result.recording_id,
+                    score=result.score,
+                    file_path=file_path,
+                    new_path=new_path,
+                    tagger=self._tagger,
+                    cover_provider=self._cover_provider,
+                    repository=self._repo,
+                    station_name=self.station_name,
+                    stream_title=track.stream_title,
+                    logger=self._log,
+                    artist=result.artist,
+                    title=result.title,
+                    popularity_provider=self._popularity,
+                    min_popularity_rank=self.settings.min_popularity_rank,
+                )
+                if applied is None:
                     return
-                try:
-                    file_path.rename(new_path)
-                except OSError as exc:
-                    self._log.warning(
-                        "[%s] rename %s -> %s failed: %s",
-                        self.station_name,
-                        file_path.name,
-                        new_path.name,
-                        exc,
-                    )
-                    return
-                # Write AcoustID info into ID3 tags on the new path
-                try:
-                    self._tagger.update_acoustid(new_path, result.recording_id, result.score)
-                except Exception as exc:
-                    self._log.debug("[%s] acoustid tag update: %s", self.station_name, exc)
-                # Update DB file_path to the new name
-                try:
-                    await self._repo.update_file_path(
-                        self.station_name, track.stream_title, str(new_path)
-                    )
-                except Exception as exc:
-                    self._log.debug("[%s] db update_file_path: %s", self.station_name, exc)
-
-                # Persist fingerprint result in the DB
-                try:
-                    await self._repo.update_fingerprint(
-                        self.station_name,
-                        track.stream_title,
-                        recording_id=result.recording_id,
-                        score=result.score,
-                    )
-                except Exception as exc:
-                    self._log.debug("[%s] db update_fingerprint: %s", self.station_name, exc)
-
-                # Try to fetch cover art from Cover Art Archive using the
-                # MusicBrainz recording_id. Best effort — if it fails or no
-                # cover is available, the file stays as-is.
-                if result.recording_id and self._cover_provider is not None:
-                    try:
-                        cover_bytes = await self._cover_provider.fetch_cover_by_recording_id(
-                            result.recording_id
-                        )
-                    except Exception as exc:
-                        self._log.debug(
-                            "[%s] Cover Art Archive lookup failed: %s",
-                            self.station_name,
-                            exc,
-                        )
-                        cover_bytes = None
-                    if cover_bytes is not None:
-                        try:
-                            self._tagger.embed_cover(new_path, cover_bytes)
-                            self._log.info(
-                                "[%s] Embedded CAA cover: %s",
-                                self.station_name,
-                                new_path.name,
-                            )
-                        except Exception as exc:
-                            self._log.debug(
-                                "[%s] embed CAA cover failed: %s",
-                                self.station_name,
-                                exc,
-                            )
+                new_path = applied
 
                 if not result.recording_id:
                     return
@@ -870,6 +818,99 @@ class StreamRecorder:
                             )
         finally:
             self._release_lock(file_path)
+
+
+async def apply_fingerprint_match(
+    *,
+    recording_id: str,
+    score: float,
+    file_path: Path,
+    new_path: Path,
+    tagger: TrackTagger,
+    cover_provider: Any | None,
+    repository: TrackRepository,
+    station_name: str,
+    stream_title: str,
+    logger: logging.Logger,
+    artist: str = "",
+    title: str = "",
+    popularity_provider: Any | None = None,
+    min_popularity_rank: int = 0,
+) -> Path | None:
+    """Rename after AcoustID match, update ID3 tags + DB, fetch CAA cover.
+
+    When *min_popularity_rank* > 0 and *popularity_provider* is set, also
+    checks track popularity via Deezer and deletes the file + DB record if
+    the rank is below the threshold.
+
+    Returns *new_path* on success or ``None`` when rename was refused
+    (target exists) or the file was deleted (too obscure).
+    All steps are best-effort — failures are logged and never reraised.
+    """
+    if file_path != new_path:
+        if new_path.exists():
+            logger.warning(
+                "[%s] Refuse to rename %s -> %s (target exists). "
+                "Keeping .untested.mp3 for manual review.",
+                station_name,
+                file_path.name,
+                new_path.name,
+            )
+            return None
+        try:
+            file_path.rename(new_path)
+        except OSError as exc:
+            logger.warning("[%s] rename %s -> %s failed: %s", station_name, file_path.name, new_path.name, exc)
+            return None
+
+    logger.info("[%s] AcoustID match applied: %s", station_name, new_path.name)
+
+    try:
+        tagger.update_acoustid(new_path, recording_id, score)
+    except Exception as exc:
+        logger.debug("[%s] acoustid tag update: %s", station_name, exc)
+    try:
+        await repository.update_file_path(station_name, stream_title, str(new_path))
+    except Exception as exc:
+        logger.debug("[%s] db update_file_path: %s", station_name, exc)
+    try:
+        await repository.update_fingerprint(
+            station_name, stream_title, recording_id=recording_id, score=score
+        )
+    except Exception as exc:
+        logger.debug("[%s] db update_fingerprint: %s", station_name, exc)
+
+    if recording_id and cover_provider is not None:
+        try:
+            cover_bytes = await cover_provider.fetch_cover_by_recording_id(recording_id)
+        except Exception as exc:
+            logger.debug("[%s] Cover Art Archive lookup failed: %s", station_name, exc)
+            cover_bytes = None
+        if cover_bytes is not None:
+            try:
+                tagger.embed_cover(new_path, cover_bytes)
+                logger.info("[%s] Embedded CAA cover: %s", station_name, new_path.name)
+            except Exception as exc:
+                logger.debug("[%s] embed CAA cover failed: %s", station_name, exc)
+        else:
+            logger.info("[%s] No CAA cover available for recording %s", station_name, recording_id)
+
+    if min_popularity_rank > 0 and popularity_provider is not None and (artist or title):
+        deleted = await maybe_delete_obscure(
+            file_path=new_path,
+            station_name=station_name,
+            stream_title=stream_title,
+            artist=artist,
+            title=title,
+            min_rank=min_popularity_rank,
+            popularity_provider=popularity_provider,
+            repository=repository,
+            logger=logger,
+        )
+        if deleted:
+            return None
+
+    return new_path
 
 
 def _parse_metaint(headers: dict[str, str]) -> int | None:

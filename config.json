@@ -18,7 +18,7 @@
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
   "no_icy_disable_after": 10,
-  "reprocess_all": false
+  "reprocess_all": true
   ,"temp_directory": "~/.cache/radio-ripper",
   "discovery_enabled": true,
   "discovery_max_stations": 150,
@@ -27,5 +27,6 @@
   "reprobe_on_start": true,
   "acoustid_api_key": "",
   "acoustid_min_score": 0.8,
-  "discard_unmatched": true
+  "discard_unmatched": true,
+  "min_popularity_rank": 100000
 }

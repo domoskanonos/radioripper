@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from radio_ripper.domain.models import TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import ConfigurationError
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
@@ -36,12 +37,13 @@ from radio_ripper.services.metadata import (
 )
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
+from radio_ripper.services.popularity import DeezerPopularityChecker
 from radio_ripper.services.repository import SQLiteTrackRepository, TrackRepository
 from radio_ripper.services.storage import (
     compute_file_path,
     remove_empty_parents,
 )
-from radio_ripper.services.stream import StreamRecorder
+from radio_ripper.services.stream import StreamRecorder, apply_fingerprint_match
 from radio_ripper.services.tagging import ID3Tagger, TrackTagger
 
 if TYPE_CHECKING:
@@ -63,6 +65,7 @@ class RadioRipperApp:
         metadata_provider: MetadataProvider,
         fingerprint_provider: FingerprintProvider | None = None,
         cover_provider: Any | None = None,
+        popularity_provider: DeezerPopularityChecker | None = None,
         playlist_resolver: PlaylistResolver,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -73,6 +76,7 @@ class RadioRipperApp:
         self.metadata = metadata_provider
         self.fingerprint = fingerprint_provider
         self.cover_provider = cover_provider
+        self.popularity_provider = popularity_provider
         self.resolver = playlist_resolver
         self.logger = logger or _LOGGER
         self._enrich_sem = asyncio.Semaphore(settings.enrichment_workers)
@@ -122,6 +126,11 @@ class RadioRipperApp:
             if settings.enable_coverartarchive
             else None
         )
+        popularity_provider: DeezerPopularityChecker | None = (
+            DeezerPopularityChecker(client)
+            if settings.min_popularity_rank > 0
+            else None
+        )
         return cls(
             settings=settings,
             client=client,
@@ -130,6 +139,7 @@ class RadioRipperApp:
             metadata_provider=metadata,
             fingerprint_provider=fp_provider,
             cover_provider=cover_provider,
+            popularity_provider=popularity_provider,
             playlist_resolver=resolver,
             logger=log,
         )
@@ -146,13 +156,15 @@ class RadioRipperApp:
         3. Computes the new path without the station fallback folder
            (``{Artist}[/{Album}]/{Song}.mp3``).
         4. Moves the file, removes empty old directories, updates the DB.
-
-        Files keep their ``.mp3`` extension — no ``.untested`` reset.
+        5. Tries AcoustID fingerprint (if not yet matched) and fetches
+           CAA cover art — identical to the live recording flow.
         """
         if not self.settings.reprocess_all:
             return
         self.logger.info("Reprocess-all enabled — restructuring files…")
         count = 0
+        min_interval = self.settings.acoustid_min_interval_s
+        last_fp_call = 0.0
         for mp3 in sorted(self.settings.destination.rglob("*.mp3")):
             if mp3.suffix != ".mp3" or mp3.name.endswith(".untested.mp3"):
                 continue
@@ -161,16 +173,18 @@ class RadioRipperApp:
                 self.logger.warning("No DB entry for %s — skipping", mp3)
                 continue
 
-            album = record.track.album
-            if not album and not isinstance(self.metadata, NullMetadataProvider):
+            # Fetch enrichment (always when provider is available)
+            info = None
+            if not isinstance(self.metadata, NullMetadataProvider):
                 async with self._enrich_sem:
                     try:
                         info = await self.metadata.fetch(record.track.artist, record.track.title)
-                        album = info.album if info else None
                     except Exception as exc:
                         self.logger.debug(
                             "[%s] enrichment fetch failed: %s", record.station_name, exc
                         )
+
+            album = info.album if info else record.track.album
 
             new_path = compute_file_path(
                 self.settings.destination,
@@ -203,8 +217,74 @@ class RadioRipperApp:
             await self.repository.update_file_path(
                 record.station_name, record.track.stream_title, str(new_path)
             )
+
+            # Rewrite ID3 tags from enrichment so genre/year/album are embedded
+            if info is not None:
+                fallback_cover: bytes | None = None
+                if self.settings.fallback_cover_path is not None:
+                    with contextlib.suppress(OSError):
+                        fallback_cover = self.settings.fallback_cover_path.read_bytes()
+                try:
+                    self.tagger.write_full(
+                        new_path,
+                        TrackInfo(
+                            stream_title=record.track.stream_title,
+                            artist=record.track.artist,
+                            title=record.track.title,
+                        ),
+                        info,
+                        None,
+                        f"{record.station_name}@{record.track.stream_title}",
+                        fallback_cover=fallback_cover,
+                    )
+                    self.logger.info(
+                        "[%s] Rewrote enriched tags: album=%s year=%s genre=%s",
+                        record.station_name,
+                        info.album or "-",
+                        info.year or "-",
+                        info.genre or "-",
+                    )
+                except Exception as exc:
+                    self.logger.debug("[%s] tag rewrite during reprocess: %s", record.station_name, exc)
+
+            # --- same post-match flow as live recording ---
+            recording_id = record.track.acoustid_recording_id
+            score = record.track.acoustid_score
+            if not recording_id and self.fingerprint is not None:
+                if min_interval > 0:
+                    now = time.monotonic()
+                    wait = min_interval - (now - last_fp_call)
+                    if wait > 0:
+                        await asyncio.sleep(wait)
+                    last_fp_call = time.monotonic()
+                try:
+                    fp_result = await self.fingerprint.fingerprint(new_path)
+                except Exception:
+                    fp_result = None
+                if fp_result:
+                    recording_id = fp_result.recording_id
+                    score = fp_result.score
+
+            if recording_id:
+                await apply_fingerprint_match(
+                    recording_id=recording_id,
+                    score=score or 0.0,
+                    file_path=new_path,
+                    new_path=new_path,
+                    tagger=self.tagger,
+                    cover_provider=self.cover_provider,
+                    repository=self.repository,
+                    station_name=record.station_name,
+                    stream_title=record.track.stream_title,
+                    logger=self.logger,
+                    artist=record.track.artist,
+                    title=record.track.title,
+                    popularity_provider=self.popularity_provider,
+                    min_popularity_rank=self.settings.min_popularity_rank,
+                )
+
             count += 1
-        self.logger.info("Reprocess-all: %d files restructured.", count)
+        self.logger.info("Reprocess-all: %d files processed.", count)
 
     async def reprocess_untested(self) -> None:
         """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
@@ -273,40 +353,24 @@ class RadioRipperApp:
                     self.logger.info("Discarded (still no match): %s", p.name)
                 continue
             new_path = p.with_name(p.stem.replace(".untested", "") + ".mp3")
-            if new_path.exists():
-                # Don't silently clobber an existing .mp3 — keep .untested.mp3
-                self.logger.warning(
-                    "Refuse to rename %s -> %s (target exists). "
-                    "Keeping .untested.mp3 for manual review.",
-                    p.name,
-                    new_path.name,
-                )
+            applied = await apply_fingerprint_match(
+                recording_id=result.recording_id,
+                score=result.score,
+                file_path=p,
+                new_path=new_path,
+                tagger=self.tagger,
+                cover_provider=self.cover_provider,
+                repository=self.repository,
+                station_name=rec.station_name,
+                stream_title=rec.track.stream_title,
+                logger=self.logger,
+                artist=result.artist,
+                title=result.title,
+                popularity_provider=self.popularity_provider,
+                min_popularity_rank=self.settings.min_popularity_rank,
+            )
+            if applied is None:
                 continue
-            try:
-                p.rename(new_path)
-            except OSError as exc:
-                self.logger.warning("rename %s -> %s failed: %s", p.name, new_path.name, exc)
-                continue
-            try:
-                self.tagger.update_acoustid(new_path, result.recording_id, result.score)
-            except Exception as exc:
-                self.logger.debug("acoustid tag update: %s", exc)
-            try:
-                await self.repository.update_file_path(
-                    rec.station_name, rec.track.stream_title, str(new_path)
-                )
-            except Exception as exc:
-                self.logger.debug("db update_file_path: %s", exc)
-            try:
-                await self.repository.update_fingerprint(
-                    rec.station_name,
-                    rec.track.stream_title,
-                    recording_id=result.recording_id,
-                    score=result.score,
-                )
-            except Exception as exc:
-                self.logger.debug("db update_fingerprint: %s", exc)
-            self.logger.info("Re-fingerprinted OK: %s", new_path.name)
         self.logger.info("Untested reprocess complete (%d files).", len(records))
 
     async def _cleanup_orphans(self) -> None:
@@ -358,6 +422,7 @@ class RadioRipperApp:
                 metadata_provider=self.metadata,
                 fingerprint_provider=self.fingerprint,
                 cover_provider=self.cover_provider,
+                popularity_provider=self.popularity_provider,
                 enrich_semaphore=self._enrich_sem,
                 logger=self.logger,
                 ad_title_patterns=effective_patterns,

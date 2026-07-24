@@ -25,5 +25,6 @@
   "reprobe_on_start": true,
   "acoustid_api_key": "",
   "acoustid_min_score": 0.8,
-  "discard_unmatched": true
+  "discard_unmatched": true,
+  "min_popularity_rank": 100000
 }

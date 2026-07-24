@@ -27,6 +27,7 @@ from mutagen.id3 import (
     COMM,
     ID3,
     TALB,
+    TCON,
     TDRC,
     TIT2,
     TPE1,
@@ -190,6 +191,7 @@ class ID3Tagger(TrackTagger):
         audio.delall("TPE2")
         audio.delall("TIT2")
         audio.delall("TALB")
+        audio.delall("TCON")
         audio.delall("TDRC")
         audio.delall("TRSN")
         audio.delall("TPUB")
@@ -212,6 +214,8 @@ class ID3Tagger(TrackTagger):
             audio.add(TALB(encoding=3, text=track.title or track.stream_title))
         if enriched.year:
             audio.add(TDRC(encoding=3, text=enriched.year))
+        if enriched.genre:
+            audio.add(TCON(encoding=3, text=enriched.genre))
         # Extract station name from provenance (format: "station@url")
         station_name = provenance.split("@")[0] if "@" in provenance else provenance
         audio.add(TRSN(encoding=3, text=station_name))
