@@ -108,9 +108,7 @@ class RadioRipperApp:
                 "Set ACCOUST_ID env var (docker: -e ACCOUST_ID=your_key) "
                 "or acoustid_api_key in config.json."
             )
-        os.environ.setdefault(
-            "ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup"
-        )
+        os.environ.setdefault("ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup")
         fp_provider: FingerprintProvider = AcoustidFingerprintProvider(
             api_key,
             min_score=settings.acoustid_min_score,
