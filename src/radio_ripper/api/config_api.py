@@ -79,7 +79,6 @@ class ConfigApi:
         """Return a :class:`Settings` with one placeholder stream (for new configs)."""
         return Settings(
             destination=Path("./recordings"),
-            database=Path("./recordings/ripper.db"),
             streams=[
                 StreamConfig(
                     name="TopHits", url=HttpUrl("http://tophits.radiomonster.fm/listen.m3u")

@@ -4,7 +4,8 @@ services:
     container_name: radio-ripper
     restart: unless-stopped
     volumes:
-      - ./config.json:/app/config.json:ro
+      - ./config:/app/config:ro
+      - ./work:/app/work
       - ./recordings:/app/recordings
     stop_signal: SIGTERM
     stop_grace_period: 30s

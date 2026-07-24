@@ -39,8 +39,11 @@ class Settings(BaseModel):
     """Validated radio_ripper configuration."""
 
     destination: Path = Field(default=Path("./recordings"))
-    database: Path = Field(default=Path("./recordings/ripper.db"))
 
+    # Runtime data directory — logs, database, cache all live here by default.
+    # Mount this as a volume in Docker for persistence.
+    work_dir: Path = Field(default=Path("./work"))
+    database: Path | None = None
     stream_keywords: list[str] = Field(
         default_factory=lambda: [
             "rock",
@@ -57,9 +60,9 @@ class Settings(BaseModel):
         ]
     )
     discovery_enabled: bool = True
-    # New user-facing config key. If set, it overrides the internal temp_dir.
+    # User-facing config key. If set, it overrides the internal temp_dir.
     temp_directory: Path | None = None
-    temp_dir: Path = Field(default=Path.home() / ".cache" / "radio-ripper")
+    temp_dir: Path | None = None
     discovery_max_stations: int = Field(default=150, ge=1, le=500)
     discovery_min_bitrate: int = Field(default=0, ge=0)
     discovery_update_interval_days: int = Field(default=7, ge=1)
@@ -106,7 +109,7 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("database", "destination", "log_file", "fallback_cover_path", "temp_dir", "temp_directory")
+    @field_validator("work_dir", "database", "destination", "log_file", "fallback_cover_path", "temp_dir", "temp_directory")
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
         return v.expanduser() if v is not None else None
@@ -115,15 +118,22 @@ class Settings(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _map_temp_directory(cls, values: dict) -> dict:
-        # If the user provided `temp_directory` in the raw config, prefer it
-        # by copying it to the internal `temp_dir` key so the rest of the
-        # application keeps using `temp_dir`.
         try:
             if isinstance(values, dict) and values.get("temp_directory"):
                 values["temp_dir"] = values.get("temp_directory")
         except Exception:
             pass
         return values
+
+    @model_validator(mode="after")
+    def _resolve_work_paths(self) -> "Settings":
+        if self.database is None:
+            self.database = self.work_dir / "ripper.db"
+        if self.log_file is None:
+            self.log_file = self.work_dir / "radio_ripper.log"
+        if self.temp_dir is None:
+            self.temp_dir = self.work_dir / "cache"
+        return self
 
 
 def load_settings(path: str | Path) -> Settings:

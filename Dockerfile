@@ -4,9 +4,9 @@
 #   docker build -t radio-ripper:2.0 .
 # Run:
 #   docker run --rm --name ripper \
-#     -v "$PWD/config.json:/app/config.json:ro" \
+#     -v "$PWD/config:/app/config:ro" \
+#     -v "$PWD/work:/app/work" \
 #     -v "$PWD/recordings:/app/recordings" \
-#     -v "$PWD/songs.db:/app/songs.db" \
 #     radio-ripper:2.0
 #
 # Strg+C / docker stop → graceful SIGTERM shutdown.
@@ -65,11 +65,14 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
-# Directory for recordings and database
-RUN mkdir -p /app/recordings \
+# Default config shipped inside the image
+COPY config.docker.json /app/config/config.json
+
+# Directories for recordings, runtime data and config
+RUN mkdir -p /app/recordings /app/work /app/config \
  && chown -R ripper:ripper /app
 
 USER ripper
 
 ENTRYPOINT ["radio-ripper"]
-CMD ["--config", "/app/config.json"]
+CMD ["--config", "/app/config/config.json"]
