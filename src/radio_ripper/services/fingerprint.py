@@ -34,6 +34,15 @@ class FingerprintError(RuntimeError):
     """
 
 
+class NonRetriableFingerprintError(FingerprintError):
+    """File is corrupt or undecodable — retrying won't help.
+
+    Raised when AcoustID's ``FingerprintGenerationError`` indicates the file
+    cannot be decoded (missing decoder backend, 0 audio channels, corrupt
+    data).  Callers SHOULD delete the file and its DB record immediately.
+    """
+
+
 class FingerprintProvider(ABC):
     """Identify a recorded audio file against the AcoustID database."""
 
@@ -78,6 +87,8 @@ class AcoustidFingerprintProvider(FingerprintProvider):
                 _log.warning("[fingerprint] AcoustID API error (invalid key?): %s", exc)
                 return None
             raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
+        except acoustid.FingerprintGenerationError as exc:
+            raise NonRetriableFingerprintError(str(exc)) from exc
         except Exception as exc:
             raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
         if not results:
@@ -110,5 +121,6 @@ __all__ = [
     "AcoustidFingerprintProvider",
     "FingerprintError",
     "FingerprintProvider",
+    "NonRetriableFingerprintError",
     "NullFingerprintProvider",
 ]

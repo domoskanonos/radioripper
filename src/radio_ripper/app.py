@@ -26,6 +26,7 @@ from radio_ripper.services.fingerprint import (
     AcoustidFingerprintProvider,
     FingerprintError,
     FingerprintProvider,
+    NonRetriableFingerprintError,
 )
 from radio_ripper.services.metadata import (
     CoverArtArchiveProvider,
@@ -231,6 +232,18 @@ class RadioRipperApp:
                 last_fp_call = time.monotonic()
             try:
                 result = await self.fingerprint.fingerprint(p)
+            except NonRetriableFingerprintError as exc:
+                self.logger.warning(
+                    "Permanently skipping broken file %s: %s",
+                    p.name,
+                    exc,
+                )
+                with contextlib.suppress(OSError):
+                    p.unlink(missing_ok=True)
+                    remove_empty_parents(p, self.settings.destination)
+                with contextlib.suppress(Exception):
+                    await self.repository.remove(rec.station_name, rec.track.stream_title)
+                continue
             except FingerprintError as exc:
                 self.logger.warning(
                     "Fingerprint infrastructure error for %s: %s "

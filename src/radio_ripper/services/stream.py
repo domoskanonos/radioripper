@@ -29,7 +29,11 @@ from typing import Any
 from radio_ripper.domain.models import EnrichedInfo, SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
-from radio_ripper.services.fingerprint import FingerprintError, FingerprintProvider
+from radio_ripper.services.fingerprint import (
+    FingerprintError,
+    FingerprintProvider,
+    NonRetriableFingerprintError,
+)
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.metadata import MetadataProvider
 from radio_ripper.services.playlist import PlaylistResolver
@@ -585,6 +589,16 @@ class StreamRecorder:
             async with lock:
                 try:
                     result = await self._fingerprint.fingerprint(file_path)
+                except NonRetriableFingerprintError as exc:
+                    self._log.warning(
+                        "[%s] deleting broken file %s: %s",
+                        self.station_name,
+                        file_path.name,
+                        exc,
+                    )
+                    with contextlib.suppress(OSError):
+                        file_path.unlink(missing_ok=True)
+                    return
                 except FingerprintError as exc:
                     self._log.warning(
                         "[%s] fingerprint infrastructure error for %s: %s "
