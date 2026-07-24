@@ -11,3 +11,5 @@ build/
 .python-version
 .env
 *.mp3
+.coverage
+radio_ripper.pid
