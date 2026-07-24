@@ -310,13 +310,13 @@ def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
                 pass
 
         entries = _parse_m3u_text(text, cache_file.name)
-        stations: list[StreamConfig] = []
+        stations: list[StreamConfig] = []  # type: ignore[no-redef]
         for e in entries:
             try:
                 stations.append(
                     StreamConfig(
                         name=e.name,
-                        url=e.url,
+                        url=e.url,  # type: ignore[arg-type]
                         enabled=True,
                         bitrate=0,
                         icy=True,

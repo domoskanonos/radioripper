@@ -37,7 +37,8 @@ class LibraryApi:
     """Browse and search the recorded-song library."""
 
     def __init__(self, settings: Settings) -> None:
-        self._db_path = Path(settings.database)
+        assert settings.database is not None
+        self._db_path = settings.database
         self._destination = Path(settings.destination)
 
     def _connect(self) -> sqlite3.Connection:
