@@ -11,14 +11,15 @@ Siehe: `../diagrams/sequence-recording.puml`
 5. `TrackRepository.exists()` pruft Duplikat
 6. Falls neu: `TrackTagger.tag()` schreibt ID3v2
 7. `TrackRepository.register()` tragt in SQLite ein
-8. Optional async: `MetadataProvider.enrich()` (nicht-blockierend)
+8. Optional async: `MetadataProvider.enrich()` (iTunes + CoverArtArchive, nicht-blockierend)
+9. Optional async: `FingerprintProvider.fingerprint()` (AcoustID, nicht-blockierend)
 
 ## 6.2 Reconnect mit Backoff
 
 ```
-  Fehler -> delay = initial_reconnect_delay
+  Fehler -> delay = reconnect_base_delay (1s)
      +--> sleep(delay, cancellable via stop_event)
-         +--> delay = min(delay * 2, reconnect_max_delay) -> retry
+         +--> delay = min(delay * 2, reconnect_max_delay=60s) -> retry
 ```
 
 ## 6.3 Graceful Shutdown

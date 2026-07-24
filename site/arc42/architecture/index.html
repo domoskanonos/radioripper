@@ -1185,11 +1185,11 @@
 
 <h1 id="radio-ripper-architektur-dokumentation-arc42">Radio-Ripper — Architektur-Dokumentation (arc42)<a class="headerlink" href="#radio-ripper-architektur-dokumentation-arc42" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p>Version 2.0 · Stand 2026-07-17 · Status: implementiert</p>
+<p>Version 2.0 · Stand 2026-07-24 · Status: implementiert</p>
 </blockquote>
 <h2 id="1-einfuhrung-und-ziele">1. Einführung und Ziele<a class="headerlink" href="#1-einfuhrung-und-ziele" title="Permanent link">&para;</a></h2>
 <h3 id="11-aufgabenbeschreibung">1.1 Aufgabenbeschreibung<a class="headerlink" href="#11-aufgabenbeschreibung" title="Permanent link">&para;</a></h3>
-<p>Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadaten-Streams <strong>parallel und dauerhaft</strong> im Hintergrund aufzeichnet. Er trennt Lieder automatisch anhand der <code>StreamTitle</code>-Wechsel, vermeidet Duplikate über eine lokale SQLite-Datenbank, taggt die MP3-Dateien mit ID3v2 und reichert Metadaten optional über die iTunes Search API an (inklusive Cover-Art).</p>
+<p>Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadaten-Streams <strong>parallel und dauerhaft</strong> im Hintergrund aufzeichnet. Er trennt Lieder automatisch anhand der <code>StreamTitle</code>-Wechsel, vermeidet Duplikate über eine lokale SQLite-Datenbank, taggt die MP3-Dateien mit ID3v2, reichert Metadaten optional über die iTunes Search API an (inklusive Cover-Art) und identifiziert Songs per <strong>AcoustID-Fingerprinting</strong> gegen die MusicBrainz-Datenbank.</p>
 <h3 id="12-qualitatsziele">1.2 Qualitätsziele<a class="headerlink" href="#12-qualitatsziele" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -1242,7 +1242,7 @@
 </tr>
 <tr>
 <td>Entwickler</td>
-<td>Klares Layout, 151 Tests, mypy clean, CI-Grün</td>
+<td>Klares Layout, 273 Tests, mypy clean, CI-Grün</td>
 </tr>
 <tr>
 <td>Operator</td>
@@ -1291,8 +1291,9 @@
 <h3 id="31-system-kontext">3.1 System-Kontext<a class="headerlink" href="#31-system-kontext" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>                          ┌──────────────┐
                           │   Internet    │
-                          │   Webradio    │
-                          │   (.m3u/.pls) │
+                          │  Webradio +   │
+                          │ Playlists     │
+                          │ (.m3u/.pls)   │
                           └──────┬───────┘
                                  │ HTTP/ICY
                                  ▼
@@ -1302,20 +1303,30 @@
 │  ┌─────────┐  ┌───────────┐  ┌────────────┐  │
 │  │ Playlist │  │  Stream   │  │ Metadata   │  │
 │  │ Resolver │──│  Recorder │──│ Provider   │  │
-│  │         │  │ (per Stream)│ │ (iTunes)   │  │
+│  │  (+ Disc)│  │ (per Stream)│ │(iTunes+CAA)│  │
 │  └─────────┘  └─────┬─────┘  └────────────┘  │
-│                      │                        │
-│              ┌───────┼───────┐                │
-│              ▼       ▼       ▼                │
-│         TrackWriter │ TrackTagger             │
-│         TrackRepo   │                         │
-│              │       │                        │
-│              ▼       ▼                        │
-│         ┌─────────────────┐                   │
-│         │  Dateisystem     │                   │
-│         │  MP3 + songs.db  │                   │
-│         └─────────────────┘                   │
-└─────────────────────────────────────────────┘
+│                     │         ┌────────────┐  │
+│                     │         │Fingerprint │  │
+│                     │         │(AcoustID)  │  │
+│                     │         └────────────┘  │
+│             ┌───────┼───────┐                 │
+│             ▼       ▼       ▼                 │
+│        TrackWriter │ TrackTagger              │
+│        TrackRepo   │                          │
+│             │       │                         │
+│             ▼       ▼                         │
+│        ┌─────────────────┐                    │
+│        │  Dateisystem     │                    │
+│        │  MP3 + ripper.db │                    │
+│        └─────────────────┘                    │
+└────────────────────────────────────────────┘
+        │              ▲
+        │ HTTP REST    │ Gradio Web GUI
+        ▼              │ (optional)
+   ┌──────────┐        │
+   │ API Layer│────────┘
+   │ (4 APIs) │
+   └──────────┘
 </code></pre></div>
 <h3 id="32-externe-schnittstellen">3.2 Externe Schnittstellen<a class="headerlink" href="#32-externe-schnittstellen" title="Permanent link">&para;</a></h3>
 <table>
@@ -1340,12 +1351,27 @@
 <tr>
 <td>iTunes Search API</td>
 <td>HTTPS</td>
-<td>Metadata anreichern (Artist, Album, Cover)</td>
+<td>Metadaten anreichern (Artist, Album, Cover)</td>
+</tr>
+<tr>
+<td>AcoustID API</td>
+<td>HTTPS</td>
+<td>Audio-Fingerprinting + MusicBrainZ-Abfrage</td>
+</tr>
+<tr>
+<td>Cover Art Archive</td>
+<td>HTTPS</td>
+<td>Fallback-Cover-Quelle (MusicBrainz)</td>
+</tr>
+<tr>
+<td>Gradio Web GUI (lokal)</td>
+<td>HTTP</td>
+<td>Bedienoberfläche im Browser</td>
 </tr>
 <tr>
 <td>Dateisystem</td>
 <td>POSIX</td>
-<td>MP3 schreiben, songs.db, Cover-Bilder</td>
+<td>MP3 schreiben, <code>ripper.db</code>, Cover-Bilder</td>
 </tr>
 <tr>
 <td>System-Signals</td>
@@ -1358,17 +1384,19 @@
 <h2 id="4-losungsstrategie">4. Lösungsstrategie<a class="headerlink" href="#4-losungsstrategie" title="Permanent link">&para;</a></h2>
 <h3 id="41-architekturstil-hexagonal-layered">4.1 Architekturstil: Hexagonal / Layered<a class="headerlink" href="#41-architekturstil-hexagonal-layered" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>┌───────────────────────────────────────────────┐
-│                  CLI / App                     │  ← Entry-Point
+│                  CLI / API / GUI               │  ← Entry-Points
 ├───────────────────────────────────────────────┤
 │              Services-Layer                    │
 │  StreamRecorder · IcyParser · TrackWriter      │  ← Business-Logic
 │  TrackTagger · TrackRepository · Metadata      │
+│  FingerprintProvider · PlaylistDiscovery       │
 ├───────────────────────────────────────────────┤
 │               Infra-Layer                      │
 │  AsyncHttpClient · Config · Logging · Errors   │  ← Technical
 ├───────────────────────────────────────────────┤
 │               Domain-Layer                     │
-│  TrackInfo · SavedTrack · EnrichedInfo         │  ← Pure Models
+│  TrackInfo · SavedTrack · EnrichedInfo        │  ← Pure Models
+│  FingerprintResult                             │
 └───────────────────────────────────────────────┘
 </code></pre></div>
 <h3 id="42-schlusselentscheidungen">4.2 Schlüsselentscheidungen<a class="headerlink" href="#42-schlusselentscheidungen" title="Permanent link">&para;</a></h3>
@@ -1386,7 +1414,7 @@
 <td>1</td>
 <td>Async/await statt threading</td>
 <td>I/O-bound, leichtere Fehlerbehandlung</td>
-<td><a href="adrs/0001-async-await-l threading.md">ADR-0001</a></td>
+<td><a href="../adrs/0001-async-await-vs-threading/">ADR-0001</a></td>
 </tr>
 <tr>
 <td>2</td>
@@ -1460,7 +1488,7 @@
 <tr>
 <td><code>domain/models.py</code></td>
 <td>Domain</td>
-<td><code>TrackInfo</code>, <code>SavedTrack</code>, <code>EnrichedInfo</code></td>
+<td><code>TrackInfo</code>, <code>SavedTrack</code>, <code>EnrichedInfo</code>, <code>FingerprintResult</code></td>
 </tr>
 <tr>
 <td><code>services/icy.py</code></td>
@@ -1471,6 +1499,11 @@
 <td><code>services/playlist.py</code></td>
 <td>Service</td>
 <td><code>.m3u</code>/<code>.pls</code> Resolver</td>
+</tr>
+<tr>
+<td><code>services/playlist_discovery.py</code></td>
+<td>Service</td>
+<td>Radio-station discovery &amp; station management</td>
 </tr>
 <tr>
 <td><code>services/storage.py</code></td>
@@ -1491,6 +1524,11 @@
 <td><code>services/metadata.py</code></td>
 <td>Service</td>
 <td><code>MetadataProvider</code> ABC, <code>ITunesMetadataProvider</code></td>
+</tr>
+<tr>
+<td><code>services/fingerprint.py</code></td>
+<td>Service</td>
+<td><code>FingerprintProvider</code> ABC, <code>AcoustidFingerprintProvider</code></td>
 </tr>
 <tr>
 <td><code>services/stream.py</code></td>
@@ -1536,8 +1574,14 @@
 │                     ▼                              ▼          │
 │               ┌──────────┐                ┌──────────────┐     │
 │               │ TrackRepo│                │ MetadataProv.│     │
-│               │ (dedup)  │←───────exists──│ (iTunes)     │     │
+│               │ (dedup)  │←───────exists──│ (iTunes+CAA) │     │
 │               └──────────┘                └──────────────┘     │
+│                     │                                           │
+│                     ▼                                           │
+│               ┌──────────┐                                     │
+│               │Fingerpr. │  ← AcoustID / MusicBrainz            │
+│               │(async)   │  (reprocess-untested flow)           │
+│               └──────────┘                                     │
 └──────────────────────────────────────────────────────────────┘
 </code></pre></div>
 <hr />
@@ -1545,19 +1589,20 @@
 <h3 id="61-happy-path-song-aufzeichnung">6.1 Happy Path: Song-Aufzeichnung<a class="headerlink" href="#61-happy-path-song-aufzeichnung" title="Permanent link">&para;</a></h3>
 <p>Siehe: <code>diagrams/sequence-recording.puml</code></p>
 <ol>
-<li><code>StreamRecorder._run_forever()</code> → <code>_run_once()()</code></li>
+<li><code>StreamRecorder._run_forever()</code> → <code>_run_once()</code></li>
 <li>HTTP-Verbindung zum Stream-URL (via <code>HttpxAsyncClient</code>)</li>
 <li><code>IcyParser</code> konsumiert Bytes → emittiert <code>AudioChunk</code> + <code>TitleChanged</code></li>
 <li>Bei <code>TitleChanged</code>: alter Song wird abgeschlossen (TrackWriter.commit → atomic rename)</li>
 <li><code>TrackRepository.exists()</code> prüft Duplikat</li>
 <li>Falls neu: <code>TrackTagger.tag()</code> schreibt ID3v2</li>
 <li><code>TrackRepository.register()</code> trägt in SQLite ein</li>
-<li>Optional async: <code>MetadataProvider.enrich()</code> (nicht-blockierend)</li>
+<li>Optional async: <code>MetadataProvider.enrich()</code> (iTunes + CoverArtArchive, nicht-blockierend)</li>
+<li>Optional async: <code>FingerprintProvider.fingerprint()</code> (AcoustID, nicht-blockierend)</li>
 </ol>
 <h3 id="62-reconnect-mit-backoff">6.2 Reconnect mit Backoff<a class="headerlink" href="#62-reconnect-mit-backoff" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code>  Fehler → delay = initial_reconnect_delay
+<div class="highlight"><pre><span></span><code>  Fehler → delay = reconnect_base_delay (1s)
      └─→ sleep(delay, cancellable via stop_event)
-         └─→ delay = min(delay * 2, reconnect_max_delay) → retry
+         └─→ delay = min(delay * 2, reconnect_max_delay=60s) → retry
 </code></pre></div>
 <h3 id="63-graceful-shutdown">6.3 Graceful Shutdown<a class="headerlink" href="#63-graceful-shutdown" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>  SIGINT/SIGTERM → stop_event.set()
@@ -1582,7 +1627,7 @@
 </tr>
 <tr>
 <td><strong>Docker</strong></td>
-<td><code>docker run</code> mit gemountetem <code>config.json</code>, <code>recordings/</code>, <code>songs.db</code></td>
+<td><code>docker compose up</code> mit gemountetem <code>./config:/app/config:ro</code> und <code>./work:/app/work</code></td>
 </tr>
 </tbody>
 </table>
@@ -1600,15 +1645,16 @@
 </code></pre></div>
 <p>Jede Exception ist catch-and-log, niemals silent-fail.</p>
 <h3 id="82-logging">8.2 Logging<a class="headerlink" href="#82-logging" title="Permanent link">&para;</a></h3>
-<p><code>logging</code> mit strukturierter Formatierung, konfiguriert via <code>infra/logging.py</code>. Log-Level via Config oder <code>--log-level</code> CLI-Override.</p>
+<p><code>logging</code> mit strukturierter Formatierung, konfiguriert via <code>infra/logging.py</code>. Log-Level via Config oder <code>--log-level</code> CLI-Override. Log-Datei liegt standardmäßig im <code>work_dir</code>.</p>
 <h3 id="83-konfiguration">8.3 Konfiguration<a class="headerlink" href="#83-konfiguration" title="Permanent link">&para;</a></h3>
 <p>Pydantic-v2-Modelle mit Validierung:
-- <code>Settings</code> (Top-Level): <code>output_dir</code>, <code>database_path</code>, <code>enrich_metadata</code>, <code>embed_cover_art</code>, ...
-- <code>StreamConfig</code>: <code>name</code>, <code>url</code>, <code>output_dir</code>, ...
-- Defaults via <code>config.json</code>, überschreibbar via CLI-Args.</p>
+- <code>Settings</code> (Top-Level): <code>destination</code>, <code>database</code>, <code>work_dir</code>, <code>enrich_metadata</code>, <code>embed_cover_art</code>, <code>acoustid_api_key</code>, <code>discovery_enabled</code>, …
+- <code>StreamConfig</code>: <code>name</code>, <code>url</code>, <code>output_dir</code>, …
+- Defaults via <code>config.json</code>, überschreibbar via CLI-Args.
+- <code>work_dir</code> (Default: <code>./work</code>) bündelt Datenbank (<code>work/ripper.db</code>), Cache (<code>work/cache</code>) und Logs (<code>work/radio_ripper.log</code>).</p>
 <h3 id="84-testing">8.4 Testing<a class="headerlink" href="#84-testing" title="Permanent link">&para;</a></h3>
 <ul>
-<li>151 Pytests, 85% Coverage (Gate: 70%)</li>
+<li>273 Pytests, 77% Coverage (Gate: 70%)</li>
 <li><code>asyncio_mode = "auto"</code>, Fake-HTTP via <code>respx</code></li>
 <li>Stream-Tests mit Fake <code>AsyncHttpClient</code>, kein Real I/O</li>
 </ul>
@@ -1625,7 +1671,7 @@
 </thead>
 <tbody>
 <tr>
-<td><a href="adrs/0001-async-await-l threading.md">0001</a></td>
+<td><a href="../adrs/0001-async-await-vs-threading/">0001</a></td>
 <td>Async/await statt threading</td>
 <td>Angenommen</td>
 </tr>
@@ -1659,12 +1705,12 @@
 <tbody>
 <tr>
 <td>Wartbarkeit</td>
-<td>Module &lt; 250 LOC, max 1 Veranwortung</td>
+<td>Module &lt; 250 LOC, max 1 Verantwortung</td>
 <td>Code-Review</td>
 </tr>
 <tr>
 <td>Testbarkeit</td>
-<td>151 Tests, Coverage ≥ 70%</td>
+<td>273 Tests, Coverage ≥ 70%</td>
 <td><code>pytest --cov</code></td>
 </tr>
 <tr>
@@ -1720,6 +1766,11 @@
 <td>Mutagen hat keine Type-Stubs</td>
 <td><code># mypy: disable-error-code</code> in tagging.py</td>
 </tr>
+<tr>
+<td>5</td>
+<td>AcoustID-API-Key erforderlich</td>
+<td>Validiert beim Start, Fehlermeldung mit Konfigurationsanleitung</td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -1755,6 +1806,18 @@
 <tr>
 <td>WAL</td>
 <td>SQLite Write-Ahead-Logging für non-blocking reads</td>
+</tr>
+<tr>
+<td>AcoustID</td>
+<td>Audio-Fingerprinting-Dienst zur Song-Identifikation</td>
+</tr>
+<tr>
+<td>CoverArtArchive (CAA)</td>
+<td>MusicBrainz-Cover-Art-Quelle</td>
+</tr>
+<tr>
+<td>work_dir</td>
+<td>Zentrale Arbeitsverzeichnis (DB, Cache, Logs)</td>
 </tr>
 <tr>
 <td>Graceful Shutdown</td>

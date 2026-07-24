@@ -15,7 +15,10 @@ uv run radio-ripper --config config.json
 - ICY-Metadaten-Parsing mit State Machine
 - Duplikats-Erkennung via SQLite (WAL-Modus)
 - ID3v2-Tagging mit Cover-Art
-- iTunes-Cover-Art-Enrichment
+- Metadaten-Anreicherung via iTunes + CoverArtArchive
+- Audio-Fingerprinting via AcoustID / MusicBrainz
+- Automatische Radio-Station-Discovery
 - Graceful Shutdown via SIGINT/SIGTERM
 - Docker-Support
+- REST-API (Config, Stations, Library, Ripper-Steuerung)
 - Gradio-Web-GUI (optional)

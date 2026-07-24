@@ -4,17 +4,19 @@
 
 ```
 ┌───────────────────────────────────────────────┐
-│                  CLI / App                     │  <- Entry-Point
+│                  CLI / API / GUI               │  <- Entry-Points
 ├───────────────────────────────────────────────┤
 │              Services-Layer                    │
 │  StreamRecorder . IcyParser . TrackWriter      │  <- Business-Logic
 │  TrackTagger . TrackRepository . Metadata      │
+│  FingerprintProvider . PlaylistDiscovery       │
 ├───────────────────────────────────────────────┤
 │               Infra-Layer                      │
 │  AsyncHttpClient . Config . Logging . Errors   │  <- Technical
 ├───────────────────────────────────────────────┤
 │               Domain-Layer                     │
 │  TrackInfo . SavedTrack . EnrichedInfo         │  <- Pure Models
+│  FingerprintResult                             │
 └───────────────────────────────────────────────┘
 ```
 

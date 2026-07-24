@@ -917,8 +917,9 @@
 <h2 id="31-system-kontext">3.1 System-Kontext<a class="headerlink" href="#31-system-kontext" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>                          ┌──────────────┐
                           │   Internet    │
-                          │   Webradio    │
-                          │   (.m3u/.pls) │
+                          │  Webradio +   │
+                          │ Playlists     │
+                          │ (.m3u/.pls)   │
                           └──────┬───────┘
                                  │ HTTP/ICY
                                  ▼
@@ -928,19 +929,22 @@
 │  ┌─────────┐  ┌───────────┐  ┌────────────┐  │
 │  │ Playlist │  │  Stream   │  │ Metadata   │  │
 │  │ Resolver │──│  Recorder │──│ Provider   │  │
-│  │         │  │ (per Stream)│ │ (iTunes)   │  │
+│  │  (+ Disc)│  │ (per Stream)│ │(iTunes+CAA)│  │
 │  └─────────┘  └─────┬─────┘  └────────────┘  │
-│                      │                        │
-│              ┌───────┼───────┐                │
-│              ▼       ▼       ▼                │
-│         TrackWriter │ TrackTagger             │
-│         TrackRepo   │                         │
-│              │       │                        │
-│              ▼       ▼                        │
-│         ┌─────────────────┐                   │
-│         │  Dateisystem     │                   │
-│         │  MP3 + songs.db  │                   │
-│         └─────────────────┘                   │
+│                     │         ┌────────────┐  │
+│                     │         │Fingerprint │  │
+│                     │         │(AcoustID)  │  │
+│                     │         └────────────┘  │
+│             ┌───────┼───────┐                 │
+│             ▼       ▼       ▼                 │
+│        TrackWriter │ TrackTagger              │
+│        TrackRepo   │                          │
+│             │       │                         │
+│             ▼       ▼                         │
+│        ┌─────────────────┐                    │
+│        │  Dateisystem     │                    │
+│        │  MP3 + ripper.db │                    │
+│        └─────────────────┘                    │
 └─────────────────────────────────────────────┘
 </code></pre></div>
 <h2 id="32-externe-schnittstellen">3.2 Externe Schnittstellen<a class="headerlink" href="#32-externe-schnittstellen" title="Permanent link">&para;</a></h2>
@@ -969,9 +973,19 @@
 <td>Metadaten anreichern (Artist, Album, Cover)</td>
 </tr>
 <tr>
+<td>AcoustID API</td>
+<td>HTTPS</td>
+<td>Audio-Fingerprinting + MusicBrainz-Abfrage</td>
+</tr>
+<tr>
+<td>Cover Art Archive (CAA)</td>
+<td>HTTPS</td>
+<td>Fallback-Cover-Quelle (MusicBrainz)</td>
+</tr>
+<tr>
 <td>Dateisystem</td>
 <td>POSIX</td>
-<td>MP3 schreiben, songs.db, Cover-Bilder</td>
+<td>MP3 schreiben, <code>ripper.db</code>, Cover-Bilder</td>
 </tr>
 <tr>
 <td>System-Signals</td>

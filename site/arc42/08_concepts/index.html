@@ -723,6 +723,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#86-rechtliche-hinweise-legal-compliance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.6 Rechtliche Hinweise / Legal Compliance
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -959,6 +970,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#86-rechtliche-hinweise-legal-compliance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.6 Rechtliche Hinweise / Legal Compliance
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -994,16 +1016,17 @@
 <p><code>logging</code> mit strukturierter Formatierung, konfiguriert via <code>infra/logging.py</code>. Log-Level via Config oder <code>--log-level</code> CLI-Override.</p>
 <h2 id="83-konfiguration">8.3 Konfiguration<a class="headerlink" href="#83-konfiguration" title="Permanent link">&para;</a></h2>
 <p>Pydantic-v2-Modelle mit Validierung:
-- <code>Settings</code> (Top-Level): <code>output_dir</code>, <code>database_path</code>, <code>enrich_metadata</code>, <code>embed_cover_art</code>, ...
+- <code>Settings</code> (Top-Level): <code>destination</code>, <code>database</code>, <code>work_dir</code>, <code>enrich_metadata</code>, <code>embed_cover_art</code>, <code>acoustid_api_key</code>, <code>discovery_enabled</code>, ...
 - <code>StreamConfig</code>: <code>name</code>, <code>url</code>, <code>output_dir</code>, ...
-- Defaults via <code>config.json</code>, uberschreibbar via CLI-Args.</p>
+- Defaults via <code>config.json</code>, uberschreibbar via CLI-Args.
+- <code>work_dir</code> (Default: <code>./work</code>) bundelt Datenbank (<code>work/ripper.db</code>), Cache (<code>work/cache</code>) und Logs (<code>work/radio_ripper.log</code>).</p>
 <h2 id="84-testing">8.4 Testing<a class="headerlink" href="#84-testing" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Pytest mit pytest-asyncio fur async Code</li>
+<li>273 Pytests mit pytest-asyncio fur async Code</li>
 <li><code>asyncio_mode = "auto"</code></li>
 <li>HTTP-Mocking via respx</li>
 <li>Stream-Tests mit Fake <code>AsyncHttpClient</code>, kein Real I/O</li>
-<li>Coverage-Gate: 80%</li>
+<li>Coverage-Gate: 70%</li>
 </ul>
 <h2 id="85-cicd">8.5 CI/CD<a class="headerlink" href="#85-cicd" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1013,6 +1036,9 @@
 <li>test: pytest --cov auf Python 3.11-3.13</li>
 <li>GitHub Pages: mkdocs-gerenderte arc42-Dokumentation</li>
 </ul>
+<h2 id="86-rechtliche-hinweise-legal-compliance">8.6 Rechtliche Hinweise / Legal Compliance<a class="headerlink" href="#86-rechtliche-hinweise-legal-compliance" title="Permanent link">&para;</a></h2>
+<p><strong>DE:</strong> Radio-Ripper ist ein Werkzeug zur privaten, nicht-kommerziellen Aufnahme öffentlich zugänglicher Internet-Radiostreams. Die Software selbst enthält keine DRM-Umgehung, keine Authentifizierung an geschützten Diensten und keine Funktion zum Teilen oder Veröffentlichen von Mitschnitten. Jegliche Nutzung, die gegen geltendes Urheberrecht oder Nutzungsbedingungen Dritter verstösst, liegt in der alleinigen Verantwortung des Nutzers.</p>
+<p><strong>EN:</strong> Radio-Ripper is a tool for private, non-commercial recording of publicly available internet radio streams. The software itself does not circumvent DRM, does not authenticate against protected services, and provides no functionality to share or publish recordings. Any use that violates applicable copyright laws or third-party terms of service is the sole responsibility of the user.</p>
 
 
 

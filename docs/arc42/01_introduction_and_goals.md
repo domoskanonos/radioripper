@@ -2,7 +2,7 @@
 
 ## 1.1 Aufgabenbeschreibung
 
-Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadaten-Streams **parallel und dauerhaft** im Hintergrund aufzeichnet. Er trennt Lieder automatisch anhand der `StreamTitle`-Wechsel, vermeidet Duplikate über eine lokale SQLite-Datenbank, taggt die MP3-Dateien mit ID3v2 und reichert Metadaten optional über die iTunes Search API an (inklusive Cover-Art).
+Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadaten-Streams **parallel und dauerhaft** im Hintergrund aufzeichnet. Er trennt Lieder automatisch anhand der `StreamTitle`-Wechsel, vermeidet Duplikate über eine lokale SQLite-Datenbank, taggt die MP3-Dateien mit ID3v2, reichert Metadaten optional über die iTunes Search API und CoverArtArchive an (inklusive Cover-Art) und identifiziert Songs per AcoustID-Fingerprinting.
 
 ## 1.2 Qualitätsziele
 

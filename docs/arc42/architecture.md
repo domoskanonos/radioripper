@@ -1,12 +1,12 @@
 # Radio-Ripper — Architektur-Dokumentation (arc42)
 
-> Version 2.0 · Stand 2026-07-17 · Status: implementiert
+> Version 2.0 · Stand 2026-07-24 · Status: implementiert
 
 ## 1. Einführung und Ziele
 
 ### 1.1 Aufgabenbeschreibung
 
-Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadaten-Streams **parallel und dauerhaft** im Hintergrund aufzeichnet. Er trennt Lieder automatisch anhand der `StreamTitle`-Wechsel, vermeidet Duplikate über eine lokale SQLite-Datenbank, taggt die MP3-Dateien mit ID3v2 und reichert Metadaten optional über die iTunes Search API an (inklusive Cover-Art).
+Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadaten-Streams **parallel und dauerhaft** im Hintergrund aufzeichnet. Er trennt Lieder automatisch anhand der `StreamTitle`-Wechsel, vermeidet Duplikate über eine lokale SQLite-Datenbank, taggt die MP3-Dateien mit ID3v2, reichert Metadaten optional über die iTunes Search API an (inklusive Cover-Art) und identifiziert Songs per **AcoustID-Fingerprinting** gegen die MusicBrainz-Datenbank.
 
 ### 1.2 Qualitätsziele
 
@@ -23,7 +23,7 @@ Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadate
 | Rolle | Interesse |
 |---|---|
 | Endbenutzer | Einfacher Start (`run.sh`), keine Duplikate, getaggte MP3s |
-| Entwickler | Klares Layout, 151 Tests, mypy clean, CI-Grün |
+| Entwickler | Klares Layout, 273 Tests, mypy clean, CI-Grün |
 | Operator | Docker, Health-Check, Graceful Shutdown, PID-Datei |
 
 ---
@@ -48,8 +48,9 @@ Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadate
 ```
                           ┌──────────────┐
                           │   Internet    │
-                          │   Webradio    │
-                          │   (.m3u/.pls) │
+                          │  Webradio +   │
+                          │ Playlists     │
+                          │ (.m3u/.pls)   │
                           └──────┬───────┘
                                  │ HTTP/ICY
                                  ▼
@@ -59,20 +60,30 @@ Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadate
 │  ┌─────────┐  ┌───────────┐  ┌────────────┐  │
 │  │ Playlist │  │  Stream   │  │ Metadata   │  │
 │  │ Resolver │──│  Recorder │──│ Provider   │  │
-│  │         │  │ (per Stream)│ │ (iTunes)   │  │
+│  │  (+ Disc)│  │ (per Stream)│ │(iTunes+CAA)│  │
 │  └─────────┘  └─────┬─────┘  └────────────┘  │
-│                      │                        │
-│              ┌───────┼───────┐                │
-│              ▼       ▼       ▼                │
-│         TrackWriter │ TrackTagger             │
-│         TrackRepo   │                         │
-│              │       │                        │
-│              ▼       ▼                        │
-│         ┌─────────────────┐                   │
-│         │  Dateisystem     │                   │
-│         │  MP3 + songs.db  │                   │
-│         └─────────────────┘                   │
-└─────────────────────────────────────────────┘
+│                     │         ┌────────────┐  │
+│                     │         │Fingerprint │  │
+│                     │         │(AcoustID)  │  │
+│                     │         └────────────┘  │
+│             ┌───────┼───────┐                 │
+│             ▼       ▼       ▼                 │
+│        TrackWriter │ TrackTagger              │
+│        TrackRepo   │                          │
+│             │       │                         │
+│             ▼       ▼                         │
+│        ┌─────────────────┐                    │
+│        │  Dateisystem     │                    │
+│        │  MP3 + ripper.db │                    │
+│        └─────────────────┘                    │
+└────────────────────────────────────────────┘
+        │              ▲
+        │ HTTP REST    │ Gradio Web GUI
+        ▼              │ (optional)
+   ┌──────────┐        │
+   │ API Layer│────────┘
+   │ (4 APIs) │
+   └──────────┘
 ```
 
 ### 3.2 Externe Schnittstellen
@@ -81,8 +92,11 @@ Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadate
 |---|---|---|
 | Webradio-Stream | HTTP/ICY | Audiostream + Metadaten (icy-metaint) |
 | Playlist (.m3u/.pls) | HTTP | Stream-URL-Auflösung |
-| iTunes Search API | HTTPS | Metadata anreichern (Artist, Album, Cover) |
-| Dateisystem | POSIX | MP3 schreiben, songs.db, Cover-Bilder |
+| iTunes Search API | HTTPS | Metadaten anreichern (Artist, Album, Cover) |
+| AcoustID API | HTTPS | Audio-Fingerprinting + MusicBrainZ-Abfrage |
+| Cover Art Archive | HTTPS | Fallback-Cover-Quelle (MusicBrainz) |
+| Gradio Web GUI (lokal) | HTTP | Bedienoberfläche im Browser |
+| Dateisystem | POSIX | MP3 schreiben, `ripper.db`, Cover-Bilder |
 | System-Signals | SIGINT, SIGTERM | Graceful Shutdown |
 
 ---
@@ -93,17 +107,19 @@ Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadate
 
 ```
 ┌───────────────────────────────────────────────┐
-│                  CLI / App                     │  ← Entry-Point
+│                  CLI / API / GUI               │  ← Entry-Points
 ├───────────────────────────────────────────────┤
 │              Services-Layer                    │
 │  StreamRecorder · IcyParser · TrackWriter      │  ← Business-Logic
 │  TrackTagger · TrackRepository · Metadata      │
+│  FingerprintProvider · PlaylistDiscovery       │
 ├───────────────────────────────────────────────┤
 │               Infra-Layer                      │
 │  AsyncHttpClient · Config · Logging · Errors   │  ← Technical
 ├───────────────────────────────────────────────┤
 │               Domain-Layer                     │
-│  TrackInfo · SavedTrack · EnrichedInfo         │  ← Pure Models
+│  TrackInfo · SavedTrack · EnrichedInfo        │  ← Pure Models
+│  FingerprintResult                             │
 └───────────────────────────────────────────────┘
 ```
 
@@ -111,7 +127,7 @@ Radio-Ripper ist ein produktionsreifer Webradio-Ripper, der mehrere ICY-Metadate
 
 | # | Entscheidung | Begründung | ADR |
 |---|---|---|---|
-| 1 | Async/await statt threading | I/O-bound, leichtere Fehlerbehandlung | [ADR-0001](adrs/0001-async-await-l threading.md) |
+| 1 | Async/await statt threading | I/O-bound, leichtere Fehlerbehandlung | [ADR-0001](adrs/0001-async-await-vs-threading.md) |
 | 2 | Service-ABCs (Dependenz Injection) | Testbarkeit, Ersetzbarkeit | [ADR-0002](adrs/0002-service-abcs-di.md) |
 | 3 | Pydantic v2 für Config | Validierung, Defaults, Schema | [ADR-0003](adrs/0003-pydantic-v2-config.md) |
 | 4 | Nur komplette Songs speichern | Datenqualität > Quantität | [ADR-0004](adrs/0004-complete-songs-only.md) |
@@ -135,13 +151,15 @@ Siehe Kontextdiagramm (Section 3.1).
 | `infra/errors.py` | Infra | Exception-Hierarchie |
 | `infra/logging.py` | Infra | Log-Konfiguration |
 | `infra/resilience.py` | Infra | Retry/Backoff-Helper |
-| `domain/models.py` | Domain | `TrackInfo`, `SavedTrack`, `EnrichedInfo` |
+| `domain/models.py` | Domain | `TrackInfo`, `SavedTrack`, `EnrichedInfo`, `FingerprintResult` |
 | `services/icy.py` | Service | `IcyParser` State-Machine (pure) |
 | `services/playlist.py` | Service | `.m3u`/`.pls` Resolver |
+| `services/playlist_discovery.py` | Service | Radio-station discovery & station management |
 | `services/storage.py` | Service | `TrackWriter` (temp file → atomic rename) |
 | `services/tagging.py` | Service | `TrackTagger` ABC, `ID3Tagger` (mutagen) |
 | `services/repository.py` | Service | `TrackRepository` ABC, `SQLiteTrackRepository` |
 | `services/metadata.py` | Service | `MetadataProvider` ABC, `ITunesMetadataProvider` |
+| `services/fingerprint.py` | Service | `FingerprintProvider` ABC, `AcoustidFingerprintProvider` |
 | `services/stream.py` | Service | `StreamRecorder` (Orchestrierungs-Coroutine) |
 | `api/config_api.py` | API | `ConfigApi`: Config laden/speichern/editieren |
 | `api/station_api.py` | API | `StationApi`: Stationen CRUD |
@@ -163,8 +181,14 @@ Siehe Kontextdiagramm (Section 3.1).
 │                     ▼                              ▼          │
 │               ┌──────────┐                ┌──────────────┐     │
 │               │ TrackRepo│                │ MetadataProv.│     │
-│               │ (dedup)  │←───────exists──│ (iTunes)     │     │
+│               │ (dedup)  │←───────exists──│ (iTunes+CAA) │     │
 │               └──────────┘                └──────────────┘     │
+│                     │                                           │
+│                     ▼                                           │
+│               ┌──────────┐                                     │
+│               │Fingerpr. │  ← AcoustID / MusicBrainz            │
+│               │(async)   │  (reprocess-untested flow)           │
+│               └──────────┘                                     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -176,21 +200,22 @@ Siehe Kontextdiagramm (Section 3.1).
 
 Siehe: `diagrams/sequence-recording.puml`
 
-1. `StreamRecorder._run_forever()` → `_run_once()()`
+1. `StreamRecorder._run_forever()` → `_run_once()`
 2. HTTP-Verbindung zum Stream-URL (via `HttpxAsyncClient`)
 3. `IcyParser` konsumiert Bytes → emittiert `AudioChunk` + `TitleChanged`
 4. Bei `TitleChanged`: alter Song wird abgeschlossen (TrackWriter.commit → atomic rename)
 5. `TrackRepository.exists()` prüft Duplikat
 6. Falls neu: `TrackTagger.tag()` schreibt ID3v2
 7. `TrackRepository.register()` trägt in SQLite ein
-8. Optional async: `MetadataProvider.enrich()` (nicht-blockierend)
+8. Optional async: `MetadataProvider.enrich()` (iTunes + CoverArtArchive, nicht-blockierend)
+9. Optional async: `FingerprintProvider.fingerprint()` (AcoustID, nicht-blockierend)
 
 ### 6.2 Reconnect mit Backoff
 
 ```
-  Fehler → delay = initial_reconnect_delay
+  Fehler → delay = reconnect_base_delay (1s)
      └─→ sleep(delay, cancellable via stop_event)
-         └─→ delay = min(delay * 2, reconnect_max_delay) → retry
+         └─→ delay = min(delay * 2, reconnect_max_delay=60s) → retry
 ```
 
 ### 6.3 Graceful Shutdown
@@ -211,7 +236,7 @@ Siehe: `diagrams/sequence-recording.puml`
 | Modus | Beschreibung |
 |---|---|
 | **Lokal** | `./run.sh` startet `uv run radio-ripper` als Vordergrund-Prozess |
-| **Docker** | `docker run` mit gemountetem `config.json`, `recordings/`, `songs.db` |
+| **Docker** | `docker compose up` mit gemountetem `./config:/app/config:ro` und `./work:/app/work` |
 
 Siehe: `diagrams/deployment.puml`
 
@@ -236,18 +261,19 @@ Jede Exception ist catch-and-log, niemals silent-fail.
 
 ### 8.2 Logging
 
-`logging` mit strukturierter Formatierung, konfiguriert via `infra/logging.py`. Log-Level via Config oder `--log-level` CLI-Override.
+`logging` mit strukturierter Formatierung, konfiguriert via `infra/logging.py`. Log-Level via Config oder `--log-level` CLI-Override. Log-Datei liegt standardmäßig im `work_dir`.
 
 ### 8.3 Konfiguration
 
 Pydantic-v2-Modelle mit Validierung:
-- `Settings` (Top-Level): `output_dir`, `database_path`, `enrich_metadata`, `embed_cover_art`, ...
-- `StreamConfig`: `name`, `url`, `output_dir`, ...
+- `Settings` (Top-Level): `destination`, `database`, `work_dir`, `enrich_metadata`, `embed_cover_art`, `acoustid_api_key`, `discovery_enabled`, …
+- `StreamConfig`: `name`, `url`, `output_dir`, …
 - Defaults via `config.json`, überschreibbar via CLI-Args.
+- `work_dir` (Default: `./work`) bündelt Datenbank (`work/ripper.db`), Cache (`work/cache`) und Logs (`work/radio_ripper.log`).
 
 ### 8.4 Testing
 
-- 151 Pytests, 85% Coverage (Gate: 70%)
+- 273 Pytests, 77% Coverage (Gate: 70%)
 - `asyncio_mode = "auto"`, Fake-HTTP via `respx`
 - Stream-Tests mit Fake `AsyncHttpClient`, kein Real I/O
 
@@ -259,7 +285,7 @@ Siehe: [ADRs](adrs/)
 
 | ADR | Titel | Status |
 |---|---|---|
-| [0001](adrs/0001-async-await-l threading.md) | Async/await statt threading | Angenommen |
+| [0001](adrs/0001-async-await-vs-threading.md) | Async/await statt threading | Angenommen |
 | [0002](adrs/0002-service-abcs-di.md) | Service-ABCs für Dependenz Injection | Angenommen |
 | [0003](adrs/0003-pydantic-v2-config.md) | Pydantic v2 für Config-Validierung | Angenommen |
 | [0004](adrs/0004-complete-songs-only.md) | Nur komplette Songs speichern | Angenommen |
@@ -270,8 +296,8 @@ Siehe: [ADRs](adrs/)
 
 | Qualitätsmerkmal | Anforderung | Verifikation |
 |---|---|---|
-| Wartbarkeit | Module < 250 LOC, max 1 Veranwortung | Code-Review |
-| Testbarkeit | 151 Tests, Coverage ≥ 70% | `pytest --cov` |
+| Wartbarkeit | Module < 250 LOC, max 1 Verantwortung | Code-Review |
+| Testbarkeit | 273 Tests, Coverage ≥ 70% | `pytest --cov` |
 | Typsicherheit | mypy strict, 0 errors | `uv run mypy` |
 | Lint | ruff clean, 0 errors | `uv run ruff check` |
 | Datenintegrität | Keine partiellen Songs, keine Dupes | Integrationstest |
@@ -287,6 +313,7 @@ Siehe: [ADRs](adrs/)
 | 2 | Stream sendet keine ICY-Metadaten | Detektion, Logs, Stream wird übersprungen |
 | 3 | SQLite als Single-Writer | asyncio.Lock + to_thread |
 | 4 | Mutagen hat keine Type-Stubs | `# mypy: disable-error-code` in tagging.py |
+| 5 | AcoustID-API-Key erforderlich | Validiert beim Start, Fehlermeldung mit Konfigurationsanleitung |
 
 ---
 
@@ -300,4 +327,7 @@ Siehe: [ADRs](adrs/)
 | m3u/pls | Playlist-Formate, Stream-URLs enthaltend |
 | ID3v2 | Tagging-Standard für MP3-Dateien |
 | WAL | SQLite Write-Ahead-Logging für non-blocking reads |
+| AcoustID | Audio-Fingerprinting-Dienst zur Song-Identifikation |
+| CoverArtArchive (CAA) | MusicBrainz-Cover-Art-Quelle |
+| work_dir | Zentrale Arbeitsverzeichnis (DB, Cache, Logs) |
 | Graceful Shutdown | Sauberes Beenden: in-flight Songs verwerfen, DB schließen |

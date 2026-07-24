@@ -15,13 +15,15 @@ Siehe Kontextdiagramm (Abschnitt 3).
 | `infra/errors.py` | Infra | Exception-Hierarchie |
 | `infra/logging.py` | Infra | Log-Konfiguration |
 | `infra/resilience.py` | Infra | Retry/Backoff-Helper |
-| `domain/models.py` | Domain | `TrackInfo`, `SavedTrack`, `EnrichedInfo` |
+| `domain/models.py` | Domain | `TrackInfo`, `SavedTrack`, `EnrichedInfo`, `FingerprintResult` |
 | `services/icy.py` | Service | `IcyParser` State-Machine (pure) |
 | `services/playlist.py` | Service | `.m3u`/`.pls` Resolver |
+| `services/playlist_discovery.py` | Service | Radio-Station-Discovery & Station-Management |
 | `services/storage.py` | Service | `TrackWriter` (temp file -> atomic rename) |
 | `services/tagging.py` | Service | `TrackTagger` ABC, `ID3Tagger` (mutagen) |
 | `services/repository.py` | Service | `TrackRepository` ABC, `SQLiteTrackRepository` |
 | `services/metadata.py` | Service | `MetadataProvider` ABC, `ITunesMetadataProvider` |
+| `services/fingerprint.py` | Service | `FingerprintProvider` ABC, `AcoustidFingerprintProvider` |
 | `services/stream.py` | Service | `StreamRecorder` (Orchestrierungs-Coroutine) |
 | `api/config_api.py` | API | `ConfigApi`: Config laden/speichern/editieren |
 | `api/station_api.py` | API | `StationApi`: Stationen CRUD |
@@ -32,18 +34,24 @@ Siehe Kontextdiagramm (Abschnitt 3).
 ## 5.3 Level 3: StreamRecorder (Schlusselkomponente)
 
 ```
-+--------------------------------------------------------------+
-|                   StreamRecorder (per Station)                |
-|                                                                |
-|  +---------+   +----------+   +----------+   +-----------+    |
-|  | http.get |-->| IcyParser|-->|TrackWriter|-->|TrackTagger|    |
-|  | _stream()|   | State-M. |   | (temp->mp3)|   | (ID3v2)   |    |
-|  +---------+   +----------+   +----------+   +-----------+    |
-|                     |                              |          |
-|                     v                              v          |
-|               +----------+                +--------------+     |
-|               | TrackRepo|                | MetadataProv.|     |
-|               | (dedup)  |<-------exists--| (iTunes)     |     |
-|               +----------+                +--------------+     |
-+--------------------------------------------------------------+
++------------------------------------------------------------------+
+|                   StreamRecorder (per Station)                    |
+|                                                                    |
+|  +---------+   +----------+   +----------+   +-----------+        |
+|  | http.get |-->| IcyParser|-->|TrackWriter|-->|TrackTagger|        |
+|  | _stream()|   | State-M. |   | (temp->mp3)|   | (ID3v2)   |        |
+|  +---------+   +----------+   +----------+   +-----------+        |
+|                     |                              |              |
+|                     v                              v              |
+|               +----------+                +--------------+         |
+|               | TrackRepo|                | MetadataProv.|         |
+|               | (dedup)  |<-------exists--| (iTunes+CAA) |         |
+|               +----------+                +--------------+         |
+|                     |                                               |
+|                     v                                               |
+|               +----------+                                         |
+|               |Fingerpr. |  -> AcoustID / MusicBrainz               |
+|               |(async)   |  (reprocess-untested flow)               |
+|               +----------+                                         |
++------------------------------------------------------------------+
 ```

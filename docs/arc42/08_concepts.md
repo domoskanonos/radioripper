@@ -22,17 +22,18 @@ Jede Exception ist catch-and-log, niemals silent-fail.
 ## 8.3 Konfiguration
 
 Pydantic-v2-Modelle mit Validierung:
-- `Settings` (Top-Level): `output_dir`, `database_path`, `enrich_metadata`, `embed_cover_art`, ...
+- `Settings` (Top-Level): `destination`, `database`, `work_dir`, `enrich_metadata`, `embed_cover_art`, `acoustid_api_key`, `discovery_enabled`, ...
 - `StreamConfig`: `name`, `url`, `output_dir`, ...
 - Defaults via `config.json`, uberschreibbar via CLI-Args.
+- `work_dir` (Default: `./work`) bundelt Datenbank (`work/ripper.db`), Cache (`work/cache`) und Logs (`work/radio_ripper.log`).
 
 ## 8.4 Testing
 
-- Pytest mit pytest-asyncio fur async Code
+- 273 Pytests mit pytest-asyncio fur async Code
 - `asyncio_mode = "auto"`
 - HTTP-Mocking via respx
 - Stream-Tests mit Fake `AsyncHttpClient`, kein Real I/O
-- Coverage-Gate: 80%
+- Coverage-Gate: 70%
 
 ## 8.5 CI/CD
 

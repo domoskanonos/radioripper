@@ -946,12 +946,13 @@
 <li><code>TrackRepository.exists()</code> pruft Duplikat</li>
 <li>Falls neu: <code>TrackTagger.tag()</code> schreibt ID3v2</li>
 <li><code>TrackRepository.register()</code> tragt in SQLite ein</li>
-<li>Optional async: <code>MetadataProvider.enrich()</code> (nicht-blockierend)</li>
+<li>Optional async: <code>MetadataProvider.enrich()</code> (iTunes + CoverArtArchive, nicht-blockierend)</li>
+<li>Optional async: <code>FingerprintProvider.fingerprint()</code> (AcoustID, nicht-blockierend)</li>
 </ol>
 <h2 id="62-reconnect-mit-backoff">6.2 Reconnect mit Backoff<a class="headerlink" href="#62-reconnect-mit-backoff" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>  Fehler -&gt; delay = initial_reconnect_delay
+<div class="highlight"><pre><span></span><code>  Fehler -&gt; delay = reconnect_base_delay (1s)
      +--&gt; sleep(delay, cancellable via stop_event)
-         +--&gt; delay = min(delay * 2, reconnect_max_delay) -&gt; retry
+         +--&gt; delay = min(delay * 2, reconnect_max_delay=60s) -&gt; retry
 </code></pre></div>
 <h2 id="63-graceful-shutdown">6.3 Graceful Shutdown<a class="headerlink" href="#63-graceful-shutdown" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>  SIGINT/SIGTERM -&gt; stop_event.set()

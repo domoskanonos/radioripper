@@ -5,8 +5,9 @@
 ```
                           ┌──────────────┐
                           │   Internet    │
-                          │   Webradio    │
-                          │   (.m3u/.pls) │
+                          │  Webradio +   │
+                          │ Playlists     │
+                          │ (.m3u/.pls)   │
                           └──────┬───────┘
                                  │ HTTP/ICY
                                  ▼
@@ -16,19 +17,22 @@
 │  ┌─────────┐  ┌───────────┐  ┌────────────┐  │
 │  │ Playlist │  │  Stream   │  │ Metadata   │  │
 │  │ Resolver │──│  Recorder │──│ Provider   │  │
-│  │         │  │ (per Stream)│ │ (iTunes)   │  │
+│  │  (+ Disc)│  │ (per Stream)│ │(iTunes+CAA)│  │
 │  └─────────┘  └─────┬─────┘  └────────────┘  │
-│                      │                        │
-│              ┌───────┼───────┐                │
-│              ▼       ▼       ▼                │
-│         TrackWriter │ TrackTagger             │
-│         TrackRepo   │                         │
-│              │       │                        │
-│              ▼       ▼                        │
-│         ┌─────────────────┐                   │
-│         │  Dateisystem     │                   │
-│         │  MP3 + songs.db  │                   │
-│         └─────────────────┘                   │
+│                     │         ┌────────────┐  │
+│                     │         │Fingerprint │  │
+│                     │         │(AcoustID)  │  │
+│                     │         └────────────┘  │
+│             ┌───────┼───────┐                 │
+│             ▼       ▼       ▼                 │
+│        TrackWriter │ TrackTagger              │
+│        TrackRepo   │                          │
+│             │       │                         │
+│             ▼       ▼                         │
+│        ┌─────────────────┐                    │
+│        │  Dateisystem     │                    │
+│        │  MP3 + ripper.db │                    │
+│        └─────────────────┘                    │
 └─────────────────────────────────────────────┘
 ```
 
@@ -39,5 +43,7 @@
 | Webradio-Stream | HTTP/ICY | Audiostream + Metadaten (icy-metaint) |
 | Playlist (.m3u/.pls) | HTTP | Stream-URL-Auflösung |
 | iTunes Search API | HTTPS | Metadaten anreichern (Artist, Album, Cover) |
-| Dateisystem | POSIX | MP3 schreiben, songs.db, Cover-Bilder |
+| AcoustID API | HTTPS | Audio-Fingerprinting + MusicBrainz-Abfrage |
+| Cover Art Archive (CAA) | HTTPS | Fallback-Cover-Quelle (MusicBrainz) |
+| Dateisystem | POSIX | MP3 schreiben, `ripper.db`, Cover-Bilder |
 | System-Signals | SIGINT, SIGTERM | Graceful Shutdown |

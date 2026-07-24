@@ -5,6 +5,6 @@
 | Modus | Beschreibung |
 |---|---|
 | **Lokal** | `./run.sh` startet `uv run radio-ripper` als Vordergrund-Prozess |
-| **Docker** | `docker run` mit gemountetem `config.json`, `recordings/`, `songs.db` |
+| **Docker** | `docker compose up` mit gemountetem `./config:/app/config:ro` und `./work:/app/work` |
 
 Siehe: `../diagrams/deployment.puml`

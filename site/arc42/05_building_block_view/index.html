@@ -986,7 +986,7 @@
 <tr>
 <td><code>domain/models.py</code></td>
 <td>Domain</td>
-<td><code>TrackInfo</code>, <code>SavedTrack</code>, <code>EnrichedInfo</code></td>
+<td><code>TrackInfo</code>, <code>SavedTrack</code>, <code>EnrichedInfo</code>, <code>FingerprintResult</code></td>
 </tr>
 <tr>
 <td><code>services/icy.py</code></td>
@@ -997,6 +997,11 @@
 <td><code>services/playlist.py</code></td>
 <td>Service</td>
 <td><code>.m3u</code>/<code>.pls</code> Resolver</td>
+</tr>
+<tr>
+<td><code>services/playlist_discovery.py</code></td>
+<td>Service</td>
+<td>Radio-Station-Discovery &amp; Station-Management</td>
 </tr>
 <tr>
 <td><code>services/storage.py</code></td>
@@ -1017,6 +1022,11 @@
 <td><code>services/metadata.py</code></td>
 <td>Service</td>
 <td><code>MetadataProvider</code> ABC, <code>ITunesMetadataProvider</code></td>
+</tr>
+<tr>
+<td><code>services/fingerprint.py</code></td>
+<td>Service</td>
+<td><code>FingerprintProvider</code> ABC, <code>AcoustidFingerprintProvider</code></td>
 </tr>
 <tr>
 <td><code>services/stream.py</code></td>
@@ -1051,20 +1061,26 @@
 </tbody>
 </table>
 <h2 id="53-level-3-streamrecorder-schlusselkomponente">5.3 Level 3: StreamRecorder (Schlusselkomponente)<a class="headerlink" href="#53-level-3-streamrecorder-schlusselkomponente" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>+--------------------------------------------------------------+
-|                   StreamRecorder (per Station)                |
-|                                                                |
-|  +---------+   +----------+   +----------+   +-----------+    |
-|  | http.get |--&gt;| IcyParser|--&gt;|TrackWriter|--&gt;|TrackTagger|    |
-|  | _stream()|   | State-M. |   | (temp-&gt;mp3)|   | (ID3v2)   |    |
-|  +---------+   +----------+   +----------+   +-----------+    |
-|                     |                              |          |
-|                     v                              v          |
-|               +----------+                +--------------+     |
-|               | TrackRepo|                | MetadataProv.|     |
-|               | (dedup)  |&lt;-------exists--| (iTunes)     |     |
-|               +----------+                +--------------+     |
-+--------------------------------------------------------------+
+<div class="highlight"><pre><span></span><code>+------------------------------------------------------------------+
+|                   StreamRecorder (per Station)                    |
+|                                                                    |
+|  +---------+   +----------+   +----------+   +-----------+        |
+|  | http.get |--&gt;| IcyParser|--&gt;|TrackWriter|--&gt;|TrackTagger|        |
+|  | _stream()|   | State-M. |   | (temp-&gt;mp3)|   | (ID3v2)   |        |
+|  +---------+   +----------+   +----------+   +-----------+        |
+|                     |                              |              |
+|                     v                              v              |
+|               +----------+                +--------------+         |
+|               | TrackRepo|                | MetadataProv.|         |
+|               | (dedup)  |&lt;-------exists--| (iTunes+CAA) |         |
+|               +----------+                +--------------+         |
+|                     |                                               |
+|                     v                                               |
+|               +----------+                                         |
+|               |Fingerpr. |  -&gt; AcoustID / MusicBrainz               |
+|               |(async)   |  (reprocess-untested flow)               |
+|               +----------+                                         |
++------------------------------------------------------------------+
 </code></pre></div>
 
 

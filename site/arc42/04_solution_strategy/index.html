@@ -916,17 +916,19 @@
 <h1 id="4-losungsstrategie">4. Lösungsstrategie<a class="headerlink" href="#4-losungsstrategie" title="Permanent link">&para;</a></h1>
 <h2 id="41-architekturstil-hexagonal-layered">4.1 Architekturstil: Hexagonal / Layered<a class="headerlink" href="#41-architekturstil-hexagonal-layered" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>┌───────────────────────────────────────────────┐
-│                  CLI / App                     │  &lt;- Entry-Point
+│                  CLI / API / GUI               │  &lt;- Entry-Points
 ├───────────────────────────────────────────────┤
 │              Services-Layer                    │
 │  StreamRecorder . IcyParser . TrackWriter      │  &lt;- Business-Logic
 │  TrackTagger . TrackRepository . Metadata      │
+│  FingerprintProvider . PlaylistDiscovery       │
 ├───────────────────────────────────────────────┤
 │               Infra-Layer                      │
 │  AsyncHttpClient . Config . Logging . Errors   │  &lt;- Technical
 ├───────────────────────────────────────────────┤
 │               Domain-Layer                     │
 │  TrackInfo . SavedTrack . EnrichedInfo         │  &lt;- Pure Models
+│  FingerprintResult                             │
 └───────────────────────────────────────────────┘
 </code></pre></div>
 <h2 id="42-schlusselentscheidungen">4.2 Schlüsselentscheidungen<a class="headerlink" href="#42-schlusselentscheidungen" title="Permanent link">&para;</a></h2>
