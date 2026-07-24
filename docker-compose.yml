@@ -9,3 +9,9 @@ services:
       - ./recordings:/app/recordings
     stop_signal: SIGTERM
     stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'radio-ripper' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

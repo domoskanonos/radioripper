@@ -113,11 +113,11 @@ class RadioRipperApp:
             from dotenv import load_dotenv
 
             load_dotenv()
-        api_key = os.environ.get("ACCOUST_ID", "")
+        api_key = os.environ.get("ACOUSTID_API_KEY") or os.environ.get("ACCOUST_ID", "")
         if not api_key:
             raise ConfigurationError(
                 "AcoustID API-Key required. "
-                "Set ACCOUST_ID env var (docker: -e ACCOUST_ID=your_key) "
+                "Set ACOUSTID_API_KEY env var (docker: -e ACOUSTID_API_KEY=your_key) "
                 "in a .env file or as environment variable."
             )
         os.environ.setdefault("ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup")
@@ -179,6 +179,23 @@ class RadioRipperApp:
             if record is None:
                 self.logger.warning("No DB entry for %s — skipping", mp3)
                 continue
+
+            if (
+                record.track.acoustid_recording_id
+                and record.track.album
+                and record.track.enrichment == "itunes"
+            ):
+                expected = compute_file_path(
+                    self.settings.destination,
+                    record.track.artist,
+                    record.track.title,
+                    record.track.stream_title,
+                    album=record.track.album,
+                    overwrite=True,
+                )
+                if mp3 == expected:
+                    self.logger.debug("Skipping %s — already fully processed", mp3)
+                    continue
 
             # Fetch enrichment only when album/year/enrichment is incomplete
             info = None
@@ -298,6 +315,8 @@ class RadioRipperApp:
                 )
 
             count += 1
+            if count % 500 == 0:
+                self.logger.info("Reprocess-all: %d files processed so far…", count)
         self.logger.info("Reprocess-all: %d files processed.", count)
         if self._config_path:
             try:
@@ -436,12 +455,22 @@ class RadioRipperApp:
 
     async def _validate_acoustid_key(self) -> None:
         """Check the AcoustID API key with a minimal test request.
+        Caches a successful validation in ``work_dir / "acoustid_key.ok"``
+        for 24 hours so subsequent restarts skip the API call.
         Raises :class:`ConfigurationError` when the key is rejected.
         """
+        cache_file = self.settings.work_dir / "acoustid_key.ok"
+        if cache_file.is_file():
+            age = time.time() - cache_file.stat().st_mtime
+            if age < 86400:
+                self.logger.debug("AcoustID key validation cache is fresh (%.0fh).", age / 3600)
+                return
+            cache_file.unlink(missing_ok=True)
+
         api_url = os.environ.get(
             "ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup"
         )
-        api_key = os.environ.get("ACCOUST_ID", "")
+        api_key = os.environ.get("ACOUSTID_API_KEY") or os.environ.get("ACCOUST_ID", "")
         params = urllib.parse.urlencode({
             "client": api_key,
             "format": "json",
@@ -459,13 +488,15 @@ class RadioRipperApp:
                     if "Invalid API key" in err or "invalid key" in err.lower():
                         raise ConfigurationError(
                             f"AcoustID API key rejected: {err}. "
-                            "Set a valid ACCOUST_ID in your .env file."
+                            "Set a valid ACOUSTID_API_KEY in your .env file."
                         )
                     self.logger.debug(
                         "AcoustID test fingerprint not accepted (key seems valid): %s", err
                     )
                 else:
                     self.logger.info("AcoustID API key validated successfully.")
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(str(time.time()), encoding="utf-8")
         except ConfigurationError:
             raise
         except Exception as exc:
