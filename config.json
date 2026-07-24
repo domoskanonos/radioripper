@@ -25,7 +25,6 @@
   "discovery_min_bitrate": 0,
   "discovery_update_interval_days": 7,
   "reprobe_on_start": true,
-  "acoustid_api_key": "",
   "acoustid_min_score": 0.85,
   "discard_unmatched": true,
   "min_popularity_rank": 100000

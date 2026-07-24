@@ -79,8 +79,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run_async(settings: Settings, logger: logging.Logger) -> int:
-    app = RadioRipperApp.from_settings(settings, logger=logger)
+async def _run_async(settings: Settings, logger: logging.Logger, config_path: str | None = None) -> int:
+    app = RadioRipperApp.from_settings(settings, logger=logger, config_path=config_path)
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
@@ -133,7 +133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings.enrichment_workers,
     )
     try:
-        return asyncio.run(_run_async(settings, logger))
+        return asyncio.run(_run_async(settings, logger, config_path=cfg_path))
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received - shutting down...")
         return 0

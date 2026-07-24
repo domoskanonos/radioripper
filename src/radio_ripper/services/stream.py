@@ -273,6 +273,23 @@ class StreamRecorder:
                         return
                 track = TrackInfo.from_stream_title(current_title or "")
                 provenance = f"{self.station_name}@{self.playlist_url}"
+
+                # ----- register immediately so a crash never orphans the file -----
+                early_path = final_path
+                try:
+                    await self._repo.register(
+                        SavedTrack(
+                            stream_title=track.stream_title,
+                            artist=track.artist,
+                            title=track.title,
+                            file_path=str(early_path),
+                            file_size=early_path.stat().st_size,
+                        ),
+                        self.station_name,
+                    )
+                except Exception as exc:
+                    self._log.warning("[%s] early db-register: %s", self.station_name, exc)
+
                 try:
                     self._tagger.write_basic(final_path, track, provenance)
                 except Exception as exc:
@@ -293,21 +310,32 @@ class StreamRecorder:
                     remove_empty_parents(final_path, self.settings.destination)
                     final_path = new_path
 
-                saved = SavedTrack(
-                    stream_title=track.stream_title,
-                    artist=info.artist if info and info.artist else track.artist,
-                    title=info.title if info and info.title else track.title,
-                    file_path=str(final_path),
-                    file_size=final_path.stat().st_size,
-                    album=info.album if info else None,
-                    year=info.year if info else None,
-                    has_cover=(info is not None),
-                    enrichment="itunes" if info else None,
-                )
+                # Update DB entry with enrichment data (file was registered early)
                 try:
-                    await self._repo.register(saved, self.station_name)
+                    await self._repo.update_enrichment(
+                        self.station_name,
+                        track.stream_title,
+                        artist=info.artist if info and info.artist else None,
+                        title=info.title if info and info.title else None,
+                        album=info.album if info else None,
+                        year=info.year if info else None,
+                        file_size=final_path.stat().st_size,
+                        has_cover=(info is not None),
+                        enrichment="itunes" if info else "",
+                    )
                 except Exception as exc:
-                    self._log.warning("[%s] db-register: %s", self.station_name, exc)
+                    self._log.warning("[%s] db update enrichment: %s", self.station_name, exc)
+
+                if final_path != early_path:
+                    try:
+                        await self._repo.update_file_path(
+                            self.station_name, track.stream_title, str(final_path)
+                        )
+                    except Exception as exc:
+                        self._log.warning(
+                            "[%s] db update_file_path: %s", self.station_name, exc
+                        )
+
                 self._log.info(
                     "[%s] Completed: %s (%d bytes)",
                     self.station_name,

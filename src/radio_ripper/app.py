@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import shutil
@@ -81,10 +82,15 @@ class RadioRipperApp:
         self.logger = logger or _LOGGER
         self._enrich_sem = asyncio.Semaphore(settings.enrichment_workers)
         self._recorders: list[StreamRecorder] = []
+        self._config_path: str | None = None
 
     @classmethod
     def from_settings(
-        cls, settings: Settings, *, logger: logging.Logger | None = None
+        cls,
+        settings: Settings,
+        *,
+        logger: logging.Logger | None = None,
+        config_path: str | None = None,
     ) -> RadioRipperApp:
         """Construct a fully-wired :class:`RadioRipperApp` from settings."""
         log = logger or _LOGGER
@@ -106,12 +112,12 @@ class RadioRipperApp:
             from dotenv import load_dotenv
 
             load_dotenv()
-        api_key = os.environ.get("ACCOUST_ID", "") or settings.acoustid_api_key
+        api_key = os.environ.get("ACCOUST_ID", "")
         if not api_key:
             raise ConfigurationError(
                 "AcoustID API-Key required. "
                 "Set ACCOUST_ID env var (docker: -e ACCOUST_ID=your_key) "
-                "or acoustid_api_key in config.json."
+                "in a .env file or as environment variable."
             )
         os.environ.setdefault("ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup")
         fp_provider: FingerprintProvider = AcoustidFingerprintProvider(
@@ -129,7 +135,7 @@ class RadioRipperApp:
         popularity_provider: DeezerPopularityChecker | None = (
             DeezerPopularityChecker(client) if settings.min_popularity_rank > 0 else None
         )
-        return cls(
+        app = cls(
             settings=settings,
             client=client,
             repository=repository,
@@ -141,6 +147,8 @@ class RadioRipperApp:
             playlist_resolver=resolver,
             logger=log,
         )
+        app._config_path = config_path
+        return app
 
     def recorders(self) -> Sequence[StreamRecorder]:
         return list(self._recorders)
@@ -290,6 +298,20 @@ class RadioRipperApp:
 
             count += 1
         self.logger.info("Reprocess-all: %d files processed.", count)
+        if self._config_path:
+            try:
+                cfg = json.loads(Path(self._config_path).read_text(encoding="utf-8"))
+                if cfg.get("reprocess_all", False):
+                    cfg["reprocess_all"] = False
+                    Path(self._config_path).write_text(
+                        json.dumps(cfg, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.logger.info(
+                        "Reprocess-all completed — reset reprocess_all flag in config."
+                    )
+            except Exception as exc:
+                self.logger.warning("Failed to reset reprocess_all flag: %s", exc)
 
     async def reprocess_untested(self) -> None:
         """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
@@ -379,9 +401,12 @@ class RadioRipperApp:
         self.logger.info("Untested reprocess complete (%d files).", len(records))
 
     async def _cleanup_orphans(self) -> None:
-        """Remove DB records whose ``file_path`` no longer exists on disk."""
+        """Remove DB records whose ``file_path`` no longer exists on disk.
+        Also removes ``.untested.mp3`` files that have no matching DB record.
+        """
+        all_records = await self.repository.list_all()
         count = 0
-        for rec in await self.repository.list_all():
+        for rec in all_records:
             if not Path(rec.track.file_path).is_file():
                 with contextlib.suppress(Exception):
                     await self.repository.remove(rec.station_name, rec.track.stream_title)
@@ -390,9 +415,22 @@ class RadioRipperApp:
                     rec.track.file_path,
                 )
                 count += 1
+        untested_orphans = 0
+        if self.settings.destination is not None:
+            all_db_paths = {rec.track.file_path for rec in all_records}
+            for f in self.settings.destination.rglob("*.untested.mp3"):
+                if str(f) not in all_db_paths:
+                    with contextlib.suppress(OSError):
+                        f.unlink(missing_ok=True)
+                        remove_empty_parents(f, self.settings.destination)
+                    untested_orphans += 1
         if count:
             self.logger.info("Orphan cleanup: removed %d stale records.", count)
-        else:
+        if untested_orphans:
+            self.logger.info(
+                "Orphan cleanup: removed %d orphan .untested.mp3 files.", untested_orphans
+            )
+        if not count and not untested_orphans:
             self.logger.debug("Orphan cleanup: no stale records found.")
 
     async def start(self) -> None:

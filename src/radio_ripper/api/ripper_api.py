@@ -97,7 +97,7 @@ class RipperApi:
         logger = configure_logging(settings.log_level, settings.log_file)
         logger.info("=== Radio-Ripper GUI background mode starting ===")
 
-        self._app = RadioRipperApp.from_settings(settings, logger=logger)
+        self._app = RadioRipperApp.from_settings(settings, logger=logger, config_path=self._config_path)
         await self._app.start()
 
         with self._lock:
