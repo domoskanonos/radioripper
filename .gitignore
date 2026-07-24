@@ -13,3 +13,4 @@ build/
 *.mp3
 .coverage
 radio_ripper.pid
+acoustid_key.ok
