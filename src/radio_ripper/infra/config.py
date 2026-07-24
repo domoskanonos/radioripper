@@ -109,15 +109,22 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("work_dir", "database", "destination", "log_file", "fallback_cover_path", "temp_dir", "temp_directory")
+    @field_validator(
+        "work_dir",
+        "database",
+        "destination",
+        "log_file",
+        "fallback_cover_path",
+        "temp_dir",
+        "temp_directory",
+    )
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
         return v.expanduser() if v is not None else None
 
-
     @model_validator(mode="before")
     @classmethod
-    def _map_temp_directory(cls, values: dict) -> dict:
+    def _map_temp_directory(cls, values: dict[str, object]) -> dict[str, object]:
         try:
             if isinstance(values, dict) and values.get("temp_directory"):
                 values["temp_dir"] = values.get("temp_directory")
@@ -126,7 +133,7 @@ class Settings(BaseModel):
         return values
 
     @model_validator(mode="after")
-    def _resolve_work_paths(self) -> "Settings":
+    def _resolve_work_paths(self) -> Settings:
         if self.database is None:
             self.database = self.work_dir / "ripper.db"
         if self.log_file is None:

@@ -370,9 +370,7 @@ class TestPlaylistDiscoveryService:
             stream_keywords=["rock"],
         )
         raw_mega = tmp_path / "---everything-checked-repo.m3u"
-        raw_mega.write_text(
-            "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
-        )
+        raw_mega.write_text("#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n")
 
         mock_entry = M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u")
         mock_probe = {"icy": True, "bitrate": 128}

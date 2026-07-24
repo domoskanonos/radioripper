@@ -85,6 +85,7 @@ class RadioRipperApp:
         """Construct a fully-wired :class:`RadioRipperApp` from settings."""
         log = logger or _LOGGER
         client = HttpxAsyncClient(user_agent=settings.user_agent)
+        assert settings.database is not None
         repository = SQLiteTrackRepository(settings.database)
         tagger: TrackTagger = ID3Tagger()
         metadata: MetadataProvider = (
@@ -162,9 +163,7 @@ class RadioRipperApp:
             if not album and not isinstance(self.metadata, NullMetadataProvider):
                 async with self._enrich_sem:
                     try:
-                        info = await self.metadata.fetch(
-                            record.track.artist, record.track.title
-                        )
+                        info = await self.metadata.fetch(record.track.artist, record.track.title)
                         album = info.album if info else None
                     except Exception as exc:
                         self.logger.debug(
@@ -219,13 +218,9 @@ class RadioRipperApp:
         for rec in records:
             p = Path(rec.track.file_path)
             if not p.is_file():
-                self.logger.warning(
-                    "Untested file missing, removing DB record: %s", p
-                )
+                self.logger.warning("Untested file missing, removing DB record: %s", p)
                 with contextlib.suppress(Exception):
-                    await self.repository.remove(
-                        rec.station_name, rec.track.stream_title
-                    )
+                    await self.repository.remove(rec.station_name, rec.track.stream_title)
                 continue
             if min_interval > 0:
                 now = time.monotonic()
@@ -306,9 +301,7 @@ class RadioRipperApp:
         for rec in await self.repository.list_all():
             if not Path(rec.track.file_path).is_file():
                 with contextlib.suppress(Exception):
-                    await self.repository.remove(
-                        rec.station_name, rec.track.stream_title
-                    )
+                    await self.repository.remove(rec.station_name, rec.track.stream_title)
                 self.logger.info(
                     "Removed orphan DB record (file missing): %s",
                     rec.track.file_path,

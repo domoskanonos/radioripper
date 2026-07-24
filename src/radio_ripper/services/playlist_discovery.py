@@ -41,7 +41,6 @@ class M3uEntry:
     extinf: str = ""
 
 
-
 def _parse_m3u_text(text: str, source: str) -> list[M3uEntry]:
     entries: list[M3uEntry] = []
     current_name = ""
@@ -147,8 +146,7 @@ def _distribute_probe_pool(
 
     for kw in lowered:
         count = sum(
-            1 for e in pool
-            if any(kw in matched for e2, matched in matched if e2.name == e.name)
+            1 for e in pool if any(kw in matched for e2, matched in matched if e2.name == e.name)
         )
         if count < 5:
             _LOGGER.warning("Keyword '%s' has only %d station(s) in probe pool (< 5).", kw, count)
@@ -164,14 +162,9 @@ def _keyword_coverage(
     lowered = [k.lower().strip() for k in keywords if k.strip()]
     for kw in lowered:
         text_key = kw
-        count = sum(
-            1 for entry, _ in good
-            if text_key in (entry.name + " " + entry.extinf).lower()
-        )
+        count = sum(1 for entry, _ in good if text_key in (entry.name + " " + entry.extinf).lower())
         if count < 5:
-            _LOGGER.warning(
-                "Keyword '%s' has only %d probed station(s) (< 5).", kw, count
-            )
+            _LOGGER.warning("Keyword '%s' has only %d probed station(s) (< 5).", kw, count)
         else:
             _LOGGER.info("Keyword '%s': %d stations", kw, count)
 
@@ -292,12 +285,13 @@ async def _download_mega_m3u(github_pat: str = "") -> str:
 
 
 def _cache_path(settings: Settings) -> Path:
+    assert settings.temp_dir is not None
     return settings.temp_dir / "discovered_stations.m3u"
 
 
 def _raw_mega_path(settings: Settings) -> Path:
+    assert settings.temp_dir is not None
     return settings.temp_dir / "---everything-checked-repo.m3u"
-
 
 
 def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
@@ -373,7 +367,9 @@ class PlaylistDiscoveryService:
         if cache_file.is_file():
             cached_stations, _ = _load_cache(cache_file)
             if cached_stations:
-                self._log.info("Using %d cached stations from %s", len(cached_stations), cache_file.name)
+                self._log.info(
+                    "Using %d cached stations from %s", len(cached_stations), cache_file.name
+                )
                 return cached_stations
 
         self._log.info("No cached station list found, starting discovery…")
@@ -433,7 +429,9 @@ class PlaylistDiscoveryService:
         probe_pool = _distribute_probe_pool(matched, keywords, max_needed)
 
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
-        self._log.info("Probing for ICY-capable streams (need %d, pool=%d)…", max_needed, len(probe_pool))
+        self._log.info(
+            "Probing for ICY-capable streams (need %d, pool=%d)…", max_needed, len(probe_pool)
+        )
         good = await _probe_batch(probe_pool, max_needed, semaphore)
         self._log.info("Probing done: %d ICY-capable streams found", len(good))
 
