@@ -173,9 +173,14 @@ class RadioRipperApp:
                 self.logger.warning("No DB entry for %s — skipping", mp3)
                 continue
 
-            # Fetch enrichment (always when provider is available)
+            # Fetch enrichment only when album/year/enrichment is incomplete
             info = None
-            if not isinstance(self.metadata, NullMetadataProvider):
+            needs_enrich = (
+                not record.track.album
+                or not record.track.year
+                or record.track.enrichment != "itunes"
+            )
+            if needs_enrich and not isinstance(self.metadata, NullMetadataProvider):
                 async with self._enrich_sem:
                     try:
                         info = await self.metadata.fetch(record.track.artist, record.track.title)
