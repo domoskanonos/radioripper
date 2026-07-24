@@ -84,8 +84,9 @@ class AcoustidFingerprintProvider(FingerprintProvider):
         except acoustid.WebServiceError as exc:
             msg = str(exc)
             if "status: error" in msg:
-                _log.warning("[fingerprint] AcoustID API error (invalid key?): %s", exc)
-                return None
+                raise FingerprintError(
+                    f"AcoustID API error (invalid key?): {exc}"
+                ) from exc
             raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
         except acoustid.FingerprintGenerationError as exc:
             raise NonRetriableFingerprintError(str(exc)) from exc

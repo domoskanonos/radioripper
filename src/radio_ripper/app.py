@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import time
+import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -433,11 +434,52 @@ class RadioRipperApp:
         if not count and not untested_orphans:
             self.logger.debug("Orphan cleanup: no stale records found.")
 
+    async def _validate_acoustid_key(self) -> None:
+        """Check the AcoustID API key with a minimal test request.
+        Raises :class:`ConfigurationError` when the key is rejected.
+        """
+        api_url = os.environ.get(
+            "ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup"
+        )
+        api_key = os.environ.get("ACCOUST_ID", "")
+        params = urllib.parse.urlencode({
+            "client": api_key,
+            "format": "json",
+            "duration": 1,
+            "fingerprint": "AQAA",
+        })
+        url = f"{api_url}?{params}"
+        import httpx
+        try:
+            async with httpx.AsyncClient() as c:
+                resp = await c.get(url, timeout=5.0)
+                data = resp.json()
+                if data.get("status") == "error":
+                    err = data.get("error", {}).get("message", "")
+                    if "Invalid API key" in err or "invalid key" in err.lower():
+                        raise ConfigurationError(
+                            f"AcoustID API key rejected: {err}. "
+                            "Set a valid ACCOUST_ID in your .env file."
+                        )
+                    self.logger.debug(
+                        "AcoustID test fingerprint not accepted (key seems valid): %s", err
+                    )
+                else:
+                    self.logger.info("AcoustID API key validated successfully.")
+        except ConfigurationError:
+            raise
+        except Exception as exc:
+            self.logger.warning(
+                "AcoustID key validation request failed (non-fatal): %s", exc
+            )
+
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
         await self._reprocess_all()
         await self.reprocess_untested()
         await self._cleanup_orphans()
+        if self.fingerprint is not None:
+            await self._validate_acoustid_key()
         if not self.settings.streams:
             discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
             if not discovered:
