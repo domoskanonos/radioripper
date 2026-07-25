@@ -203,6 +203,10 @@ class FileProcessor:
         """Enrich, tag, apply fingerprint, fetch cover/lyrics, move to dest."""
         provenance = f"{self._name}/{self._name}"
 
+        # Fix MP3 frame alignment from ICY stream cut-points
+        from radio_ripper.services.storage import remux_mp3
+        remux_mp3(file_path)
+
         final_path = await enrich_and_file(
             file_path,
             track,

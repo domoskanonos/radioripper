@@ -22,8 +22,8 @@
   "min_file_size_bytes": 1024,
   "no_icy_disable_after": 10,
   "discovery_enabled": true,
-  "discovery_max_stations": 200,
-  "discovery_min_bitrate": 0,
+  "discovery_min_stations": 200,
+  "discovery_min_bitrate": 128,
   "max_concurrent_streams": 200,
   "disable_automatic_streams": false
 }

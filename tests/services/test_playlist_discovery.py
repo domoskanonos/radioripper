@@ -25,8 +25,8 @@ from radio_ripper.services.playlist_discovery import (
     _match_keywords,
     _parse_m3u_text,
     _probe_batch,
-    _probe_icy,
     _save_cache,
+    probe_icy,
 )
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ class TestDeduplicateByName:
 
 
 # ---------------------------------------------------------------------------
-# _probe_icy
+# probe_icy
 # ---------------------------------------------------------------------------
 
 
@@ -197,7 +197,7 @@ class TestProbeIcy:
         stream_cm = _AsyncCtxMgr(value=resp)
         client = _make_client(stream_cm)
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["icy"] is True
         assert result["bitrate"] == 128
 
@@ -207,7 +207,7 @@ class TestProbeIcy:
         stream_cm = _AsyncCtxMgr(value=resp)
         client = _make_client(stream_cm)
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["icy"] is False
         assert result["bitrate"] == 0
 
@@ -216,7 +216,7 @@ class TestProbeIcy:
         client = _make_client()
         client.stream.side_effect = httpx.TimeoutException("timed out", request=None)
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["error"] == "timeout"
 
     @pytest.mark.asyncio
@@ -224,7 +224,7 @@ class TestProbeIcy:
         client = _make_client()
         client.stream.side_effect = httpx.ConnectError("connection refused")
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["error"] == "connect"
 
     @pytest.mark.asyncio
@@ -233,7 +233,7 @@ class TestProbeIcy:
         stream_cm = _AsyncCtxMgr(value=resp)
         client = _make_client(stream_cm)
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["error"] == "HTTP 404"
 
 
@@ -413,7 +413,7 @@ class TestDiscover:
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
-            discovery_max_stations=5,
+            discovery_min_stations=5,
         )
 
         # Mock the download and ICY probe to return OK for the rock station
@@ -602,7 +602,7 @@ class TestKeywordCoverage:
 
 
 # ---------------------------------------------------------------------------
-# _probe_icy — additional edge cases
+# probe_icy — additional edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -618,7 +618,7 @@ class TestProbeIcyEdgeCases:
         stream_cm = _AsyncCtxMgr(value=resp)
         client = _make_client(stream_cm)
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["error"] == "no data: connection lost"
 
     @pytest.mark.asyncio
@@ -626,7 +626,7 @@ class TestProbeIcyEdgeCases:
         client = _make_client()
         client.stream.side_effect = httpx.RemoteProtocolError("protocol error")
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["error"] == "protocol"
 
     @pytest.mark.asyncio
@@ -634,7 +634,7 @@ class TestProbeIcyEdgeCases:
         client = _make_client()
         client.stream.side_effect = RuntimeError("something unexpected")
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["error"] == "something unexpected"
 
     @pytest.mark.asyncio
@@ -643,7 +643,7 @@ class TestProbeIcyEdgeCases:
         stream_cm = _AsyncCtxMgr(value=resp)
         client = _make_client(stream_cm)
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["icy"] is True
 
     @pytest.mark.asyncio
@@ -656,7 +656,7 @@ class TestProbeIcyEdgeCases:
         stream_cm = _AsyncCtxMgr(value=resp)
         client = _make_client(stream_cm)
         with patch("httpx.AsyncClient", return_value=client):
-            result = await _probe_icy("http://example.com/stream")
+            result = await probe_icy("http://example.com/stream")
         assert result["icy"] is True
         assert result["read_bytes"] == 9
 
@@ -674,7 +674,7 @@ class TestProbeBatch:
             M3uEntry(name="Jazz", url="http://b", source="test"),
         ]
         with patch(
-            "radio_ripper.services.playlist_discovery._probe_icy",
+            "radio_ripper.services.playlist_discovery.probe_icy",
             new_callable=AsyncMock,
             side_effect=[
                 {"icy": True, "bitrate": 128, "error": None},
@@ -692,7 +692,7 @@ class TestProbeBatch:
             M3uEntry(name="Jazz", url="http://b", source="test"),
         ]
         with patch(
-            "radio_ripper.services.playlist_discovery._probe_icy",
+            "radio_ripper.services.playlist_discovery.probe_icy",
             new_callable=AsyncMock,
             side_effect=[
                 {"icy": True, "bitrate": 128, "error": None},
@@ -709,7 +709,7 @@ class TestProbeBatch:
             M3uEntry(name="Rock", url="http://a", source="test"),
         ]
         with patch(
-            "radio_ripper.services.playlist_discovery._probe_icy",
+            "radio_ripper.services.playlist_discovery.probe_icy",
             new_callable=AsyncMock,
             side_effect=RuntimeError("probe failed"),
         ):
@@ -730,7 +730,7 @@ class TestProbeBatch:
             return {"icy": True, "bitrate": 128}  # pragma: no cover
 
         entries = [M3uEntry(name=f"S{i}", url=f"http://{i}", source="test") for i in range(3)]
-        with patch("radio_ripper.services.playlist_discovery._probe_icy", _staggered):
+        with patch("radio_ripper.services.playlist_discovery.probe_icy", _staggered):
             sem = asyncio.Semaphore(50)
             results = await _probe_batch(entries, 2, sem)
         assert len(results) == 2
@@ -904,7 +904,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             temp_dir=tmp_path,
             stream_keywords=["rock"],
             discovery_min_bitrate=200,
-            discovery_max_stations=10,
+            discovery_min_stations=10,
         )
         m3u_text = (
             "#EXTM3U\n"
@@ -940,7 +940,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
-            discovery_max_stations=10,
+            discovery_min_stations=10,
         )
         m3u_text = "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
         mock_results = [

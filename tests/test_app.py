@@ -1,13 +1,20 @@
 """Tests for radio_ripper.app — RadioRipperApp composition (stream mode)."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from radio_ripper.app import RadioRipperApp
 from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.services.playlist import StaticPlaylistResolver
+
+
+@pytest.fixture(autouse=True)
+def _mock_probe_icy():
+    """Prevent pre-flight check from making real HTTP connections."""
+    with patch("radio_ripper.app.probe_icy", return_value={"icy": True, "bitrate": 128, "error": None}):
+        yield
 
 
 def _make_settings(tmp_path, **overrides) -> Settings:

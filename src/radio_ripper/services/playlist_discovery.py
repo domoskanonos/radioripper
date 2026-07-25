@@ -180,7 +180,7 @@ def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
     return result
 
 
-async def _probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict[str, Any]:
+async def probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict[str, Any]:
     result: dict[str, Any] = {"icy": False, "bitrate": 0, "error": None}
     headers = {"Icy-MetaData": "1", "User-Agent": "Radio-Ripper/2.0"}
     try:
@@ -227,7 +227,7 @@ async def _probe_batch(
 ) -> list[tuple[M3uEntry, dict[str, Any]]]:
     async def _probe_one(entry: M3uEntry) -> tuple[M3uEntry, dict[str, Any]] | None:
         async with semaphore:
-            probe = await _probe_icy(entry.url)
+            probe = await probe_icy(entry.url)
             if probe["icy"]:
                 return (entry, probe)
             return None
@@ -366,13 +366,19 @@ class PlaylistDiscoveryService:
 
         if cache_file.is_file():
             cached_stations, _ = _load_cache(cache_file)
-            if cached_stations:
+            min_needed = self._settings.discovery_min_stations
+            if cached_stations and len(cached_stations) >= min_needed:
                 self._log.info(
                     "Using %d cached stations from %s", len(cached_stations), cache_file.name
                 )
                 return cached_stations
+            self._log.info(
+                "Cache has %d stations (need %d), re-discovering…",
+                len(cached_stations),
+                min_needed,
+            )
 
-        self._log.info("No cached station list found, starting discovery…")
+        self._log.info("Starting discovery…")
 
         raw_mega = _raw_mega_path(self._settings)
         if raw_mega.is_file():
@@ -425,33 +431,46 @@ class PlaylistDiscoveryService:
             self._log.warning("No stations matched the configured keywords.")
             return []
 
-        max_needed = self._settings.discovery_max_stations
-        probe_pool = _distribute_probe_pool(matched, keywords, max_needed)
-
+        min_needed = self._settings.discovery_min_stations
+        # Build a fairly distributed probe pool (round-robin per keyword)
+        probe_pool = _distribute_probe_pool(matched, keywords, len(unique))
+        # Probe in batches until we have enough good stations or run out of candidates
+        all_good: list[tuple[M3uEntry, dict[str, Any]]] = []
+        remaining = probe_pool
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
-        self._log.info(
-            "Probing for ICY-capable streams (need %d, pool=%d)…", max_needed, len(probe_pool)
-        )
-        good = await _probe_batch(probe_pool, max_needed, semaphore)
-        self._log.info("Probing done: %d ICY-capable streams found", len(good))
+        batch_size = min(200, min_needed)
 
-        _keyword_coverage(good, keywords)
+        while remaining and len(all_good) < min_needed:
+            batch = remaining[:batch_size]
+            remaining = remaining[batch_size:]
+            self._log.info(
+                "Probing batch of %d (have %d / need %d)…",
+                len(batch),
+                len(all_good),
+                min_needed,
+            )
+            good = await _probe_batch(batch, min_needed - len(all_good), semaphore)
+            all_good.extend(good)
+
+        self._log.info("Probing done: %d ICY-capable streams found", len(all_good))
+
+        _keyword_coverage(all_good, keywords)
 
         min_bps = self._settings.discovery_min_bitrate
         if min_bps > 0:
-            before = len(good)
-            good = [(e, p) for e, p in good if p.get("bitrate", 0) >= min_bps]
-            if len(good) < before:
+            before = len(all_good)
+            all_good = [(e, p) for e, p in all_good if p.get("bitrate", 0) >= min_bps]
+            if len(all_good) < before:
                 self._log.info(
                     "Filtered %d stations below %d kbps bitrate",
-                    before - len(good),
+                    before - len(all_good),
                     min_bps,
                 )
 
-        good.sort(key=lambda x: x[1].get("bitrate", 0), reverse=True)
+        all_good.sort(key=lambda x: x[1].get("bitrate", 0), reverse=True)
 
         stations: list[StreamConfig] = []
-        for entry, probe in good[:max_needed]:
+        for entry, probe in all_good:
             try:
                 stations.append(
                     StreamConfig(
@@ -469,5 +488,7 @@ class PlaylistDiscoveryService:
 
 
 __all__ = [
+    "M3uEntry",
     "PlaylistDiscoveryService",
+    "probe_icy",
 ]

@@ -211,6 +211,7 @@ def _make_settings(tmp_path, **overrides) -> Settings:
         "reconnect_base_delay": 0.1,
         "reconnect_max_delay": 1.0,
         "min_file_size_bytes": 10,
+        "min_duration_s": 0,
     }
     base.update(overrides)
     return Settings.model_validate(base)
@@ -231,6 +232,7 @@ def _make_recorder(
     logger: Any = None,
     ad_title_patterns: Any = None,
     no_icy_disable_after: int = 10,
+    startup_grace_titles: int = 0,
 ) -> StreamRecorder:
     return StreamRecorder(
         station_name="TestStation",
@@ -241,6 +243,7 @@ def _make_recorder(
         logger=logger,
         ad_title_patterns=ad_title_patterns,
         no_icy_disable_after=no_icy_disable_after,
+        startup_grace_titles=startup_grace_titles,
     )
 
 
@@ -279,7 +282,7 @@ class TestStreamRecorder:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        files = [f.name for f in stream_dir.glob("*.untested.mp3")] if stream_dir.is_dir() else []
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert any("Artist A - Song A" in f for f in files)
 
     async def test_discards_first_song_on_join(self, tmp_path):
@@ -296,7 +299,7 @@ class TestStreamRecorder:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        files = [f.name for f in stream_dir.glob("*.untested.mp3")] if stream_dir.is_dir() else []
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("Mid Song" in f for f in files)
 
     async def test_skips_duplicate(self, tmp_path):
@@ -314,7 +317,7 @@ class TestStreamRecorder:
         rec.stop()
         await asyncio.wait_for(task, timeout=3)
         stream_dir = settings.work_dir / "mp3_inbox"
-        files = [f.name for f in stream_dir.glob("*.untested.mp3")] if stream_dir.is_dir() else []
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("A - B" in f for f in files)
 
     async def test_stop_event_stops_recorder(self, tmp_path):
@@ -362,9 +365,48 @@ class TestStreamRecorder:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        files = list(stream_dir.glob("*.untested.mp3")) if stream_dir.is_dir() else []
+        files = list(stream_dir.glob("*.mp3")) if stream_dir.is_dir() else []
         assert len(files) >= 1
         assert any("Adele" in f.name for f in files)
+
+
+class TestGracePeriod:
+    async def test_grace_skips_initial_songs(self, tmp_path):
+        """With startup_grace_titles=2, the first 2 songs after mid-song join are skipped."""
+        stream = _make_stream_bytes(
+            ["Joining Mid", "Skip A", "Skip B", "First - Recording", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+        rec = _make_recorder(settings=settings, http_client=client, startup_grace_titles=2)
+        stream_dir = settings.work_dir / "mp3_inbox"
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
+        assert not any("Joining" in f for f in files)
+        assert not any("Skip" in f for f in files)
+        assert any("Recording" in f for f in files)
+
+    async def test_grace_zero_records_immediately(self, tmp_path):
+        """With startup_grace_titles=0, recording starts at the first song change
+        (second distinct title)."""
+        stream = _make_stream_bytes(
+            ["Joining Mid", "First - Real Song", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+        rec = _make_recorder(settings=settings, http_client=client, startup_grace_titles=0)
+        stream_dir = settings.work_dir / "mp3_inbox"
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
+        assert any("First" in f for f in files)
 
 
 class TestAdTitlePatterns:
@@ -387,13 +429,14 @@ class TestAdTitlePatterns:
             http_client=client,
             playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
             ad_title_patterns=["^Werbung"],
+            startup_grace_titles=0,
         )
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
         stream_dir = settings.work_dir / "mp3_inbox"
-        files = [f.name for f in stream_dir.glob("*.untested.mp3")] if stream_dir.is_dir() else []
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("Werbung" in f for f in files)
         assert any("Artist" in f for f in files)
 
@@ -412,13 +455,14 @@ class TestAdTitlePatterns:
             http_client=client,
             playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
             ad_title_patterns=["advertisement"],
+            startup_grace_titles=0,
         )
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
         stream_dir = settings.work_dir / "mp3_inbox"
-        files = [f.name for f in stream_dir.glob("*.untested.mp3")] if stream_dir.is_dir() else []
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("ADVERTISEMENT" in f for f in files)
         assert any("Artist" in f for f in files)
 
@@ -436,7 +480,7 @@ class TestAdTitlePatterns:
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
         stream_dir = settings.work_dir / "mp3_inbox"
-        files = [f.name for f in stream_dir.glob("*.untested.mp3")] if stream_dir.is_dir() else []
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert any("Werbung" in f for f in files)
 
 
@@ -545,7 +589,7 @@ class TestBlankOrAdTitles:
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
         stream_dir = settings.work_dir / "mp3_inbox"
-        files = [f.name for f in stream_dir.glob("*.untested.mp3")] if stream_dir.is_dir() else []
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert all("   " not in f for f in files)
         assert any("Artist" in f for f in files)
 
@@ -570,5 +614,5 @@ class TestDiscardSmallFile:
             await asyncio.wait_for(task, timeout=5)
         except Exception:
             pass
-        files = list(stream_dir.glob("*.untested.mp3")) if stream_dir.is_dir() else []
+        files = list(stream_dir.glob("*.mp3")) if stream_dir.is_dir() else []
         assert not any("Too Small" in f.name for f in files)

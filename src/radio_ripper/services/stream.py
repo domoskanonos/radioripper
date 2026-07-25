@@ -47,6 +47,7 @@ class StreamRecorder:
         logger: logging.Logger | None = None,
         ad_title_patterns: list[str] | None = None,
         no_icy_disable_after: int = 10,
+        startup_grace_titles: int = 2,
     ) -> None:
         self.station_name = station_name
         self.playlist_url = playlist_url
@@ -62,6 +63,7 @@ class StreamRecorder:
         self._no_icy_disable_after = no_icy_disable_after
         self._no_icy_failures = 0
         self._connect_failures = 0
+        self._startup_grace_titles = startup_grace_titles
         # Per-file locks: serialize enrichment vs fingerprinting on the same path
         # so rename (in _fingerprint_song) doesn't race with write_full (in _enrich_song).
         self._file_locks: dict[Path, asyncio.Lock] = {}
@@ -198,6 +200,7 @@ class StreamRecorder:
         current_title: str | None = None
         writer: TrackWriter | None = None
         recording = False
+        grace_remaining = self._startup_grace_titles
 
         async def _close_writer(finalize: bool) -> None:
             nonlocal writer, current_title, recording
@@ -224,11 +227,14 @@ class StreamRecorder:
                 if min_dur > 0:
                     dur = get_mp3_duration(final_path)
                     if dur is not None and dur < min_dur:
+                        if dur is None:
+                            reason = "unreadable / corrupt"
+                        else:
+                            reason = f"too short ({dur:.1f}s < {min_dur:.0f}s)"
                         self._log.info(
-                            "[%s] Discarded (too short: %.1fs < %.0fs): %s",
+                            "[%s] Discarded (%s): %s",
                             self.station_name,
-                            dur,
-                            min_dur,
+                            reason,
                             final_path.name,
                         )
                         with contextlib.suppress(OSError):
@@ -303,6 +309,16 @@ class StreamRecorder:
                                     clean,
                                 )
 
+                            recording = False
+                            continue
+                        if grace_remaining > 0:
+                            grace_remaining -= 1
+                            self._log.info(
+                                "[%s] Grace period: skipping '%s' (%d remaining)",
+                                self.station_name,
+                                clean,
+                                grace_remaining,
+                            )
                             recording = False
                             continue
                         stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"

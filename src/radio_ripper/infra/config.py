@@ -53,7 +53,7 @@ class Settings(BaseModel):
     )
     discovery_enabled: bool = True
     temp_dir: Path | None = Field(default=None, alias="temp_directory")
-    discovery_max_stations: int = Field(default=150, ge=1, le=500)
+    discovery_min_stations: int = Field(default=150, ge=1)
     discovery_min_bitrate: int = Field(default=0, ge=0)
 
     # Internal — set after discovery, not in config.json
@@ -70,13 +70,14 @@ class Settings(BaseModel):
     overwrite_existing_files: bool = False
     ad_title_patterns: list[str] = Field(default_factory=list)
     no_icy_disable_after: int = Field(default=10, ge=1)
+    startup_grace_titles: int = Field(default=2, ge=0)
 
     fallback_cover_path: Path | None = None
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
 
     mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
-    min_duration_s: float = Field(default=30, ge=0)
+    min_duration_s: float = Field(default=45, ge=0)
     acoustid_min_score: float = Field(default=0.85, ge=0.0, le=1.0)
     min_popularity_rank: int = Field(default=100000, ge=0)
     github_pat: str = ""

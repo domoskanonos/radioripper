@@ -124,6 +124,15 @@ class TestParseStreamTitle:
         events = list(p.events())
         assert not any(isinstance(e, TitleChanged) for e in events)
 
+    def test_empty_stream_title_emits_empty_string(self):
+        meta = _make_meta_block("")
+        metaint = 32
+        p = IcyParser(metaint)
+        p.feed(b"\x00" * metaint + meta)
+        events = list(p.events())
+        titles = [e.title for e in events if isinstance(e, TitleChanged)]
+        assert titles == [""]
+
     def test_escaped_quote_in_title(self):
         meta = _make_meta_block("It\\'s Me")
         metaint = 32

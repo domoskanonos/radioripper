@@ -164,7 +164,8 @@ def _parse_stream_title(meta_bytes: bytes) -> str | None:
     """Decode an ICY metadata block and extract ``StreamTitle``.
 
     Returns:
-        The extracted title, or ``None`` if no ``StreamTitle`` field was found.
+        The extracted title, or an empty string if the StreamTitle field was
+        empty (``StreamTitle=''``), or ``None`` if no metadata was present.
     """
     if not meta_bytes:
         return None
@@ -172,9 +173,8 @@ def _parse_stream_title(meta_bytes: bytes) -> str | None:
     m = _STREAMTITLE_RE.search(text)
     if m is None:
         return None
-    title = m.group(1)
-    title = title.replace("\\'", "'").replace("\\\\", "\\")
-    return title.strip() or None
+    title = m.group(1).replace("\\'", "'").replace("\\\\", "\\").strip()
+    return title if title else ""
 
 
 def split_track_info(stream_title: str) -> TrackInfo:

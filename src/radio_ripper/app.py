@@ -10,11 +10,14 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
-from radio_ripper.infra.config import Settings
+from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver, load_local_m3u
-from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
+from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService, probe_icy
 from radio_ripper.services.stream import StreamRecorder
+
+_PROBE_TIMEOUT = 8.0
+_PROBE_CONCURRENT = 20
 
 _LOGGER = logging.getLogger("radio_ripper.app")
 
@@ -93,6 +96,37 @@ class RadioRipperApp:
 
             self.settings.streams = stations
 
+        # ── Pre-flight reachability check ──────────────────────────────
+        enabled = [s for s in self.settings.streams if s.enabled]
+        self.logger.info("Verifying reachability of %d station(s)...", len(enabled))
+        sem = asyncio.Semaphore(_PROBE_CONCURRENT)
+
+        async def _check(s: StreamConfig) -> StreamConfig | None:
+            async with sem:
+                result = await probe_icy(str(s.url), timeout=_PROBE_TIMEOUT)
+                if result.get("icy") and not result.get("error"):
+                    return s
+                reason = result.get("error") or "no ICY metadata"
+                self.logger.error("[%s] Station unreachable: %s", s.name, reason)
+                return None
+
+        checked = await asyncio.gather(*[_check(s) for s in enabled])
+        reachable = [s for s in checked if s is not None]
+        unreachable = len(enabled) - len(reachable)
+        if unreachable:
+            self.logger.error(
+                "%d of %d station(s) unreachable at startup, skipped.",
+                unreachable,
+                len(enabled),
+            )
+        # Keep disabled stations in the list but only recorders for reachable ones
+        disabled = [s for s in self.settings.streams if not s.enabled]
+        self.settings.streams = disabled + reachable
+        if not reachable:
+            self.logger.error("No reachable streams. Exiting.")
+            return
+        # ── End of pre-flight check ────────────────────────────────────
+
         for stream in self.settings.streams:
             if not stream.enabled:
                 self.logger.info("Skipping disabled stream: %s", stream.name)
@@ -111,6 +145,7 @@ class RadioRipperApp:
                 logger=self.logger,
                 ad_title_patterns=patterns,
                 no_icy_disable_after=self.settings.no_icy_disable_after,
+                startup_grace_titles=self.settings.startup_grace_titles,
             )
             rec.start()
             self._recorders.append(rec)
