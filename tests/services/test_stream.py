@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from radio_ripper.domain.models import FingerprintResult, SavedTrack, TrackInfo
+from radio_ripper.domain.models import FingerprintResult, MusicBrainzData, SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.services.fingerprint import FingerprintError, FingerprintProvider
 from radio_ripper.services.metadata import NullMetadataProvider
@@ -521,6 +521,9 @@ class _RecordingTagger(TrackTagger):
         self.update_acoustid_calls.append((file_path, recording_id, score))
 
     def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
+        pass
+
+    def update_musicbrainz_metadata(self, file_path: Path, mb_data: MusicBrainzData) -> None:
         pass
 
 

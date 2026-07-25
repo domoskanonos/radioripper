@@ -63,8 +63,8 @@ class TestID3Tagger:
         assert audio.get("TALB").text == ["25"]
         assert str(audio.get("TDRC").text[0]) == "2015"
         assert audio.get("TCON").text == ["Pop"]
-        # TPUB falls back to station name when label is missing
-        assert audio.get("TPUB").text == ["Rock"]
+        # TPUB absent when no label was provided
+        assert "TPUB" not in audio
         # TRCK absent when no track/disc number
         assert "TRCK" not in audio
         apic = audio.get("APIC:Cover")
@@ -81,8 +81,8 @@ class TestID3Tagger:
         audio = ID3(f)
         assert str(audio.get("TDRC").text[0]) == "2020"
         assert audio.get("TCON").text == ["Pop"]
-        # TPUB falls back to station name when label is missing
-        assert audio.get("TPUB").text == ["S"]
+        # TPUB absent when no label was provided
+        assert "TPUB" not in audio
         # TRCK absent when no track/disc number
         assert "TRCK" not in audio
         assert "APIC:Cover" not in audio
@@ -355,6 +355,12 @@ class TestNullTagger:
         tagger.embed_cover(Path("/nonexistent"), b"cover")
         # should not raise
 
+    def test_update_musicbrainz_metadata_noop(self):
+        from radio_ripper.domain.models import MusicBrainzData
+        tagger = NullTagger()
+        tagger.update_musicbrainz_metadata(Path("/nonexistent"), MusicBrainzData(recording_id="x"))
+        # should not raise
+
 
 class TestID3TaggerUpdateAcoustid:
     def test_adds_recording_id(self, tmp_path: Path):
@@ -487,6 +493,76 @@ class TestWriteFullEdgeCases:
         enriched = EnrichedInfo(artist="A")
         with pytest.raises(TaggingError, match="failed to load"):
             tagger.write_full(tmp_path / "no_dir" / "x.mp3", track, enriched, None, "S@u")
+
+    def test_writes_track_length(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        enriched = EnrichedInfo(artist="A", title="B", track_length=259720)
+        tagger.write_full(f, track, enriched, None, "S@u")
+        audio = ID3(f)
+        assert audio.get("TLEN").text == ["259720"]
+
+    def test_writes_label_only_when_provided(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        enriched = EnrichedInfo(artist="A", title="B", label="LaFace Records")
+        tagger.write_full(f, track, enriched, None, "S@u")
+        audio = ID3(f)
+        assert audio.get("TPUB").text == ["LaFace Records"]
+
+
+class TestID3TaggerUpdateMusicBrainz:
+    def test_writes_mb_metadata(self, tmp_path: Path):
+        from radio_ripper.domain.models import MusicBrainzData
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        mb = MusicBrainzData(
+            recording_id="rec-123",
+            length_ms=261000,
+            isrcs=("USRC10800123",),
+            genres=("r&b", "soul"),
+            release_id="rel-456",
+            release_label="LaFace Records",
+            release_catalog_no="88697-23388-2",
+            release_date="2008-05-27",
+            release_country="US",
+            release_group_type="Album",
+            barcode="886972338828",
+        )
+        tagger.update_musicbrainz_metadata(f, mb)
+        audio = ID3(f)
+        assert audio.get("TPUB").text == ["LaFace Records"]
+        assert audio.get("TSRC").text == ["USRC10800123"]
+        assert audio.get("TLEN").text == ["261000"]
+        assert audio.get("TXXX:MusicBrainz Release Id").text == ["rel-456"]
+        assert audio.get("TXXX:MusicBrainz Release Group Type").text == ["Album"]
+        assert audio.get("TXXX:MusicBrainz Genres").text == ["r&b, soul"]
+        assert audio.get("TXXX:CatalogNumber").text == ["88697-23388-2"]
+        assert audio.get("TXXX:Barcode").text == ["886972338828"]
+
+    def test_overwrites_tlen(self, tmp_path: Path):
+        from radio_ripper.domain.models import MusicBrainzData
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        tagger.write_full(f, track, EnrichedInfo(artist="A", title="B", track_length=259720), None, "S@u")
+        mb = MusicBrainzData(recording_id="x", length_ms=261000)
+        tagger.update_musicbrainz_metadata(f, mb)
+        audio = ID3(f)
+        assert audio.get("TLEN").text == ["261000"]
+
+    def test_load_error_raises_tagging_error(self, tmp_path: Path):
+        from radio_ripper.domain.models import MusicBrainzData
+        tagger = ID3Tagger()
+        mb = MusicBrainzData(recording_id="x")
+        with pytest.raises(TaggingError, match="failed to load .* for MB metadata"):
+            tagger.update_musicbrainz_metadata(tmp_path / "no_dir" / "x.mp3", mb)
 
 
 class TestEnrichAndTag:

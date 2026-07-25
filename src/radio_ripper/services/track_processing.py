@@ -571,6 +571,32 @@ async def apply_fingerprint_match(
                 recording_id,
             )
 
+        # Fetch MusicBrainz metadata (label, ISRC, length, release info)
+        try:
+            mb_data = await cover_provider.fetch_recording_data(recording_id)
+        except Exception as exc:
+            logger.debug(
+                "[%s] MusicBrainz recording data lookup failed: %s",
+                station_name,
+                exc,
+            )
+            mb_data = None
+        if mb_data is not None:
+            try:
+                tagger.update_musicbrainz_metadata(new_path, mb_data)
+                if mb_data.release_label:
+                    logger.info(
+                        "[%s] MB label: %s",
+                        station_name,
+                        mb_data.release_label,
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "[%s] update_musicbrainz_metadata failed: %s",
+                    station_name,
+                    exc,
+                )
+
     if (
         min_popularity_rank > 0
         and popularity_provider is not None

@@ -31,6 +31,43 @@ class TrackInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class ITunesTrackData:
+    """Raw fields from the iTunes Search API result that don't map to standard ID3 frames."""
+
+    track_id: int | None = None
+    artist_id: int | None = None
+    collection_id: int | None = None
+    track_view_url: str | None = None
+    preview_url: str | None = None
+    track_count: int | None = None
+    disc_count: int | None = None
+    country: str | None = None
+    explicitness: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MusicBrainzData:
+    """Metadata fetched from MusicBrainz after an AcoustID match.
+
+    Requires two API calls (recording → releases → labels) so it's populated
+    lazily in :meth:`~radio_ripper.services.metadata.CoverArtArchiveProvider.fetch_recording_data`.
+    """
+
+    recording_id: str
+    length_ms: int | None = None
+    isrcs: tuple[str, ...] = ()
+    genres: tuple[str, ...] = ()
+    release_id: str | None = None
+    release_title: str | None = None
+    release_label: str | None = None
+    release_catalog_no: str | None = None
+    release_date: str | None = None
+    release_country: str | None = None
+    release_group_type: str | None = None
+    barcode: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class EnrichedInfo:
     """Metadata enrichment results fetched from external providers (e.g. iTunes).
 
@@ -45,7 +82,9 @@ class EnrichedInfo:
     label: str | None = None
     track_number: int | None = None
     disc_number: int | None = None
+    track_length: int | None = None
     artwork_url: str | None = None
+    itunes_data: ITunesTrackData | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,4 +124,4 @@ class SavedTrack:
     disc_number: int | None = None
 
 
-__all__ = ["EnrichedInfo", "FingerprintResult", "SavedTrack", "TrackInfo"]
+__all__ = ["EnrichedInfo", "FingerprintResult", "ITunesTrackData", "MusicBrainzData", "SavedTrack", "TrackInfo"]

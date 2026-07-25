@@ -12,6 +12,8 @@ Tags written:
     - ``TPUB``  (Publisher/Label) — radio station name for Jellyfin
     - ``COMM``  (Recorded via Radio-Ripper)
     - ``TXXX:RIPPEDBY`` (station@playlist) — provenance
+    - ``TLEN``  (Track length in ms) — optional, from iTunes
+    - ``TXXX:ITunes*``  (iTunes metadata IDs/URLs) — optional
     - ``APIC``  (Cover art, JPEG or PNG only, scaled 500-1000 px) — optional
 """
 
@@ -31,15 +33,17 @@ from mutagen.id3 import (
     TCON,
     TDRC,
     TIT2,
+    TLEN,
     TPE1,
     TPUB,
     TRCK,
     TRSN,
+    TSRC,
     TXXX,
     ID3NoHeaderError,
 )
 
-from radio_ripper.domain.models import EnrichedInfo, TrackInfo
+from radio_ripper.domain.models import EnrichedInfo, MusicBrainzData, TrackInfo
 from radio_ripper.infra.errors import TaggingError
 from radio_ripper.services.metadata import MetadataProvider
 
@@ -126,6 +130,14 @@ class TrackTagger(ABC):
     def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
         """Embed cover-art bytes into an existing file (replaces any APIC)."""
 
+    @abstractmethod
+    def update_musicbrainz_metadata(
+        self,
+        file_path: Path,
+        mb_data: MusicBrainzData,
+    ) -> None:
+        """Write MusicBrainz metadata (TPUB, TSRC, TLEN, TXXX) after an AcoustID match."""
+
 
 def _load_or_create(file_path: Path) -> ID3:
     """Load an existing ID3 tag or create a fresh one.
@@ -166,7 +178,7 @@ class ID3Tagger(TrackTagger):
         # Extract station name from provenance (format: "station@url")
         station_name = provenance.split("@")[0] if "@" in provenance else provenance
         audio.add(TRSN(encoding=3, text=station_name))
-        audio.add(TPUB(encoding=3, text=station_name))
+        # TPUB intentionally omitted — written only when we have a real label
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
         try:
@@ -200,6 +212,16 @@ class ID3Tagger(TrackTagger):
         audio.delall("COMM")
         audio.delall("APIC")
         audio.delall("TXXX:RIPPEDBY")
+        audio.delall("TLEN")
+        audio.delall("TXXX:ITunesTrackId")
+        audio.delall("TXXX:ITunesArtistId")
+        audio.delall("TXXX:ITunesCollectionId")
+        audio.delall("TXXX:ITunesTrackUrl")
+        audio.delall("TXXX:ITunesPreviewUrl")
+        audio.delall("TXXX:ITunesTrackCount")
+        audio.delall("TXXX:ITunesDiscCount")
+        audio.delall("TXXX:ITunesCountry")
+        audio.delall("TXXX:ITunesExplicitness")
 
         artist = enriched.artist or track.artist
         title = enriched.title or track.title
@@ -220,16 +242,41 @@ class ID3Tagger(TrackTagger):
         # Extract station name from provenance (format: "station@url")
         station_name = provenance.split("@")[0] if "@" in provenance else provenance
         audio.add(TRSN(encoding=3, text=station_name))
-        # Label: use iTunes recordLabel when available, fall back to station name
-        audio.add(TPUB(encoding=3, text=enriched.label or station_name))
+        # Label: only write when we have actual label data — never fall back to station name
+        if enriched.label:
+            audio.add(TPUB(encoding=3, text=enriched.label))
 
         if enriched.track_number is not None:
             trck = str(enriched.track_number)
             if enriched.disc_number is not None:
                 trck = f"{enriched.disc_number}/{trck}"
             audio.add(TRCK(encoding=3, text=trck))
+        if enriched.track_length is not None:
+            audio.add(TLEN(encoding=3, text=str(enriched.track_length)))
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
+
+        # iTunes ancillary TXXX frames
+        it = enriched.itunes_data
+        if it:
+            if it.track_id is not None:
+                audio.add(TXXX(encoding=3, desc="ITunesTrackId", text=str(it.track_id)))
+            if it.artist_id is not None:
+                audio.add(TXXX(encoding=3, desc="ITunesArtistId", text=str(it.artist_id)))
+            if it.collection_id is not None:
+                audio.add(TXXX(encoding=3, desc="ITunesCollectionId", text=str(it.collection_id)))
+            if it.track_view_url:
+                audio.add(TXXX(encoding=3, desc="ITunesTrackUrl", text=it.track_view_url))
+            if it.preview_url:
+                audio.add(TXXX(encoding=3, desc="ITunesPreviewUrl", text=it.preview_url))
+            if it.track_count is not None:
+                audio.add(TXXX(encoding=3, desc="ITunesTrackCount", text=str(it.track_count)))
+            if it.disc_count is not None:
+                audio.add(TXXX(encoding=3, desc="ITunesDiscCount", text=str(it.disc_count)))
+            if it.country:
+                audio.add(TXXX(encoding=3, desc="ITunesCountry", text=it.country))
+            if it.explicitness:
+                audio.add(TXXX(encoding=3, desc="ITunesExplicitness", text=it.explicitness))
         effective_cover = cover_bytes or fallback_cover
         if effective_cover:
             scaled = _scale_cover(effective_cover)
@@ -272,6 +319,45 @@ class ID3Tagger(TrackTagger):
         except Exception as exc:
             raise TaggingError(f"failed to save cover to {file_path}: {exc}") from exc
 
+    def update_musicbrainz_metadata(
+        self,
+        file_path: Path,
+        mb_data: MusicBrainzData,
+    ) -> None:
+        try:
+            audio = _load_or_create(file_path)
+        except Exception as exc:
+            raise TaggingError(f"failed to load {file_path} for MB metadata: {exc}") from exc
+        audio.delall("TPUB")
+        audio.delall("TSRC")
+        audio.delall("TLEN")
+        audio.delall("TXXX:MusicBrainz Release Id")
+        audio.delall("TXXX:MusicBrainz Release Group Type")
+        audio.delall("TXXX:MusicBrainz Genres")
+        audio.delall("TXXX:CatalogNumber")
+        audio.delall("TXXX:Barcode")
+
+        if mb_data.release_label:
+            audio.add(TPUB(encoding=3, text=mb_data.release_label))
+        if mb_data.isrcs:
+            audio.add(TSRC(encoding=3, text=mb_data.isrcs[0]))
+        if mb_data.length_ms is not None:
+            audio.add(TLEN(encoding=3, text=str(mb_data.length_ms)))
+        if mb_data.release_id:
+            audio.add(TXXX(encoding=3, desc="MusicBrainz Release Id", text=mb_data.release_id))
+        if mb_data.release_group_type:
+            audio.add(TXXX(encoding=3, desc="MusicBrainz Release Group Type", text=mb_data.release_group_type))
+        if mb_data.genres:
+            audio.add(TXXX(encoding=3, desc="MusicBrainz Genres", text=", ".join(mb_data.genres)))
+        if mb_data.release_catalog_no:
+            audio.add(TXXX(encoding=3, desc="CatalogNumber", text=mb_data.release_catalog_no))
+        if mb_data.barcode:
+            audio.add(TXXX(encoding=3, desc="Barcode", text=mb_data.barcode))
+        try:
+            audio.save(file_path, v2_version=3, v1=2)
+        except Exception as exc:
+            raise TaggingError(f"failed to save MB metadata to {file_path}: {exc}") from exc
+
 
 class NullTagger(TrackTagger):
     """No-op tagger (used when tagging is disabled)."""
@@ -295,6 +381,9 @@ class NullTagger(TrackTagger):
         return None
 
     def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
+        return None
+
+    def update_musicbrainz_metadata(self, file_path: Path, mb_data: MusicBrainzData) -> None:
         return None
 
 
@@ -345,4 +434,4 @@ async def enrich_and_tag(
     return info
 
 
-__all__ = ["ID3Tagger", "NullTagger", "TrackTagger", "_scale_cover"]
+__all__ = ["ID3Tagger", "NullTagger", "TrackTagger", "_scale_cover", "enrich_and_tag"]
