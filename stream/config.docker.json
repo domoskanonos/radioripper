@@ -1,0 +1,19 @@
+{
+  "destination": "/app/recordings",
+  "work_dir": "/app/work",
+  "log_level": "INFO",
+  "stream_keywords": ["rock", "pop", "jazz"],
+  "request_timeout": 30,
+  "reconnect_base_delay": 1.0,
+  "reconnect_max_delay": 60.0,
+  "user_agent": "Radio-Ripper-Stream/2.0",
+  "no_icy_disable_after": 10,
+  "startup_grace_titles": 2,
+  "discovery_enabled": true,
+  "discovery_max_stations": 200,
+  "discovery_min_bitrate": 0,
+  "max_concurrent_streams": 400,
+  "disable_automatic_streams": false,
+  "min_file_size_bytes": 1024,
+  "overwrite_existing_files": false
+}

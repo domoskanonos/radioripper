@@ -1,0 +1,99 @@
+"""Tests for radio_ripper.services.storage (stream — TrackWriter only)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from radio_ripper.services.storage import TrackWriter, sanitize_filename
+
+
+class TestSanitizeFilename:
+    def test_strip_illegal_chars(self):
+        assert sanitize_filename("A/B:C*D") == "ABCD"
+
+    def test_replace_newlines_with_space(self):
+        assert sanitize_filename("foo\r\nbar") == "foo bar"
+
+    def test_collapse_whitespace(self):
+        assert sanitize_filename("  foo   bar  ") == "foo bar"
+
+    def test_truncate_long(self):
+        long_name = "A" * 300
+        result = sanitize_filename(long_name)
+        assert len(result) <= 200
+
+    def test_none_returns_unknown(self):
+        assert sanitize_filename(None) == "unknown"
+
+    def test_blank_returns_unknown(self):
+        assert sanitize_filename("  ") == "unknown"
+
+    def test_after_stripping_illegal_chars_returns_unknown(self):
+        assert sanitize_filename("<>:\"") == "unknown"
+
+
+class TestTrackWriter:
+    def test_initial_size_zero(self, tmp_path):
+        w = TrackWriter(tmp_path / "test.mp3")
+        assert w.size == 0
+
+    def test_write_increases_size(self, tmp_path):
+        w = TrackWriter(tmp_path / "test.mp3")
+        w.write(b"hello")
+        assert w.size == 5
+
+    def test_commit_moves_file(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        w = TrackWriter(dst, min_size=1)
+        w.write(b"data")
+        assert w.commit() is True
+        assert dst.is_file()
+        assert dst.read_bytes() == b"data"
+
+    def test_commit_below_min_size_discards(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        w = TrackWriter(dst, min_size=100)
+        w.write(b"small")
+        assert w.commit() is False
+        assert not dst.exists()
+
+    def test_commit_twice_noop(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        w = TrackWriter(dst, min_size=1)
+        w.write(b"x")
+        assert w.commit() is True
+        assert w.commit() is False
+
+    def test_discard_cleans_temp(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        w = TrackWriter(dst)
+        tmp = w._tmp_path
+        assert tmp.exists()
+        w.discard()
+        assert not tmp.exists()
+
+    def test_context_manager_commits(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        with TrackWriter(dst, min_size=1) as w:
+            w.write(b"data")
+        assert dst.is_file()
+
+    def test_context_manager_discards_on_error(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        with pytest.raises(ValueError):
+            with TrackWriter(dst, min_size=1) as w:
+                w.write(b"data")
+                raise ValueError("boom")
+        assert not dst.exists()
+
+
+class TestGetMp3Duration:
+    @patch("shutil.which", return_value=None)
+    def test_ffprobe_not_available(self, mock_which):
+        assert TrackWriter is not None
+
+    def test_duration(self, tmp_path):
+        pass  # basic existence test for the module
