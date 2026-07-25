@@ -193,6 +193,24 @@ class Uploader:
             precomputed_result=result,
         )
 
+        # Fetch & write lyrics
+        try:
+            from radio_ripper.infra.http import HttpxAsyncClient
+            from radio_ripper.services.lyrics import LyricsOvhProvider
+
+            lyrics_provider = LyricsOvhProvider(HttpxAsyncClient(), timeout=5.0)
+            lyrics = await lyrics_provider.fetch(track.artist, track.title)
+            if lyrics:
+                self._tagger.write_lyrics(final_path, lyrics)
+                self._log.info(
+                    "[%s] Lyrics found for %s (%d chars)",
+                    self._name,
+                    final_path.name,
+                    len(lyrics),
+                )
+        except Exception:
+            self._log.debug("[%s] Lyrics fetch failed for %s", self._name, final_path.name)
+
     def _move_to_temp(self, path: Path) -> None:
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         # Restore original .mp3 extension (the file was renamed to .processing)

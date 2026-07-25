@@ -376,6 +376,11 @@ class TestNullTagger:
         tagger.update_musicbrainz_metadata(Path("/nonexistent"), MusicBrainzData(recording_id="x"))
         # should not raise
 
+    def test_write_lyrics_noop(self):
+        tagger = NullTagger()
+        tagger.write_lyrics(Path("/nonexistent"), "lyrics")
+        # should not raise
+
 
 class TestID3TaggerUpdateAcoustid:
     def test_adds_recording_id(self, tmp_path: Path):
@@ -461,6 +466,38 @@ class TestID3TaggerEmbedCover:
         with patch.object(ID3, "save", side_effect=OSError("disk full")):
             with pytest.raises(TaggingError, match="failed to save cover"):
                 tagger.embed_cover(f, b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+
+
+class TestID3TaggerWriteLyrics:
+    def test_writes_uslt_frame(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        tagger.write_lyrics(f, "Hello\nWorld")
+        audio = ID3(f)
+        assert audio.get("USLT::eng").text == ["Hello\nWorld"]
+
+    def test_overwrites_previous_lyrics(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        tagger.write_lyrics(f, "Old")
+        tagger.write_lyrics(f, "New")
+        audio = ID3(f)
+        assert audio.get("USLT::eng").text == ["New"]
+
+    def test_load_error_raises_tagging_error(self):
+        tagger = ID3Tagger()
+        with pytest.raises(TaggingError, match="failed to load .* for lyrics"):
+            tagger.write_lyrics(Path("/nonexistent/song.mp3"), "x")
+
+    def test_save_error_raises_tagging_error(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        with patch.object(ID3, "save", side_effect=OSError("disk full")):
+            with pytest.raises(TaggingError, match="failed to save lyrics"):
+                tagger.write_lyrics(f, "x")
 
 
 class TestWriteFullEdgeCases:

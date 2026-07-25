@@ -39,6 +39,7 @@ from mutagen.id3 import (
     TRCK,
     TRSN,
     TSRC,
+    USLT,
     TXXX,
     ID3NoHeaderError,
 )
@@ -137,6 +138,10 @@ class TrackTagger(ABC):
         mb_data: MusicBrainzData,
     ) -> None:
         """Write MusicBrainz metadata (TPUB, TSRC, TLEN, TXXX) after an AcoustID match."""
+
+    @abstractmethod
+    def write_lyrics(self, file_path: Path, lyrics: str) -> None:
+        """Write lyrics text into the USLT frame."""
 
 
 def _load_or_create(file_path: Path) -> ID3:
@@ -364,6 +369,18 @@ class ID3Tagger(TrackTagger):
         except Exception as exc:
             raise TaggingError(f"failed to save MB metadata to {file_path}: {exc}") from exc
 
+    def write_lyrics(self, file_path: Path, lyrics: str) -> None:
+        try:
+            audio = _load_or_create(file_path)
+        except Exception as exc:
+            raise TaggingError(f"failed to load {file_path} for lyrics: {exc}") from exc
+        audio.delall("USLT")
+        audio.add(USLT(encoding=3, lang="eng", desc="", text=lyrics))
+        try:
+            audio.save(file_path, v2_version=3, v1=2)
+        except Exception as exc:
+            raise TaggingError(f"failed to save lyrics to {file_path}: {exc}") from exc
+
 
 class NullTagger(TrackTagger):
     """No-op tagger (used when tagging is disabled)."""
@@ -390,6 +407,9 @@ class NullTagger(TrackTagger):
         return None
 
     def update_musicbrainz_metadata(self, file_path: Path, mb_data: MusicBrainzData) -> None:
+        return None
+
+    def write_lyrics(self, file_path: Path, lyrics: str) -> None:
         return None
 
 

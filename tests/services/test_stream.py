@@ -525,6 +525,9 @@ class _RecordingTagger(TrackTagger):
     def update_musicbrainz_metadata(self, file_path: Path, mb_data: MusicBrainzData) -> None:
         pass
 
+    def write_lyrics(self, file_path: Path, lyrics: str) -> None:
+        pass
+
 
 class _FingerprintRepo(TrackRepository):
     """Repo stub recording remove / update_file_path / update_fingerprint."""
