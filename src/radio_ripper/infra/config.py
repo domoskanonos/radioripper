@@ -38,6 +38,7 @@ class StreamSettings(BaseModel):
     startup_grace_titles: int = Field(default=2, ge=0)
     ad_title_patterns: list[str] = Field(default_factory=list)
     min_file_size_bytes: int = Field(default=2097152, ge=0)
+    max_files_inbox: int = Field(default=100000, ge=1)
     overwrite_existing_files: bool = False
     min_duration_s: float = Field(default=45, ge=0)
 
@@ -131,6 +132,7 @@ class Settings(BaseModel):
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
     user_agent: str = "Radio-Ripper/2.0"
     min_file_size_bytes: int = Field(default=2097152, ge=0)
+    max_files_inbox: int = Field(default=100000, ge=1)
     overwrite_existing_files: bool = False
     ad_title_patterns: list[str] = Field(default_factory=list)
     no_icy_disable_after: int = Field(default=10, ge=1)
@@ -179,6 +181,7 @@ class Settings(BaseModel):
             startup_grace_titles=self.startup_grace_titles,
             ad_title_patterns=self.ad_title_patterns,
             min_file_size_bytes=self.min_file_size_bytes,
+            max_files_inbox=self.max_files_inbox,
             overwrite_existing_files=self.overwrite_existing_files,
             min_duration_s=self.min_duration_s,
         )

@@ -47,6 +47,7 @@ class StreamRecorder:
         ad_title_patterns: list[str] | None = None,
         no_icy_disable_after: int = 10,
         startup_grace_titles: int = 2,
+        inbox_full: asyncio.Event | None = None,
     ) -> None:
         self.station_name = station_name
         self.playlist_url = playlist_url
@@ -61,8 +62,15 @@ class StreamRecorder:
         self._no_icy_failures = 0
         self._connect_failures = 0
         self._startup_grace_titles = startup_grace_titles
+        self._inbox_full = inbox_full or asyncio.Event()
 
     # ------------------------------------------------------------------ lifecycle
+
+    def _is_inbox_full(self) -> bool:
+        stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
+        if stream_dir.is_dir():
+            return len(list(stream_dir.glob("*.mp3"))) >= self.settings.max_files_inbox
+        return False
 
     def _is_ad_title(self, title: str) -> bool:
         return bool(self._ad_patterns and any(p.search(title) for p in self._ad_patterns))
@@ -88,6 +96,22 @@ class StreamRecorder:
         )
         delay = self.settings.reconnect_base_delay
         while not self._stop_event.is_set():
+            if self._inbox_full.is_set():
+                self._log.info(
+                    "[%s] Inbox full — pausing, check again in 30 min.",
+                    self.station_name,
+                )
+                while not self._stop_event.is_set():
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._stop_event.wait(), timeout=1800)
+                    if self._is_inbox_full():
+                        continue
+                    self._inbox_full.clear()
+                    self._log.info("[%s] Inbox has space — resuming.", self.station_name)
+                    break
+                if self._stop_event.is_set():
+                    break
+                delay = self.settings.reconnect_base_delay
             try:
                 ok = await self._run_once()
             except Exception:
@@ -202,6 +226,15 @@ class StreamRecorder:
     def _make_writer(self, title: str) -> TrackWriter | None:
         stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
         stream_dir.mkdir(parents=True, exist_ok=True)
+        if stream_dir.is_dir():
+            existing = len(list(stream_dir.glob("*.mp3")))
+            if existing >= self.settings.max_files_inbox:
+                self._log.error(
+                    "[%s] Inbox limit reached (%d >= %d), pausing all recorders.",
+                    self.station_name, existing, self.settings.max_files_inbox,
+                )
+                self._inbox_full.set()
+                return None
         safe_name = sanitize_filename(title)
         if not safe_name:
             self._log.error("[%s] Cannot create file for title=%r", self.station_name, title)

@@ -31,6 +31,7 @@ class RadioRipperApp:
         self.logger = logger or _LOGGER
         self._recorders: list[StreamRecorder] = []
         self._cancel_requested = False
+        self._inbox_full = asyncio.Event()
 
     @classmethod
     def from_settings(cls, settings: Settings, *, logger: logging.Logger | None = None) -> RadioRipperApp:
@@ -103,6 +104,7 @@ class RadioRipperApp:
                 ad_title_patterns=patterns,
                 no_icy_disable_after=self.settings.no_icy_disable_after,
                 startup_grace_titles=self.settings.startup_grace_titles,
+                inbox_full=self._inbox_full,
             )
             rec.start()
             self._recorders.append(rec)

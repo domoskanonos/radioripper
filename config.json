@@ -95,5 +95,6 @@
   "disable_automatic_streams": false,
   "min_file_size_bytes": 2097152,
   "overwrite_existing_files": false,
-  "min_duration_s": 45
+  "min_duration_s": 45,
+  "max_files_inbox": 100000
 }
