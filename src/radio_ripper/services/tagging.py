@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -40,6 +41,7 @@ from mutagen.id3 import (
 
 from radio_ripper.domain.models import EnrichedInfo, TrackInfo
 from radio_ripper.infra.errors import TaggingError
+from radio_ripper.services.metadata import MetadataProvider
 
 _MIN_COVER_PX = 500
 _MAX_COVER_PX = 1000
@@ -294,6 +296,53 @@ class NullTagger(TrackTagger):
 
     def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
         return None
+
+
+async def enrich_and_tag(
+    metadata_provider: MetadataProvider,
+    tagger: TrackTagger,
+    file_path: Path,
+    track: TrackInfo,
+    provenance: str,
+    *,
+    fallback_cover_path: Path | None = None,
+    embed_cover_art: bool = True,
+    logger: logging.Logger | None = None,
+) -> EnrichedInfo | None:
+    """Fetch iTunes metadata, download cover art, write enriched ID3 tags.
+
+    Returns the enriched info when a match was found, or ``None`` when no
+    metadata was returned (fallback cover is still embedded if configured).
+    """
+    info = await metadata_provider.fetch(track.artist, track.title)
+
+    fallback_cover: bytes | None = None
+    if fallback_cover_path is not None:
+        with contextlib.suppress(OSError):
+            fallback_cover = fallback_cover_path.read_bytes()
+
+    if info is None:
+        if fallback_cover and embed_cover_art:
+            try:
+                tagger.write_full(
+                    file_path, track, EnrichedInfo(), None, provenance, fallback_cover=fallback_cover
+                )
+            except Exception as exc:
+                if logger:
+                    logger.warning("[%s] fallback-cover embed failed %s: %s", track.stream_title, file_path.name, exc)
+        return None
+
+    cover: bytes | None = None
+    if embed_cover_art and info.artwork_url:
+        cover = await metadata_provider.download_image(info.artwork_url)
+
+    try:
+        tagger.write_full(file_path, track, info, cover, provenance, fallback_cover=fallback_cover)
+    except Exception as exc:
+        if logger:
+            logger.warning("[%s] tag-enrichment failed %s: %s", track.stream_title, file_path.name, exc)
+
+    return info
 
 
 __all__ = ["ID3Tagger", "NullTagger", "TrackTagger", "_scale_cover"]

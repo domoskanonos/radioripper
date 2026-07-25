@@ -123,27 +123,11 @@ class FakeRepoThatSaysExisting(TrackRepository):
     ) -> None:
         pass
 
-    async def exists_by_recording_id(
-        self, recording_id: str, exclude_station: str | None = None
-    ) -> bool:
-        return False
-
-    async def find_by_recording_id(self, recording_id: str) -> None:
-        return None
-
-    async def list_untested(self) -> list:
-        return []
-
     async def list_all(self) -> list[TrackRecord]:
         return []
 
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
-
-    async def find_by_artist_title_any_station(
-        self, artist: str, title: str, exclude_station: str | None = None
-    ) -> TrackRecord | None:
-        return None
 
     async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
         return []
@@ -190,27 +174,11 @@ class FakeRepoFresh(TrackRepository):
     ) -> None:
         pass
 
-    async def exists_by_recording_id(
-        self, recording_id: str, exclude_station: str | None = None
-    ) -> bool:
-        return False
-
-    async def find_by_recording_id(self, recording_id: str) -> None:
-        return None
-
-    async def list_untested(self) -> list:
-        return []
-
     async def list_all(self) -> list[TrackRecord]:
         return []
 
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
-
-    async def find_by_artist_title_any_station(
-        self, artist: str, title: str, exclude_station: str | None = None
-    ) -> TrackRecord | None:
-        return None
 
     async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
         return []
@@ -560,8 +528,6 @@ class _FingerprintRepo(TrackRepository):
         self.removed: list[tuple[str, str]] = []
         self.updated_paths: list[tuple[str, str, str]] = []
         self.updated_fps: list[tuple[str, str, str, float]] = []
-        self.Exists_by_id_returns = False
-        self.Find_by_id_returns: Any = None
 
     async def exists(self, station_name: str, stream_title: str) -> bool:
         return False
@@ -588,27 +554,11 @@ class _FingerprintRepo(TrackRepository):
     ) -> None:
         self.updated_fps.append((station_name, stream_title, recording_id, score))
 
-    async def exists_by_recording_id(
-        self, recording_id: str, exclude_station: str | None = None
-    ) -> bool:
-        return self.Exists_by_id_returns
-
-    async def find_by_recording_id(self, recording_id: str) -> Any:
-        return self.Find_by_id_returns
-
-    async def list_untested(self) -> list:
-        return []
-
     async def list_all(self) -> list[TrackRecord]:
         return []
 
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
-
-    async def find_by_artist_title_any_station(
-        self, artist: str, title: str, exclude_station: str | None = None
-    ) -> TrackRecord | None:
-        return None
 
     async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
         return []

@@ -58,26 +58,10 @@ class FakeRepo(TrackRepository):
     ) -> None:
         pass
 
-    async def exists_by_recording_id(
-        self, recording_id: str, exclude_station: str | None = None
-    ) -> bool:
-        return False
-
-    async def find_by_recording_id(self, recording_id: str) -> None:
-        return None
-
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
 
-    async def find_by_artist_title_any_station(
-        self, artist: str, title: str, exclude_station: str | None = None
-    ) -> TrackRecord | None:
-        return None
-
     async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
-        return []
-
-    async def list_untested(self) -> list:
         return []
 
     async def list_all(self) -> list[TrackRecord]:
@@ -245,25 +229,11 @@ class _LookupStubRepo(TrackRepository):
     async def update_fingerprint(self, **kwargs) -> None:
         pass
 
-    async def exists_by_recording_id(self, **kwargs) -> bool:
-        return False
-
-    async def find_by_recording_id(self, **kwargs) -> None:
-        return None
-
-    async def list_untested(self) -> list:
-        return []
-
     async def list_all(self) -> list[TrackRecord]:
         return list(self.records.values())
 
     async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
         return []
-
-    async def find_by_artist_title_any_station(
-        self, artist: str, title: str, exclude_station: str | None = None
-    ) -> TrackRecord | None:
-        return None
 
     async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
         return []

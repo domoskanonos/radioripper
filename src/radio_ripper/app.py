@@ -44,7 +44,7 @@ from radio_ripper.services.storage import (
     remove_empty_parents,
 )
 from radio_ripper.services.stream import StreamRecorder, apply_fingerprint_match
-from radio_ripper.services.tagging import ID3Tagger, TrackTagger
+from radio_ripper.services.tagging import ID3Tagger, TrackTagger, enrich_and_tag
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -196,7 +196,7 @@ class RadioRipperApp:
                     self.logger.debug("Skipping %s — already fully processed", mp3)
                     continue
 
-            # Fetch enrichment only when album/year/enrichment is incomplete
+            # Fetch enrichment + write ID3 tags when album/year/label is incomplete
             info = None
             needs_enrich = (
                 not record.track.album
@@ -206,12 +206,20 @@ class RadioRipperApp:
             )
             if needs_enrich and not isinstance(self.metadata, NullMetadataProvider):
                 async with self._enrich_sem:
-                    try:
-                        info = await self.metadata.fetch(record.track.artist, record.track.title)
-                    except Exception as exc:
-                        self.logger.debug(
-                            "[%s] enrichment fetch failed: %s", record.station_name, exc
-                        )
+                    info = await enrich_and_tag(
+                        self.metadata,
+                        self.tagger,
+                        mp3,
+                        TrackInfo(
+                            stream_title=record.track.stream_title,
+                            artist=record.track.artist,
+                            title=record.track.title,
+                        ),
+                        f"{record.station_name}@{record.track.stream_title}",
+                        fallback_cover_path=self.settings.fallback_cover_path,
+                        embed_cover_art=self.settings.embed_cover_art,
+                        logger=self.logger,
+                    )
 
             album = info.album if info else record.track.album
 
@@ -249,38 +257,6 @@ class RadioRipperApp:
             await self.repository.update_file_path(
                 record.station_name, record.track.stream_title, str(new_path)
             )
-
-            # Rewrite ID3 tags from enrichment so genre/year/album are embedded
-            if info is not None:
-                fallback_cover: bytes | None = None
-                if self.settings.fallback_cover_path is not None:
-                    with contextlib.suppress(OSError):
-                        fallback_cover = self.settings.fallback_cover_path.read_bytes()
-                try:
-                    self.tagger.write_full(
-                        new_path,
-                        TrackInfo(
-                            stream_title=record.track.stream_title,
-                            artist=record.track.artist,
-                            title=record.track.title,
-                        ),
-                        info,
-                        None,
-                        f"{record.station_name}@{record.track.stream_title}",
-                        fallback_cover=fallback_cover,
-                    )
-                    self.logger.info(
-                        "[%s] Rewrote enriched tags: album=%s year=%s genre=%s label=%s",
-                        record.station_name,
-                        info.album or "-",
-                        info.year or "-",
-                        info.genre or "-",
-                        info.label or "-",
-                    )
-                except Exception as exc:
-                    self.logger.debug(
-                        "[%s] tag rewrite during reprocess: %s", record.station_name, exc
-                    )
 
             # --- same post-match flow as live recording ---
             recording_id = record.track.acoustid_recording_id

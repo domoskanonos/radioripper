@@ -47,7 +47,7 @@ from radio_ripper.services.storage import (
     remux_mp3,
     sanitize_filename,
 )
-from radio_ripper.services.tagging import TrackTagger
+from radio_ripper.services.tagging import TrackTagger, enrich_and_tag
 
 _LOGGER = logging.getLogger("radio_ripper.stream")
 
@@ -541,67 +541,32 @@ class StreamRecorder:
         provenance: str,
     ) -> EnrichedInfo | None:
         assert self._metadata is not None
-        info = await self._metadata.fetch(track.artist, track.title)
-
-        # Load station fallback cover (e.g. station logo) from config
-        fallback_cover: bytes | None = None
-        if self.settings.fallback_cover_path is not None:
-            with contextlib.suppress(OSError):
-                fallback_cover = self.settings.fallback_cover_path.read_bytes()
-
-        if info is None:
+        info = await enrich_and_tag(
+            self._metadata,
+            self._tagger,
+            file_path,
+            track,
+            provenance,
+            fallback_cover_path=self.settings.fallback_cover_path,
+            embed_cover_art=self.settings.embed_cover_art,
+            logger=self._log,
+        )
+        if info is not None:
+            self._log.info(
+                "[%s] Enriched: %s | album=%s year=%s cover=%s",
+                self.station_name,
+                file_path.name,
+                info.album or "-",
+                info.year or "-",
+                "yes" if info.artwork_url else "no",
+            )
+        else:
             self._log.info(
                 "[%s] no enrichment hit for: %s - %s",
                 self.station_name,
                 track.artist,
                 track.title,
             )
-            # Embed fallback cover even when no enrichment data is found
-            if fallback_cover and self.settings.embed_cover_art:
-                try:
-                    self._tagger.write_full(
-                        file_path,
-                        track,
-                        EnrichedInfo(),
-                        None,
-                        provenance,
-                        fallback_cover=fallback_cover,
-                    )
-                except Exception as exc:
-                    self._log.warning(
-                        "[%s] fallback-cover embed failed %s: %s",
-                        self.station_name,
-                        file_path.name,
-                        exc,
-                    )
-            return None
-        cover: bytes | None = None
-        if self.settings.embed_cover_art and info.artwork_url:
-            cover = await self._metadata.download_image(info.artwork_url)
-        try:
-            self._tagger.write_full(
-                file_path,
-                track,
-                info,
-                cover,
-                provenance,
-                fallback_cover=fallback_cover,
-            )
-        except Exception as exc:
-            self._log.warning(
-                "[%s] tag-enrichment failed %s: %s",
-                self.station_name,
-                file_path.name,
-                exc,
-            )
-        self._log.info(
-            "[%s] Enriched: %s | album=%s year=%s cover=%s",
-            self.station_name,
-            file_path.name,
-            info.album or "-",
-            info.year or "-",
-            "yes" if (cover or fallback_cover) else "no",
-        )
         return info
 
     # ------------------------------------------------------------- fingerprinting
