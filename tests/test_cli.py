@@ -188,7 +188,7 @@ class TestRunAsync:
                 fake_loop.add_signal_handler = fake_add_signal_handler
                 mock_loop.return_value = fake_loop
 
-                result = await _run_async(settings, logger, config_path=str(p))
+                result = await _run_async(settings, logger)
 
         assert result == 0
         mock_app.start.assert_awaited_once()
@@ -228,7 +228,7 @@ class TestRunAsync:
                             handler(*args)
 
                     asyncio.ensure_future(trigger())
-                    result = await _run_async(settings, logger, config_path="/tmp/cfg.json")
+                    result = await _run_async(settings, logger)
             finally:
                 loop.add_signal_handler = original_add
 
@@ -272,7 +272,7 @@ class TestMainIntegration:
 
         settings_arg = None
 
-        def capture_settings(settings, logger, config_path=None):
+        def capture_settings(settings, logger):
             nonlocal settings_arg
             settings_arg = settings
             return 0

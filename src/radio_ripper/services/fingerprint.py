@@ -30,7 +30,7 @@ class FingerprintError(RuntimeError):
     is signalled by :meth:`FingerprintProvider.fingerprint` returning
     ``None``.  Callers MUST NOT discard files when a :class:`FingerprintError`
     is raised — the failure is transient and the file should be retried
-    later (handled by :meth:`RadioRipperApp._reprocess_all`).
+    later (the file is kept as ``.untested.mp3`` for retry on next restart).
     """
 
 

@@ -96,7 +96,6 @@
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
   "no_icy_disable_after": 10,
-  "reprocess_all": true,
   "temp_directory": "~/.cache/radio-ripper",
   "discovery_enabled": true,
   "discovery_max_stations": 150,

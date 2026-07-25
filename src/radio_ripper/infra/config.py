@@ -89,7 +89,7 @@ class Settings(BaseModel):
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
 
-    reprocess_all: bool = False
+    mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
     min_duration_s: float = Field(default=30, ge=0)
     github_pat: str = ""
     acoustid_api_key: str = ""
@@ -117,6 +117,7 @@ class Settings(BaseModel):
         "log_file",
         "fallback_cover_path",
         "temp_dir",
+        "mp3_inbox",
     )
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
@@ -130,6 +131,8 @@ class Settings(BaseModel):
             self.log_file = self.work_dir / "radio_ripper.log"
         if self.temp_dir is None:
             self.temp_dir = self.work_dir / "cache"
+        if self.mp3_inbox is None:
+            self.mp3_inbox = self.work_dir / "mp3_inbox"
         return self
 
 

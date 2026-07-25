@@ -597,6 +597,8 @@ class StreamRecorder:
                     )
                     with contextlib.suppress(OSError):
                         file_path.unlink(missing_ok=True)
+                    with contextlib.suppress(Exception):
+                        await self._repo.remove(self.station_name, track.stream_title)
                     return
                 except FingerprintError as exc:
                     self._log.warning(

@@ -12,16 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
-import shutil
 import time
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from radio_ripper.domain.models import TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import ConfigurationError
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
@@ -39,12 +36,10 @@ from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolve
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 from radio_ripper.services.popularity import DeezerPopularityChecker
 from radio_ripper.services.repository import SQLiteTrackRepository, TrackRepository
-from radio_ripper.services.storage import (
-    compute_file_path,
-    remove_empty_parents,
-)
-from radio_ripper.services.stream import StreamRecorder, apply_fingerprint_match
-from radio_ripper.services.tagging import ID3Tagger, TrackTagger, enrich_and_tag
+from radio_ripper.services.storage import remove_empty_parents
+from radio_ripper.services.stream import StreamRecorder
+from radio_ripper.services.tagging import ID3Tagger, TrackTagger
+from radio_ripper.services.uploader import Uploader
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -81,8 +76,8 @@ class RadioRipperApp:
         self.logger = logger or _LOGGER
         self._enrich_sem = asyncio.Semaphore(settings.enrichment_workers)
         self._recorders: list[StreamRecorder] = []
-        self._config_path: str | None = None
         self._cancel_requested = False
+        self._uploader: Uploader | None = None
 
     @classmethod
     def from_settings(
@@ -90,7 +85,6 @@ class RadioRipperApp:
         settings: Settings,
         *,
         logger: logging.Logger | None = None,
-        config_path: str | None = None,
     ) -> RadioRipperApp:
         """Construct a fully-wired :class:`RadioRipperApp` from settings."""
         log = logger or _LOGGER
@@ -147,177 +141,24 @@ class RadioRipperApp:
             playlist_resolver=resolver,
             logger=log,
         )
-        app._config_path = config_path
+        temp_dir = settings.temp_dir or (settings.work_dir / "temp")
+        app._uploader = Uploader(
+            inbox=settings.mp3_inbox,
+            temp_dir=temp_dir,
+            settings=settings,
+            fingerprint_provider=fp_provider,
+            metadata_provider=metadata,
+            repository=repository,
+            tagger=tagger,
+            name="inbox",
+            logger=log,
+        )
         return app
 
     def recorders(self) -> Sequence[StreamRecorder]:
         return list(self._recorders)
 
-    async def _reprocess_all(self) -> None:
-        """Restructure existing ``.mp3`` files to the new folder layout.
 
-        Triggered by ``settings.reprocess_all``. For each file:
-        1. Looks up the DB record.
-        2. If enrichment data is missing, fetches it from iTunes.
-        3. Computes the new path without the station fallback folder
-           (``{Artist}[/{Album}]/{Song}.mp3``).
-        4. Moves the file, removes empty old directories, updates the DB.
-        5. Tries AcoustID fingerprint (if not yet matched) and fetches
-           CAA cover art — identical to the live recording flow.
-        """
-        if not self.settings.reprocess_all:
-            return
-        self.logger.info("Reprocess-all enabled — restructuring files…")
-        count = 0
-        min_interval = self.settings.acoustid_min_interval_s
-        last_fp_call = 0.0
-        for mp3 in sorted(self.settings.destination.rglob("*.mp3")):
-            if mp3.suffix != ".mp3":
-                continue
-            record = await self.repository.find_by_file_path(str(mp3))
-            if record is None:
-                self.logger.warning("No DB entry for %s — skipping", mp3)
-                continue
-
-            if (
-                record.track.acoustid_recording_id
-                and record.track.album
-                and record.track.enrichment == "itunes"
-                and record.track.label
-            ):
-                expected = compute_file_path(
-                    self.settings.destination,
-                    record.track.artist,
-                    record.track.title,
-                    record.track.stream_title,
-                    album=record.track.album,
-                    overwrite=True,
-                )
-                if mp3 == expected:
-                    self.logger.debug("Skipping %s — already fully processed", mp3)
-                    continue
-
-            # Fetch enrichment + write ID3 tags when album/year/label is incomplete
-            info = None
-            needs_enrich = (
-                not record.track.album
-                or not record.track.year
-                or not record.track.label
-                or record.track.enrichment != "itunes"
-            )
-            if needs_enrich and not isinstance(self.metadata, NullMetadataProvider):
-                async with self._enrich_sem:
-                    info = await enrich_and_tag(
-                        self.metadata,
-                        self.tagger,
-                        mp3,
-                        TrackInfo(
-                            stream_title=record.track.stream_title,
-                            artist=record.track.artist,
-                            title=record.track.title,
-                        ),
-                        f"{record.station_name}@{record.track.stream_title}",
-                        fallback_cover_path=self.settings.fallback_cover_path,
-                        embed_cover_art=self.settings.embed_cover_art,
-                        logger=self.logger,
-                    )
-
-            album = info.album if info else record.track.album
-
-            new_path = compute_file_path(
-                self.settings.destination,
-                record.track.artist,
-                record.track.title,
-                record.track.stream_title,
-                album=album,
-                overwrite=True,
-            )
-
-            if mp3 != new_path:
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    shutil.move(str(mp3), str(new_path))
-                    remove_empty_parents(mp3, self.settings.destination)
-                except OSError as exc:
-                    self.logger.warning("Move %s -> %s failed: %s", mp3, new_path, exc)
-                    continue
-
-            if album:
-                try:
-                    await self.repository.update_enrichment(
-                        record.station_name,
-                        record.track.stream_title,
-                        album=album,
-                        enrichment="itunes",
-                        label=info.label if info else None,
-                        track_number=info.track_number if info else None,
-                        disc_number=info.disc_number if info else None,
-                    )
-                except Exception as exc:
-                    self.logger.debug("[%s] db enrichment update: %s", record.station_name, exc)
-            await self.repository.update_file_path(
-                record.station_name, record.track.stream_title, str(new_path)
-            )
-
-            # --- same post-match flow as live recording ---
-            recording_id = record.track.acoustid_recording_id
-            score = record.track.acoustid_score
-            if not recording_id and self.fingerprint is not None:
-                if min_interval > 0:
-                    now = time.monotonic()
-                    wait = min_interval - (now - last_fp_call)
-                    if wait > 0:
-                        await asyncio.sleep(wait)
-                    last_fp_call = time.monotonic()
-                try:
-                    fp_result = await self.fingerprint.fingerprint(new_path)
-                except Exception:
-                    fp_result = None
-                if fp_result:
-                    recording_id = fp_result.recording_id
-                    score = fp_result.score
-
-            if recording_id:
-                await apply_fingerprint_match(
-                    recording_id=recording_id,
-                    score=score or 0.0,
-                    file_path=new_path,
-                    new_path=new_path,
-                    tagger=self.tagger,
-                    cover_provider=self.cover_provider,
-                    repository=self.repository,
-                    station_name=record.station_name,
-                    stream_title=record.track.stream_title,
-                    logger=self.logger,
-                    artist=record.track.artist,
-                    title=record.track.title,
-                    popularity_provider=self.popularity_provider,
-                    min_popularity_rank=self.settings.min_popularity_rank,
-                )
-
-            count += 1
-            if count % 500 == 0:
-                self.logger.info("Reprocess-all: %d files processed so far…", count)
-            if self._cancel_requested:
-                self.logger.info("Reprocess-all cancelled — %d files processed.", count)
-                return
-        self.logger.info("Reprocess-all: %d files processed.", count)
-        if self._config_path:
-            try:
-                cfg = json.loads(Path(self._config_path).read_text(encoding="utf-8"))
-                if cfg.get("reprocess_all", False):
-                    cfg["reprocess_all"] = False
-                    Path(self._config_path).write_text(
-                        json.dumps(cfg, indent=2, ensure_ascii=False) + "\n",
-                        encoding="utf-8",
-                    )
-                    self.logger.info(
-                        "Reprocess-all completed — reset reprocess_all flag in config."
-                    )
-            except Exception as exc:
-                self.logger.warning("Failed to reset reprocess_all flag: %s", exc)
-
-    # reprocess_untested removed — _reprocess_all now also processes .untested.mp3
 
     async def _cleanup_orphans(self) -> None:
         """Remove DB records whose ``file_path`` no longer exists on disk.
@@ -406,7 +247,6 @@ class RadioRipperApp:
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
         await self._cleanup_orphans()
-        await self._reprocess_all()
         if self._cancel_requested:
             self.logger.info("Startup cancelled — not starting streams.")
             return
@@ -474,6 +314,8 @@ class RadioRipperApp:
             rec.start()
             self._recorders.append(rec)
         self.logger.info("Started %d stream recorders.", len(self._recorders))
+        if self._uploader is not None:
+            await self._uploader.start()
 
     def cancel(self) -> None:
         """Request cancellation of startup reprocessing (thread-safe)."""
@@ -501,6 +343,8 @@ class RadioRipperApp:
                 await asyncio.wait_for(task, timeout=15.0)
             except TimeoutError:
                 task.cancel()
+        if self._uploader is not None:
+            await self._uploader.stop()
         await self.repository.aclose()
         await self.client.aclose()
         self.logger.info("All recorders stopped.")

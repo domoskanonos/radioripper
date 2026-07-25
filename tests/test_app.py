@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from radio_ripper.app import RadioRipperApp
-from radio_ripper.domain.models import FingerprintResult, SavedTrack
+from radio_ripper.domain.models import SavedTrack
 from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.infra.errors import ConfigurationError
 from radio_ripper.services.fingerprint import (
@@ -211,67 +210,6 @@ def _make_app(
     )
 
 
-class _LookupStubRepo(TrackRepository):
-    """Repo stub that returns records by file_path."""
-
-    def __init__(self, records: dict[str, TrackRecord]) -> None:
-        self.records = records
-        self.updated_paths: list[tuple[str, str, str]] = []
-
-    async def exists(self, *args, **kwargs) -> bool:
-        return False
-
-    async def register(self, *args, **kwargs) -> None:
-        pass
-
-    async def update_enrichment(self, *args, **kwargs) -> None:
-        pass
-
-    async def remove(self, *args, **kwargs) -> None:
-        pass
-
-    async def aclose(self) -> None:
-        pass
-
-    async def update_fingerprint(
-        self,
-        station_name: str,
-        stream_title: str,
-        *,
-        recording_id: str,
-        score: float,
-    ) -> None:
-        pass
-
-    async def list_all(self) -> list[TrackRecord]:
-        return list(self.records.values())
-
-    async def find_all_by_recording_id(self, recording_id: str) -> list[TrackRecord]:
-        return []
-
-    async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
-        return []
-
-    async def find_by_file_path(self, file_path: str) -> TrackRecord | None:
-        return self.records.get(file_path)
-
-    async def update_file_path(self, station_name: str, stream_title: str, new_path: str) -> None:
-        self.updated_paths.append((station_name, stream_title, new_path))
-
-
-class _TrackingFakeRepo(FakeRepo):
-    """FakeRepo that tracks which methods were called."""
-
-    def __init__(self) -> None:
-        self.removed: list[tuple[str, str]] = []
-
-    async def remove(self, station_name: str, stream_title: str) -> None:
-        self.removed.append((station_name, stream_title))
-
-    async def list_all(self) -> list[TrackRecord]:
-        return []
-
-
 class _StaleRecordRepo(FakeRepo):
     """Repo that returns preset records for cleanup tests."""
 
@@ -442,201 +380,6 @@ class TestValidateAcoustidKey:
             mock_cls.return_value.__aenter__.return_value = mock_client
             await app._validate_acoustid_key()
             assert "non-fatal" in caplog.text
-
-
-class TestReprocessAll:
-    """RadioRipperApp._reprocess_all()."""
-
-    async def test_renames_and_updates_db(self, tmp_path) -> None:
-        dest = tmp_path / "recordings"
-        mp3_file = dest / "Artist - Title.mp3"
-        mp3_file.parent.mkdir(parents=True)
-        mp3_file.write_bytes(b"\xff\xfb" + b"\x00" * 100)
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Artist - Title",
-                artist="Artist",
-                title="Title",
-                file_path=str(mp3_file),
-                file_size=102,
-            ),
-        )
-        repo = _LookupStubRepo(records={str(mp3_file): record})
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        await app._reprocess_all()
-        restructured = dest / "Artist" / "Artist - Title.mp3"
-        assert restructured.exists(), "File must be restructured into artist folder"
-        assert not mp3_file.exists(), "Original .mp3 must be gone"
-        assert repo.updated_paths == [("TestStation", "Artist - Title", str(restructured))]
-
-    async def test_skips_untested_files(self, tmp_path) -> None:
-        dest = tmp_path / "recordings"
-        untested = dest / "Artist - Title.untested.mp3"
-        untested.parent.mkdir(parents=True)
-        untested.write_bytes(b"\x00" * 32)
-        repo = _LookupStubRepo(records={})
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        await app._reprocess_all()
-        assert untested.exists(), ".untested.mp3 must not be touched"
-        assert repo.updated_paths == []
-
-    async def test_skips_orphan_files_without_db_entry(self, tmp_path) -> None:
-        dest = tmp_path / "recordings"
-        mp3_file = dest / "Orphan - File.mp3"
-        mp3_file.parent.mkdir(parents=True)
-        mp3_file.write_bytes(b"\x00" * 32)
-        repo = _LookupStubRepo(records={})
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        await app._reprocess_all()
-        assert mp3_file.exists(), "Orphan .mp3 without DB entry must not be renamed"
-        assert repo.updated_paths == []
-
-    async def test_noop_when_disabled(self, tmp_path) -> None:
-        dest = tmp_path / "recordings"
-        mp3_file = dest / "Artist - Title.mp3"
-        mp3_file.parent.mkdir(parents=True)
-        mp3_file.write_bytes(b"\x00" * 32)
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Artist - Title",
-                artist="Artist",
-                title="Title",
-                file_path=str(mp3_file),
-                file_size=32,
-            ),
-        )
-        repo = _LookupStubRepo(records={str(mp3_file): record})
-        settings = _make_settings(tmp_path, reprocess_all=False)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        await app._reprocess_all()
-        assert mp3_file.exists(), ".mp3 must stay untouched when reprocess_all=False"
-        assert repo.updated_paths == []
-
-    async def test_skips_already_fully_processed(self, tmp_path, caplog) -> None:
-        caplog.set_level(logging.DEBUG, logger="radio_ripper.app")
-        dest = tmp_path / "recordings"
-        # With album="Test Album" the expected path is dest/Artist/Test Album/Artist - Title.mp3
-        album_dir = dest / "Artist" / "Test Album"
-        album_dir.mkdir(parents=True)
-        mp3_file = album_dir / "Artist - Title.mp3"
-        mp3_file.write_bytes(b"\xff\xfb" + b"\x00" * 100)
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Artist - Title",
-                artist="Artist",
-                title="Title",
-                file_path=str(mp3_file),
-                file_size=102,
-                album="Test Album",
-                enrichment="itunes",
-                label="Test Label",
-                acoustid_recording_id="rec-123",
-            ),
-        )
-        repo = _LookupStubRepo(records={str(mp3_file): record})
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        await app._reprocess_all()
-        assert "already fully processed" in caplog.text
-        assert repo.updated_paths == []
-
-    async def test_move_failure_logs_warning(self, tmp_path, caplog) -> None:
-        caplog.set_level(logging.WARNING, logger="radio_ripper.app")
-        dest = tmp_path / "recordings"
-        mp3_file = dest / "Artist - Title.mp3"
-        mp3_file.parent.mkdir(parents=True)
-        mp3_file.write_bytes(b"\xff\xfb" + b"\x00" * 100)
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Artist - Title",
-                artist="Artist",
-                title="Title",
-                file_path=str(mp3_file),
-                file_size=102,
-            ),
-        )
-        repo = _LookupStubRepo(records={str(mp3_file): record})
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        with patch("radio_ripper.app.shutil.move", side_effect=OSError("Permission denied")):
-            await app._reprocess_all()
-        assert "Move" in caplog.text
-        assert "Permission denied" in caplog.text
-
-    async def test_cancel_during_reprocess(self, tmp_path, caplog) -> None:
-        caplog.set_level(logging.INFO, logger="radio_ripper.app")
-        dest = tmp_path / "recordings"
-        mp3_file = dest / "Artist - Title.mp3"
-        mp3_file.parent.mkdir(parents=True)
-        mp3_file.write_bytes(b"\xff\xfb" + b"\x00" * 100)
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Artist - Title",
-                artist="Artist",
-                title="Title",
-                file_path=str(mp3_file),
-                file_size=102,
-            ),
-        )
-        repo = _LookupStubRepo(records={str(mp3_file): record})
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        app.cancel()
-        await app._reprocess_all()
-        assert "cancelled" in caplog.text
-
-    async def test_resets_config_flag(self, tmp_path) -> None:
-        dest = tmp_path / "recordings"
-        dest.mkdir(parents=True)
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(
-            json.dumps({"reprocess_all": True}), encoding="utf-8"
-        )
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Some - Song",
-                artist="Some",
-                title="Song",
-                file_path="/dev/null/nonexistent.mp3",
-                file_size=0,
-            ),
-        )
-        repo = _StaleRecordRepo([record])
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        app._config_path = str(cfg_file)
-        await app._reprocess_all()
-        cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
-        assert cfg["reprocess_all"] is False
-
-    async def test_reset_config_failure_logs_warning(self, tmp_path, caplog) -> None:
-        caplog.set_level(logging.WARNING, logger="radio_ripper.app")
-        dest = tmp_path / "recordings"
-        record = TrackRecord(
-            station_name="TestStation",
-            track=SavedTrack(
-                stream_title="Some - Song",
-                artist="Some",
-                title="Song",
-                file_path="/dev/null/missing.mp3",
-                file_size=0,
-            ),
-        )
-        repo = _StaleRecordRepo([record])
-        settings = _make_settings(tmp_path, reprocess_all=True)
-        app = _make_app(settings, repo, NullTagger(), NullFingerprintProvider())
-        app._config_path = str(tmp_path / "nonexistent" / "config.json")
-        await app._reprocess_all()
-        assert "Failed to reset reprocess_all" in caplog.text
 
 
 class TestStart:
