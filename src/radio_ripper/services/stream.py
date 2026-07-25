@@ -158,7 +158,8 @@ class StreamRecorder:
         except Exception as exc:
             with contextlib.suppress(Exception):
                 await agen.aclose()
-            raise StreamConnectionError(f"connect failed: {exc}") from exc
+            self._log.warning("[%s] connect failed: %s: %r", self.station_name, type(exc).__name__, exc)
+            raise StreamConnectionError(f"connect failed: {type(exc).__name__}: {exc!r}") from exc
         resp_headers = self._http.response_headers()
         metaint = _parse_metaint(resp_headers)
         if not metaint or metaint <= 0:
