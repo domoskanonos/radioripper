@@ -279,6 +279,8 @@ class StreamRecorder:
 
                 # Offload enrichment + fingerprinting to background task
                 async def _post_process(fp: Path, trk: TrackInfo, prov: str) -> None:
+                    # Step 1: register_and_enrich (iTunes enrichment + basic tags)
+                    enriched_path: Path | None = None
                     try:
                         enriched_path = await register_and_enrich(
                             fp,
@@ -293,11 +295,20 @@ class StreamRecorder:
                             file_locks=self._file_locks,
                             logger=self._log,
                         )
-                        if enriched_path is None:
-                            return
-                        if self._fingerprint is not None:
+                    except Exception as exc:
+                        self._log.warning(
+                            "[%s] Enrichment failed for %s: %s",
+                            self.station_name,
+                            fp.name,
+                            exc,
+                        )
+
+                    # Step 2: fingerprint_song (AcoustID, CAA cover, MB metadata, artist image)
+                    target = enriched_path or fp
+                    if self._fingerprint is not None:
+                        try:
                             await fingerprint_song(
-                                enriched_path,
+                                target,
                                 trk,
                                 self.station_name,
                                 prov,
@@ -310,32 +321,33 @@ class StreamRecorder:
                                 file_locks=self._file_locks,
                                 logger=self._log,
                             )
-                        # Fetch & write lyrics
-                        try:
-                            from radio_ripper.services.lyrics import LyricsOvhProvider
-
-                            lyrics_provider = LyricsOvhProvider(self._http, timeout=5.0)
-                            lyrics = await lyrics_provider.fetch(trk.artist, trk.title)
-                            if lyrics:
-                                self._tagger.write_lyrics(enriched_path, lyrics)
-                                self._log.info(
-                                    "[%s] Lyrics found for %s (%d chars)",
-                                    self.station_name,
-                                    enriched_path.name,
-                                    len(lyrics),
-                                )
-                        except Exception:
+                        except Exception as exc:
                             self._log.warning(
-                                "[%s] Lyrics fetch failed for %s",
+                                "[%s] Fingerprint processing failed for %s: %s",
                                 self.station_name,
-                                enriched_path.name,
+                                target.name,
+                                exc,
                             )
-                    except Exception as exc:
-                        self._log.exception(
-                            "[%s] Post-processing failed for %s: %s",
+
+                    # Step 3: Lyrics
+                    try:
+                        from radio_ripper.services.lyrics import LyricsOvhProvider
+
+                        lyrics_provider = LyricsOvhProvider(self._http, timeout=5.0)
+                        lyrics = await lyrics_provider.fetch(trk.artist, trk.title)
+                        if lyrics:
+                            self._tagger.write_lyrics(target, lyrics)
+                            self._log.info(
+                                "[%s] Lyrics found for %s (%d chars)",
+                                self.station_name,
+                                target.name,
+                                len(lyrics),
+                            )
+                    except Exception:
+                        self._log.warning(
+                            "[%s] Lyrics fetch failed for %s",
                             self.station_name,
-                            fp.name,
-                            exc,
+                            target.name,
                         )
 
                 task = asyncio.create_task(_post_process(final_path, track, provenance))
@@ -393,7 +405,6 @@ class StreamRecorder:
                         current_title = new_title
                         clean = new_title.strip()
                         if not clean:
-
                             recording = False
                             continue
                         if self._is_ad_title(clean):

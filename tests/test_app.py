@@ -550,6 +550,7 @@ class TestFromSettings:
             mock_repo_cls.return_value = AsyncMock()
             app = RadioRipperApp.from_settings(settings)
             from radio_ripper.services.fingerprint import NullFingerprintProvider
+
             assert isinstance(app.fingerprint, NullFingerprintProvider)
 
 

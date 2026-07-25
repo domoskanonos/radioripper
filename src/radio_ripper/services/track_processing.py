@@ -42,6 +42,13 @@ def _release_lock(path: Path, locks: dict[Path, asyncio.Lock]) -> None:
     locks.pop(path, None)
 
 
+def _safe_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Enrichment
 # ---------------------------------------------------------------------------
@@ -131,6 +138,7 @@ async def register_and_enrich(
     enrichment), or ``None`` if the file was discarded.
     """
     early_path = file_path
+    fsize = _safe_size(early_path)
     try:
         await repo.register(
             SavedTrack(
@@ -138,7 +146,7 @@ async def register_and_enrich(
                 artist=track.artist,
                 title=track.title,
                 file_path=str(early_path),
-                file_size=early_path.stat().st_size,
+                file_size=fsize,
             ),
             station_name,
         )
@@ -175,10 +183,9 @@ async def register_and_enrich(
             remove_empty_parents(file_path, settings.destination)
             file_path = new_path
         except OSError as exc:
-            logger.warning(
-                "[%s] album dir move failed (race?): %s", station_name, exc
-            )
+            logger.warning("[%s] album dir move failed (race?): %s", station_name, exc)
 
+    fsize2 = _safe_size(file_path)
     try:
         await repo.update_enrichment(
             station_name,
@@ -187,7 +194,7 @@ async def register_and_enrich(
             title=info.title if info and info.title else None,
             album=info.album if info else None,
             year=info.year if info else None,
-            file_size=file_path.stat().st_size,
+            file_size=fsize2,
             has_cover=(info is not None),
             enrichment="itunes" if info else "",
             label=info.label if info else None,
@@ -207,7 +214,7 @@ async def register_and_enrich(
         "[%s] Completed: %s (%d bytes)",
         station_name,
         file_path.name,
-        file_path.stat().st_size,
+        fsize2,
     )
     return file_path
 

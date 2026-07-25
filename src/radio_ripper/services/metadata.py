@@ -7,7 +7,9 @@ the public iTunes Search API (no API key required).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -189,10 +191,9 @@ class CoverArtArchiveProvider:
 
         release_payload: dict[str, Any] | None = None
         with contextlib.suppress(Exception):
-            release_payload = await self._client.get_json(
+            release_payload = await self._rate_limited_json(
                 self._MBZ_RELEASE_URL.format(release_id=chosen["id"]),
                 params={"fmt": "json", "inc": "labels+release-groups"},
-                timeout=self._timeout,
             )
 
         label_name: str | None = None
@@ -233,7 +234,23 @@ class CoverArtArchiveProvider:
     def __init__(self, client: AsyncHttpClient, *, timeout: float = 8.0) -> None:
         self._client = client
         self._timeout = timeout
+        self._last_mb_request: float = 0.0
         self._recording_cache: dict[str, dict[str, Any]] = {}
+
+    async def _rate_limited_json(
+        self,
+        url: str,
+        params: dict[str, str] | None = None,
+    ) -> dict[str, Any] | None:
+        """MusicBrainz rate limit: 1 request / second."""
+        since_last = time.monotonic() - self._last_mb_request
+        if since_last < 1.0:
+            await asyncio.sleep(1.0 - since_last)
+        self._last_mb_request = time.monotonic()
+        try:
+            return await self._client.get_json(url, params=params, timeout=self._timeout)
+        except Exception:
+            return None
 
     async def _fetch_recording_releases(
         self,
@@ -248,14 +265,10 @@ class CoverArtArchiveProvider:
         """
         if recording_id in self._recording_cache:
             return (self._recording_cache[recording_id] or {}).get("releases") or []
-        try:
-            payload = await self._client.get_json(
-                self._MBZ_RECORDING_URL.format(mbid=recording_id),
-                params={"fmt": "json", "inc": extra_inc},
-                timeout=self._timeout,
-            )
-        except Exception:
-            return None
+        payload = await self._rate_limited_json(
+            self._MBZ_RECORDING_URL.format(mbid=recording_id),
+            params={"fmt": "json", "inc": extra_inc},
+        )
         self._recording_cache[recording_id] = payload or {}
         return ((payload or {}).get("releases") or []) or None
 
