@@ -126,7 +126,7 @@ class Settings(BaseModel):
         if self.log_file is None:
             self.log_file = self.work_dir / "radio_ripper.log"
         if self.temp_dir is None:
-            self.temp_dir = self.work_dir / "cache"
+            self.temp_dir = self.work_dir / "temp"
         if self.mp3_inbox is None:
             self.mp3_inbox = self.work_dir / "mp3_inbox"
         return self
