@@ -4,7 +4,27 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from radio_ripper.services.lyrics import LyricsOvhProvider
+from radio_ripper.services.lyrics import LyricsOvhProvider, _clean_title
+
+
+class TestCleanTitle:
+    def test_strips_feat(self):
+        assert _clean_title("Horizont (feat. Johannes Oerding)") == "Horizont"
+
+    def test_strips_ft(self):
+        assert _clean_title("Love In This Club ft. Young Jeezy") == "Love In This Club"
+
+    def test_strips_bracketed_and(self):
+        assert _clean_title("Moves Like Jagger [and Christina Aguilera]") == "Moves Like Jagger"
+
+    def test_strips_trailing_parenthetical(self):
+        assert _clean_title("Song (Remix)") == "Song"
+
+    def test_preserves_title_without_feat(self):
+        assert _clean_title("Highway to Hell") == "Highway to Hell"
+
+    def test_strips_with_vs(self):
+        assert _clean_title("Senorita (vs. Justin Bieber)") == "Senorita"
 
 
 class TestLyricsOvhProvider:

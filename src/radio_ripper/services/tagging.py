@@ -375,7 +375,10 @@ class ID3Tagger(TrackTagger):
         except Exception as exc:
             raise TaggingError(f"failed to load {file_path} for lyrics: {exc}") from exc
         audio.delall("USLT")
-        audio.add(USLT(encoding=3, lang="eng", desc="", text=lyrics))
+        audio.delall("TXXX:Lyrics")
+        audio.add(USLT(encoding=1, lang="eng", desc="", text=lyrics))
+        # Some Android players look for TXXX:Lyrics instead of USLT
+        audio.add(TXXX(encoding=1, desc="Lyrics", text=lyrics))
         try:
             audio.save(file_path, v2_version=3, v1=2)
         except Exception as exc:

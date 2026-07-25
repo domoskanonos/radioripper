@@ -325,7 +325,7 @@ class StreamRecorder:
                                     len(lyrics),
                                 )
                         except Exception:
-                            self._log.debug(
+                            self._log.warning(
                                 "[%s] Lyrics fetch failed for %s",
                                 self.station_name,
                                 enriched_path.name,
