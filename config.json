@@ -1,6 +1,9 @@
 {
   "destination": "/home/laptop/Musik",
-  "database": "./recordings/ripper.db",
+  "database": "./work/ripper.db",
+  "log_file": "./work/radio_ripper.log",
+  "mp3_inbox": "./work/mp3_inbox",
+  "temp_directory": "./temp",
   "stream_keywords": [
     "classic",
     "retro",
@@ -88,7 +91,6 @@
   "overwrite_existing_files": false,
   "min_file_size_bytes": 1024,
   "log_level": "INFO",
-  "log_file": "./radio_ripper.log",
   "max_recordings": 100000,
   "enrich_metadata": true,
   "embed_cover_art": true,
@@ -96,8 +98,6 @@
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
   "no_icy_disable_after": 10,
-  "temp_directory": "~/.cache/radio-ripper",
-  "mp3_inbox": "./mp3_inbox",
   "discovery_enabled": true,
   "discovery_max_stations": 150,
   "discovery_min_bitrate": 0,

@@ -1,7 +1,4 @@
-recordings/
 .venv/
-radio_ripper.log
-radio_ripper.log.*
 __pycache__/
 *.pyc
 *.pyo
@@ -13,5 +10,5 @@ build/
 *.mp3
 .coverage
 radio_ripper.pid
-acoustid_key.ok
 work
+temp
