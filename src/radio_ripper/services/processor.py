@@ -53,7 +53,6 @@ class _NullRepo:
     async def aclose(self) -> None:
         pass
 
-
 class FileProcessor:
     """Single-worker inbox processor.
 
@@ -224,7 +223,7 @@ class FileProcessor:
             provenance,
             self._settings,
             self._fingerprint,
-            self._null_repo,
+            self._null_repo,  # type: ignore[arg-type]
             self._tagger,
             cover_provider=self._cover_provider,
             popularity_provider=self._popularity,

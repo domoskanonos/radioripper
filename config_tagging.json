@@ -1,0 +1,11 @@
+{
+  "destination": "/home/laptop/Musik",
+  "work_dir": "./work",
+  "log_level": "INFO",
+  "acoustid_min_score": 0.85,
+  "enrichment_workers": 1,
+  "metadata_timeout": 8.0,
+  "cover_timeout": 15.0,
+  "enable_coverartarchive": true,
+  "user_agent": "Radio-Ripper/2.0"
+}

@@ -397,23 +397,16 @@ async def fingerprint_song(
                             )
                         return
 
-                if settings.discard_unmatched:
-                    with contextlib.suppress(OSError):
-                        file_path.unlink(missing_ok=True)
-                        remove_empty_parents(file_path, settings.destination)
-                    try:
-                        await repo.remove(station_name, track.stream_title)
-                    except Exception as exc:
-                        logger.debug(
-                            "[%s] db remove after no-match: %s",
-                            station_name,
-                            exc,
-                        )
-                    logger.info(
-                        "[%s] Discarded (no AcoustID match): %s",
-                        station_name,
-                        file_path.name,
-                    )
+                with contextlib.suppress(OSError):
+                    file_path.unlink(missing_ok=True)
+                    remove_empty_parents(file_path, settings.destination)
+                with contextlib.suppress(Exception):
+                    await repo.remove(station_name, track.stream_title)
+                logger.info(
+                    "[%s] Discarded (no AcoustID match): %s",
+                    station_name,
+                    file_path.name,
+                )
                 return
 
             logger.info(
@@ -424,75 +417,6 @@ async def fingerprint_song(
                 result.title,
                 result.recording_id,
             )
-
-            # ---- max_recordings guard with replace-if-better ----
-            if settings.max_recordings is not None and track.artist and track.title:
-                try:
-                    all_records = await repo.list_all()
-                except Exception:
-                    all_records = []
-                if len(all_records) >= settings.max_recordings:
-                    existing = await repo.find_all_by_artist_title(track.artist, track.title)
-                    if existing:
-                        my_records = [
-                            e
-                            for e in existing
-                            if not (
-                                e.station_name == station_name
-                                and e.track.stream_title.lower() == track.stream_title.lower()
-                            )
-                        ]
-                        best_score = (
-                            max((e.track.acoustid_score or 0) for e in my_records)
-                            if my_records
-                            else 0.0
-                        )
-                        if result.score > best_score:
-                            logger.info(
-                                "[%s] Replacing existing version (new score %.2f > old %.2f): %s",
-                                station_name,
-                                result.score,
-                                best_score,
-                                file_path.name,
-                            )
-                            for rec in my_records + existing:
-                                if (
-                                    rec.station_name == station_name
-                                    and rec.track.stream_title.lower() == track.stream_title.lower()
-                                ):
-                                    continue
-                                with contextlib.suppress(OSError):
-                                    Path(rec.track.file_path).unlink(missing_ok=True)
-                                with contextlib.suppress(Exception):
-                                    await repo.remove(rec.station_name, rec.track.stream_title)
-                        else:
-                            logger.info(
-                                "[%s] Max recordings reached, new score (%.2f)"
-                                " <= best (%.2f) — discarding: %s",
-                                station_name,
-                                result.score,
-                                best_score,
-                                file_path.name,
-                            )
-                            with contextlib.suppress(OSError):
-                                file_path.unlink(missing_ok=True)
-                                remove_empty_parents(file_path, settings.destination)
-                            with contextlib.suppress(Exception):
-                                await repo.remove(station_name, track.stream_title)
-                            return
-                    else:
-                        logger.info(
-                            "[%s] Max recordings reached, no existing match — discarding: %s",
-                            station_name,
-                            file_path.name,
-                        )
-                        with contextlib.suppress(OSError):
-                            file_path.unlink(missing_ok=True)
-                            remove_empty_parents(file_path, settings.destination)
-                        with contextlib.suppress(Exception):
-                            await repo.remove(station_name, track.stream_title)
-                        return
-
             new_path = file_path.with_name(file_path.stem.replace(".untested", "") + ".mp3")
             applied = await apply_fingerprint_match(
                 recording_id=result.recording_id,

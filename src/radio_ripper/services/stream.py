@@ -19,12 +19,9 @@ from typing import Any
 
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
-from radio_ripper.services.fingerprint import FingerprintProvider
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
-from radio_ripper.services.metadata import MetadataProvider
 from radio_ripper.services.playlist import PlaylistResolver
 from radio_ripper.services.storage import TrackWriter, get_mp3_duration, sanitize_filename
-from radio_ripper.services.tagging import TrackTagger
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,13 +44,6 @@ class StreamRecorder:
         settings: Settings,
         http_client: Any,
         playlist_resolver: PlaylistResolver,
-        repository: Any,
-        tagger: TrackTagger,
-        metadata_provider: MetadataProvider | None = None,
-        fingerprint_provider: FingerprintProvider | None = None,
-        cover_provider: Any | None = None,
-        popularity_provider: Any | None = None,
-        enrich_semaphore: asyncio.Semaphore | None = None,
         logger: logging.Logger | None = None,
         ad_title_patterns: list[str] | None = None,
         no_icy_disable_after: int = 10,
@@ -63,17 +53,9 @@ class StreamRecorder:
         self.settings = settings
         self._http = http_client
         self._resolver = playlist_resolver
-        self._repo = repository
-        self._tagger = tagger
-        self._metadata = metadata_provider
-        self._fingerprint = fingerprint_provider
-        self._cover_provider = cover_provider
-        self._popularity = popularity_provider
-        self._enrich_sem = enrich_semaphore
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        self._enrichment_tasks: set[asyncio.Task[Any]] = set()
         self._ad_patterns: list[re.Pattern[str]] = [
             re.compile(p, re.IGNORECASE) for p in (ad_title_patterns or [])
         ]
@@ -311,37 +293,21 @@ class StreamRecorder:
                             await _close_writer(finalize=True)
                         current_title = new_title
                         clean = new_title.strip()
-                        if not clean:
-                            recording = False
-                            continue
-                        if self._is_ad_title(clean):
-                            self._log.info(
-                                "[%s] Ad title detected, skipping: %s",
-                                self.station_name,
-                                clean,
-                            )
-
-                            recording = False
-                            continue
-                        try:
-                            if await self._repo.exists(self.station_name, clean):
+                        if not clean or self._is_ad_title(clean):
+                            if not clean:
+                                self._log.info("[%s] Blank title, skipping", self.station_name)
+                            else:
                                 self._log.info(
-                                    "[%s] Skipping duplicate (already in DB): %s",
+                                    "[%s] Ad title detected, skipping: %s",
                                     self.station_name,
                                     clean,
                                 )
 
-                                recording = False
-                                continue
-                        except Exception:
-                            self._log.exception(
-                                "[%s] repo.exists failed for: %s",
-                                self.station_name,
-                                clean,
-                            )
-                        stream_dir = self.settings.work_dir / "streaming_results"
+                            recording = False
+                            continue
+                        stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
                         stream_dir.mkdir(parents=True, exist_ok=True)
-                        raw_name = sanitize_filename(clean) + ".untested.mp3"
+                        raw_name = sanitize_filename(clean) + ".mp3"
                         file_path = stream_dir / raw_name
                         try:
                             writer = TrackWriter(

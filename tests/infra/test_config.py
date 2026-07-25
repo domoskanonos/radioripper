@@ -74,7 +74,6 @@ class TestLoadSettings:
 class TestDefaults:
     def test_defaults_applied(self):
         s = Settings.model_validate(GOOD_BASE)
-        assert s.enrichment_workers == 32
         assert s.request_timeout == 30.0
         assert s.log_level == "INFO"
 

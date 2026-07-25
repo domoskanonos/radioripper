@@ -42,23 +42,13 @@ class Settings(BaseModel):
 
     destination: Path = Field(default=Path("./recordings"))
 
-    # Runtime data directory — logs, database, cache all live here by default.
-    # Mount this as a volume in Docker for persistence.
+    # Runtime data directory — logs, temp files, inbox all live here.
     work_dir: Path = Field(default=Path("./work"))
     database: Path | None = None
     stream_keywords: list[str] = Field(
         default_factory=lambda: [
-            "rock",
-            "50",
-            "60",
-            "70",
-            "80",
-            "90",
-            "10",
-            "dance",
-            "pop",
-            "top hits",
-            "charts",
+            "rock", "50", "60", "70", "80", "90", "10",
+            "dance", "pop", "top hits", "charts",
         ]
     )
     discovery_enabled: bool = True
@@ -73,26 +63,23 @@ class Settings(BaseModel):
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
     user_agent: str = "Radio-Ripper/2.0"
-    overwrite_existing_files: bool = False
     min_file_size_bytes: int = Field(default=1024, ge=0)
     log_level: str = "INFO"
     log_file: Path | None = None
 
-    max_recordings: int | None = Field(default=None, ge=1)
+    overwrite_existing_files: bool = False
     ad_title_patterns: list[str] = Field(default_factory=list)
     no_icy_disable_after: int = Field(default=10, ge=1)
 
     fallback_cover_path: Path | None = None
-    enrichment_workers: int = Field(default=32)
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
 
     mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
     min_duration_s: float = Field(default=30, ge=0)
-    github_pat: str = ""
     acoustid_min_score: float = Field(default=0.85, ge=0.0, le=1.0)
-    discard_unmatched: bool = True
     min_popularity_rank: int = Field(default=100000, ge=0)
+    github_pat: str = ""
     enable_coverartarchive: bool = True
 
     max_concurrent_streams: int = Field(default=400, ge=1, le=500)

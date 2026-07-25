@@ -1,8 +1,13 @@
-"""CLI entry point for radio_ripper.
+"""CLI entry point for radio_ripper — two subcommands.
 
-Parses arguments, loads :class:`~radio_ripper.infra.config.Settings`,
-configures logging, creates a :class:`~radio_ripper.app.RadioRipperApp` and
-runs it forever until SIGINT/SIGTERM trigger a graceful shutdown.
+``radio-ripper stream``
+    Record MP3s from radio streams and dump raw files into
+    ``work/streaming_results/``. No tagging, no enrichment.
+
+``radio-ripper tag``
+    Pick up raw MP3s from ``work/streaming_results/``, fingerprint, enrich,
+    tag, fetch cover / lyrics, and move finished files to ``destination/``.
+    Single-worker, one file at a time.
 """
 
 from __future__ import annotations
@@ -16,70 +21,51 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from radio_ripper import __version__
-from radio_ripper.app import RadioRipperApp
 from radio_ripper.infra.config import Settings, load_settings
 from radio_ripper.infra.errors import ConfigurationError
+from radio_ripper.infra.http import HttpxAsyncClient
 from radio_ripper.infra.logging import configure_logging
+from radio_ripper.services.fingerprint import AcoustidFingerprintProvider, NullFingerprintProvider
+from radio_ripper.services.metadata import ITunesMetadataProvider
+from radio_ripper.services.popularity import DeezerPopularityChecker
+from radio_ripper.services.processor import FileProcessor
+from radio_ripper.services.tagging import ID3Tagger
 
-_DEFAULT_CONFIG_PATHS = (
-    "./config.json",
-    "~/.config/radio_ripper/config.json",
-    "/etc/radio_ripper/config.json",
-)
-
-
-def _find_config_path(arg: str | None) -> str | None:
-    if arg:
-        return arg
-    for candidate in _DEFAULT_CONFIG_PATHS:
-        p = Path(candidate).expanduser()
-        if p.is_file():
-            return str(p)
-    return None
+_LOGGER = logging.getLogger(__name__)
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="radio-ripper",
-        description=(
-            "Production-grade Webradio-Ripper: dauerhaftes paralleles Aufzeichnen "
-            "von ICY-Metadaten-Streams mit automatischer Song-Trennung, "
-            "Duplikats-Erkennung (SQLite), ID3v2-Tagging (mutagen) und "
-            "iTunes-basiertem Metadata-Enrichment inkl. Cover-Art."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Beispiel:\n"
-            "  uv run radio-ripper --config config.json\n"
-            "  uv run radio-ripper --log-level DEBUG\n"
-            "\n"
-            "Stop mit Strg+C."
-        ),
-    )
-    parser.add_argument(
-        "-c",
-        "--config",
-        default=None,
-        help="Pfad zur config.json (default: ./config.json, "
-        "alternativ ~/.config/radio_ripper/config.json, /etc/radio_ripper/config.json).",
-    )
-    parser.add_argument(
-        "--log-level",
-        default=None,
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Ueberschreibt log_level aus der config.json.",
-    )
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="radio-ripper")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    stream_p = sub.add_parser("stream", help="Stream radio stations and dump raw MP3s")
+    stream_p.add_argument("-c", "--config", default=None, help="Config file path")
+    stream_p.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    stream_p.set_defaults(func=_run_stream)
+
+    tag_p = sub.add_parser("tag", help="Process raw MP3s → enrich, tag, file in destination")
+    tag_p.add_argument("-c", "--config", default=None, help="Config file path")
+    tag_p.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    tag_p.set_defaults(func=_run_tag)
+
     return parser
 
 
-async def _run_async(settings: Settings, logger: logging.Logger) -> int:
-    app = RadioRipperApp.from_settings(settings, logger=logger)
+# ---------------------------------------------------------------------------
+# stream — record only
+# ---------------------------------------------------------------------------
+
+
+async def _run_stream(settings: Settings, logger: logging.Logger) -> int:
+    from radio_ripper.app import RadioRipperApp
+
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
+    app = RadioRipperApp.from_settings(settings, logger=logger)
 
     def _signal_handler(signum: int, _frame: object | None) -> None:
-        logger.info("Signal %s received - initiating graceful shutdown...", signum)
+        logger.info("Signal %s received - shutting down...", signum)
         stop_event.set()
         app.cancel()
 
@@ -94,38 +80,99 @@ async def _run_async(settings: Settings, logger: logging.Logger) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# tag — process inbox
+# ---------------------------------------------------------------------------
+
+
+async def _run_tag(settings: Settings, logger: logging.Logger) -> int:
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
+    client = HttpxAsyncClient(user_agent=settings.user_agent)
+
+    api_key = (
+        __import__("os").environ.get("ACOUSTID_API_KEY")
+        or __import__("os").environ.get("ACCOUST_ID", "")
+    )
+    fp: AcoustidFingerprintProvider | NullFingerprintProvider
+    if api_key:
+        fp = AcoustidFingerprintProvider(api_key, min_score=settings.acoustid_min_score)
+    else:
+        logger.warning("ACOUSTID_API_KEY not set — fingerprinting disabled")
+        fp = NullFingerprintProvider()
+
+    metadata = ITunesMetadataProvider(client, metadata_timeout=settings.metadata_timeout)
+    tagger = ID3Tagger()
+    inbox = settings.mp3_inbox or settings.work_dir / "mp3_inbox"
+
+    popularity: DeezerPopularityChecker | None = None
+    if settings.min_popularity_rank and settings.min_popularity_rank > 0:
+        popularity = DeezerPopularityChecker(client)
+
+    proc = FileProcessor(
+        inbox=inbox,
+        temp_dir=settings.work_dir / "failed",
+        settings=settings,
+        fingerprint_provider=fp,
+        metadata_provider=metadata,
+        tagger=tagger,
+        name="tag",
+        poll_interval=2.0,
+        cover_provider=None,  # TODO: add CoverArtArchiveProvider if wanted
+        popularity_provider=popularity,
+        logger=logger,
+    )
+
+    def _signal_handler(signum: int, _frame: object | None) -> None:
+        logger.info("Signal %s received - shutting down...", signum)
+        stop_event.set()
+
+    loop.add_signal_handler(signal.SIGINT, _signal_handler, signal.SIGINT, None)
+    loop.add_signal_handler(signal.SIGTERM, _signal_handler, signal.SIGTERM, None)
+
+    await proc.start()
+    try:
+        await stop_event.wait()
+    finally:
+        await proc.stop()
+        await client.aclose()
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# main dispatcher
+# ---------------------------------------------------------------------------
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_arg_parser().parse_args(argv if argv is not None else sys.argv[1:])
-    cfg_path = _find_config_path(args.config)
+    parser = _build_parser()
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+    cfg_path: str | None = args.config
     if cfg_path is None or not Path(cfg_path).expanduser().is_file():
-        print("No config found. Use --config PATH or create ./config.json", file=sys.stderr)
+        print("No config found. Use --config PATH.", file=sys.stderr)
         return 2
+
     try:
         settings = load_settings(cfg_path)
     except ConfigurationError as exc:
-        print(f"Failed to load config '{cfg_path}': {exc}", file=sys.stderr)
+        print(f"Failed to load config: {exc}", file=sys.stderr)
         return 2
+
     if args.log_level:
         settings = settings.model_copy(update={"log_level": args.log_level})
+
     logger = configure_logging(settings.log_level, settings.log_file)
-    logger.info("=== Radio-Ripper %s starting up ===", __version__)
-    logger.info("Config file : %s", cfg_path)
-    logger.info("Destination : %s", settings.destination)
-    logger.info("Database    : %s", settings.database)
-    logger.info("Streams     : %d", len(settings.streams))
-    logger.info(
-        "Enrichment  : workers=%d",
-        settings.enrichment_workers,
-    )
+    logger.info("=== Radio-Ripper %s (%s mode) ===", __version__, args.command)
+    logger.info("Config     : %s", cfg_path)
+
     try:
-        return asyncio.run(_run_async(settings, logger))
+        return asyncio.run(args.func(settings, logger))
     except KeyboardInterrupt:
-        logger.info("KeyboardInterrupt received - shutting down...")
+        logger.info("KeyboardInterrupt — shut down.")
         return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
-__all__ = ["main"]
