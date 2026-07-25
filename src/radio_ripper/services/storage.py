@@ -134,8 +134,13 @@ async def get_mp3_duration(path: Path) -> float | None:
 async def is_valid_mp3(path: Path) -> bool:
     try:
         with path.open("rb") as f:
-            header = f.read(2)
-        return len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0
+            head = f.read(4096)
+        # Suche MPEG-Frame-Sync (0xFF + 0xE0) in den ersten 4096 Bytes
+        # Überspringt ID3v2-Tags, APE-Tags etc., die vor den Audiodaten stehen
+        for i in range(len(head) - 1):
+            if head[i] == 0xFF and (head[i + 1] & 0xE0) == 0xE0:
+                return True
+        return False
     except OSError:
         return False
 
