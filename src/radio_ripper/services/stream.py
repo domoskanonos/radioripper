@@ -253,14 +253,21 @@ class StreamRecorder:
                     writer = None
                     return
                 final_path = writer.final_path
-                # Fix MP3 frame alignment caused by ICY stream cut-points
-                # (must run BEFORE tagging so tags aren't stripped by pydub/ffmpeg)
-                remux_mp3(final_path)
-                trim_trailing(final_path)
-                # Duration check: discard songs shorter than the configured minimum
+                saved_title = current_title or ""
+
+                # Reset state now — the recorder can start the next song immediately
+                writer = None
+                current_title = None
+                recording = False
+
+                # Quick post-processing in thread pool (non-blocking for event loop)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, remux_mp3, final_path)
+                await loop.run_in_executor(None, trim_trailing, final_path)
+
                 min_dur = self.settings.min_duration_s
                 if min_dur > 0:
-                    dur = get_mp3_duration(final_path)
+                    dur = await loop.run_in_executor(None, get_mp3_duration, final_path)
                     if dur is not None and dur < min_dur:
                         self._log.info(
                             "[%s] Discarded (too short: %.1fs < %.0fs): %s",
@@ -272,39 +279,34 @@ class StreamRecorder:
                         with contextlib.suppress(OSError):
                             final_path.unlink(missing_ok=True)
                         remove_empty_parents(final_path, self.settings.destination)
-                        current_title = None
-                        recording = False
-                        writer = None
                         return
-                track = TrackInfo.from_stream_title(current_title or "")
+
+                track = TrackInfo.from_stream_title(saved_title)
                 provenance = f"{self.station_name}@{self.playlist_url}"
 
-                final_path = await register_and_enrich(  # type: ignore[assignment]
-                    final_path,
-                    track,
-                    self.station_name,
-                    provenance,
-                    self.settings,
-                    self._repo,
-                    self._tagger,
-                    metadata_provider=self._metadata,
-                    enrich_semaphore=self._enrich_sem,
-                    file_locks=self._file_locks,
-                    logger=self._log,
-                )
-                if final_path is None:
-                    writer = None
-                    current_title = None
-                    recording = False
-                    return
-
-                if self._fingerprint is not None:
-                    fp_task = asyncio.create_task(
-                        fingerprint_song(
-                            final_path,
-                            track,
+                # Offload enrichment + fingerprinting to background task
+                async def _post_process(fp: Path, trk: TrackInfo, prov: str) -> None:
+                    enriched_path = await register_and_enrich(
+                        fp,
+                        trk,
+                        self.station_name,
+                        prov,
+                        self.settings,
+                        self._repo,
+                        self._tagger,
+                        metadata_provider=self._metadata,
+                        enrich_semaphore=self._enrich_sem,
+                        file_locks=self._file_locks,
+                        logger=self._log,
+                    )
+                    if enriched_path is None:
+                        return
+                    if self._fingerprint is not None:
+                        await fingerprint_song(
+                            enriched_path,
+                            trk,
                             self.station_name,
-                            provenance,
+                            prov,
                             self.settings,
                             self._fingerprint,
                             self._repo,
@@ -314,9 +316,10 @@ class StreamRecorder:
                             file_locks=self._file_locks,
                             logger=self._log,
                         )
-                    )
-                    self._enrichment_tasks.add(fp_task)
-                    fp_task.add_done_callback(self._enrichment_tasks.discard)
+
+                task = asyncio.create_task(_post_process(final_path, track, provenance))
+                self._enrichment_tasks.add(task)
+                task.add_done_callback(self._enrichment_tasks.discard)
             else:
                 writer.discard()
                 self._log.info(
@@ -326,9 +329,9 @@ class StreamRecorder:
                     writer.size,
                 )
                 remove_empty_parents(writer.final_path, self.settings.destination)
-            writer = None
-            current_title = None
-            recording = False
+                writer = None
+                current_title = None
+                recording = False
 
         try:
             # First chunk already pulled above; feed it
