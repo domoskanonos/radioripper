@@ -6,6 +6,12 @@ labels: bug
 assignees: ""
 ---
 
+## Project
+
+Which project does this affect?
+- [ ] **stream** – recording, ICY parsing, playlist discovery
+- [ ] **tag** – fingerprinting, enrichment, ID3 tagging
+
 ## Description
 
 <!-- A clear and concise description of the bug. -->
@@ -24,7 +30,7 @@ assignees: ""
 
 - OS:
 - Python version:
-- Radio-Ripper version:
+- Project version (see pyproject.toml):
 - Installation method (pip/uv/Docker):
 
 ## Logs
