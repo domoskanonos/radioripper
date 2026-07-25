@@ -1,4 +1,5 @@
 """Tests for radio_ripper.app — RadioRipperApp composition (stream mode)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -49,15 +50,17 @@ class TestRadioRipperApp:
         await app.stop()
 
     async def test_multiple_streams(self, tmp_path) -> None:
-        settings = Settings.model_validate({
-            "destination": str(tmp_path / "recordings"),
-            "database": str(tmp_path / "ripper.db"),
-            "streams": [
-                {"name": "Station1", "url": "http://example.com/1.m3u"},
-                {"name": "Station2", "url": "http://example.com/2.m3u"},
-                {"name": "Station3", "url": "http://example.com/3.m3u"},
-            ],
-        })
+        settings = Settings.model_validate(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "ripper.db"),
+                "streams": [
+                    {"name": "Station1", "url": "http://example.com/1.m3u"},
+                    {"name": "Station2", "url": "http://example.com/2.m3u"},
+                    {"name": "Station3", "url": "http://example.com/3.m3u"},
+                ],
+            }
+        )
         client = AsyncMock()
         client.aclose = AsyncMock()
         app = RadioRipperApp(
@@ -71,11 +74,13 @@ class TestRadioRipperApp:
 
     async def test_no_streams_logs_error(self, tmp_path, caplog) -> None:
         settings = _make_settings(tmp_path)
-        settings = Settings.model_validate({
-            "destination": str(tmp_path / "recordings"),
-            "database": str(tmp_path / "ripper.db"),
-            "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
-        })
+        settings = Settings.model_validate(
+            {
+                "destination": str(tmp_path / "recordings"),
+                "database": str(tmp_path / "ripper.db"),
+                "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
+            }
+        )
         client = AsyncMock()
         app = RadioRipperApp(
             settings=settings,

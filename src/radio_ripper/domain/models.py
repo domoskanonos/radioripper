@@ -1,5 +1,3 @@
-"""Domain models — plain data carriers free of infrastructure concerns."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,4 +19,21 @@ class TrackInfo:
         return cls(stream_title, "", stream_title)
 
 
-__all__ = ["TrackInfo"]
+@dataclass(frozen=True, slots=True)
+class Station:
+    name: str
+    url: str
+    bitrate: int = 0
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class StreamMetadata:
+    stream_title: str
+    artist: str
+    title: str
+    metaint: int = 0
+    bitrate: int = 0
+
+
+__all__ = ["Station", "StreamMetadata", "TrackInfo"]

@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from radio_ripper.infra.config import Settings, StreamConfig
+from radio_ripper.infra.config import Settings
 from radio_ripper.services.playlist import StaticPlaylistResolver
 from radio_ripper.services.stream import StreamRecorder, _parse_metaint
 
@@ -44,9 +44,7 @@ class FakeHttpClient:
     async def get_text(self, url: str, *, timeout: float | None = None) -> str:
         return ""
 
-    async def get_json(
-        self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None
-    ) -> Any:
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None) -> Any:
         return {}
 
     async def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:
@@ -235,6 +233,7 @@ class TestAdTitlePatterns:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path)
         import shutil
+
         stream_dir = settings.work_dir / "mp3_inbox"
         if stream_dir.is_dir():
             shutil.rmtree(stream_dir)
@@ -357,9 +356,7 @@ class TestRunForeverExceptions:
         assert "no ICY metadata after 1 consecutive attempts" in caplog.text
         assert not rec._stop_event.is_set()
 
-    async def test_disabled_after_too_many_connect_failures(
-        self, tmp_path: Path, caplog: Any
-    ) -> None:
+    async def test_disabled_after_too_many_connect_failures(self, tmp_path: Path, caplog: Any) -> None:
         """Recorder disables after no_icy_disable_after connect failures."""
         dest = tmp_path / "recordings"
         dest.mkdir()
@@ -400,6 +397,7 @@ class TestDiscardSmallFile:
     async def test_discards_when_below_min_file_size(self, tmp_path: Path) -> None:
         """A song with less audio than min_file_size_bytes is discarded."""
         import shutil
+
         stream_dir = tmp_path / "work" / "mp3_inbox"
         if stream_dir.is_dir():
             shutil.rmtree(stream_dir)

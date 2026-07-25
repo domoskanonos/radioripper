@@ -1,5 +1,3 @@
-"""CLI entry point for radio-ripper stream."""
-
 from __future__ import annotations
 
 import argparse

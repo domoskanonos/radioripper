@@ -1,9 +1,3 @@
-"""Application orchestrator — stream mode.
-
-Creates stream recorders for each station, dumps raw MP3 files into
-``work/streaming_results/``. No tagging, no enrichment, no database.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,13 +17,6 @@ _LOGGER = logging.getLogger("radio_ripper.app")
 
 
 class RadioRipperApp:
-    """Compose stream recorders and run them concurrently.
-
-    Intended for use with the ``stream`` subcommand — records raw MP3s
-    and dumps them into ``work/streaming_results/`` for later processing
-    by the ``tag`` subcommand.
-    """
-
     def __init__(
         self,
         *,
@@ -60,44 +47,80 @@ class RadioRipperApp:
     def recorders(self) -> Sequence[StreamRecorder]:
         return list(self._recorders)
 
+    def _select_stations(self) -> list[StreamConfig]:
+        if self.settings.streams:
+            return list(self.settings.streams)
+
+        custom_path = self.settings.work_dir / "stations" / "custom.m3u"
+        custom_stations = load_local_m3u(custom_path) if custom_path.is_file() else []
+        if custom_stations:
+            self.logger.info("Loaded %d stations from custom.m3u.", len(custom_stations))
+        else:
+            custom_path.parent.mkdir(parents=True, exist_ok=True)
+            custom_path.write_text("#EXTM3U\n")
+            self.logger.info("Created empty custom.m3u at %s.", custom_path)
+
+        return list(custom_stations)
+
     async def start(self) -> None:
         if self._cancel_requested:
             self.logger.info("Startup cancelled.")
             return
 
-        if not self.settings.streams:
-            custom_path = self.settings.work_dir / "stations" / "custom.m3u"
-            custom_stations = load_local_m3u(custom_path) if custom_path.is_file() else []
-            if custom_stations:
-                self.logger.info("Loaded %d stations from custom.m3u.", len(custom_stations))
-            else:
-                custom_path.parent.mkdir(parents=True, exist_ok=True)
-                custom_path.write_text("#EXTM3U\n")
-                self.logger.info("Created empty custom.m3u at %s.", custom_path)
+        stations = self._select_stations()
+        has_explicit = bool(self.settings.streams)
 
-            stations = list(custom_stations)
+        if not has_explicit and not self.settings.disable_automatic_streams:
+            discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
+            self.logger.info("Loaded %d stations via discovery.", len(discovered))
+            stations.extend(discovered)
 
-            if not self.settings.disable_automatic_streams:
-                discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
-                self.logger.info("Loaded %d stations via discovery.", len(discovered))
-                stations.extend(discovered)
+        if not stations:
+            self.logger.error("No streams available. Exiting.")
+            return
 
-            if not stations:
-                self.logger.error("No streams available. Exiting.")
-                return
+        stations = self._apply_stream_limit(stations)
 
-            max_streams = self.settings.max_concurrent_streams
-            if len(stations) > max_streams:
-                custom_count = len(custom_stations)
-                if custom_count >= max_streams:
-                    stations = stations[:max_streams]
-                else:
-                    stations = stations[:custom_count] + stations[custom_count:][:max_streams - custom_count]
+        stations = await self._preflight_check(stations)
+        if not stations:
+            self.logger.error("No reachable streams. Exiting.")
+            return
 
-            self.settings.streams = stations
+        for stream in stations:
+            if not stream.enabled:
+                self.logger.info("Skipping disabled stream: %s", stream.name)
+                continue
+            patterns = (
+                stream.ad_title_patterns if stream.ad_title_patterns is not None else self.settings.ad_title_patterns
+            )
+            rec = StreamRecorder(
+                station_name=stream.name,
+                playlist_url=str(stream.url),
+                settings=self.settings,
+                http_client=self.client,
+                playlist_resolver=self.resolver,
+                logger=self.logger,
+                ad_title_patterns=patterns,
+                no_icy_disable_after=self.settings.no_icy_disable_after,
+                startup_grace_titles=self.settings.startup_grace_titles,
+            )
+            rec.start()
+            self._recorders.append(rec)
+        self.logger.info("Started %d stream recorders.", len(self._recorders))
 
-        # ── Pre-flight reachability check ──────────────────────────────
-        enabled = [s for s in self.settings.streams if s.enabled]
+    def _apply_stream_limit(self, stations: list[StreamConfig]) -> list[StreamConfig]:
+        max_streams = self.settings.max_concurrent_streams
+        if len(stations) <= max_streams:
+            return stations
+        custom_path = self.settings.work_dir / "stations" / "custom.m3u"
+        custom_stations = load_local_m3u(custom_path) if custom_path.is_file() else []
+        custom_count = len(custom_stations)
+        if custom_count >= max_streams:
+            return stations[:max_streams]
+        return stations[:custom_count] + stations[custom_count:][: max_streams - custom_count]
+
+    async def _preflight_check(self, stations: list[StreamConfig]) -> list[StreamConfig]:
+        enabled = [s for s in stations if s.enabled]
         self.logger.info("Verifying reachability of %d station(s)...", len(enabled))
         sem = asyncio.Semaphore(_PROBE_CONCURRENT)
 
@@ -119,37 +142,8 @@ class RadioRipperApp:
                 unreachable,
                 len(enabled),
             )
-        # Keep disabled stations in the list but only recorders for reachable ones
-        disabled = [s for s in self.settings.streams if not s.enabled]
-        self.settings.streams = disabled + reachable
-        if not reachable:
-            self.logger.error("No reachable streams. Exiting.")
-            return
-        # ── End of pre-flight check ────────────────────────────────────
-
-        for stream in self.settings.streams:
-            if not stream.enabled:
-                self.logger.info("Skipping disabled stream: %s", stream.name)
-                continue
-            patterns = (
-                stream.ad_title_patterns
-                if stream.ad_title_patterns is not None
-                else self.settings.ad_title_patterns
-            )
-            rec = StreamRecorder(
-                station_name=stream.name,
-                playlist_url=str(stream.url),
-                settings=self.settings,
-                http_client=self.client,
-                playlist_resolver=self.resolver,
-                logger=self.logger,
-                ad_title_patterns=patterns,
-                no_icy_disable_after=self.settings.no_icy_disable_after,
-                startup_grace_titles=self.settings.startup_grace_titles,
-            )
-            rec.start()
-            self._recorders.append(rec)
-        self.logger.info("Started %d stream recorders.", len(self._recorders))
+        disabled = [s for s in stations if not s.enabled]
+        return disabled + reachable
 
     def cancel(self) -> None:
         self._cancel_requested = True

@@ -1,13 +1,3 @@
-"""Async stream recorder.
-
-One :class:`StreamRecorder` coroutine per station. Connects via the
-:class:`~radio_ripper.infra.http.AsyncHttpClient` ABC, drives the pure
-:class:`~radio_ripper.services.icy.IcyParser` state machine, and delegates file
-IO to :class:`~radio_ripper.services.storage.TrackWriter`.
-The first running song at join is discarded; recording starts at the next
-title boundary. Exponential reconnect backoff.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -33,9 +23,18 @@ def _safe_size(path: Path) -> int:
         return 0
 
 
-class StreamRecorder:
-    """Manage the perpetual recording loop for a single station."""
+def _parse_metaint(headers: dict[str, str]) -> int | None:
+    for key in ("icy-metaint", "Icy-Metaint", "ICY-METAINT"):
+        val = headers.get(key)
+        if val:
+            try:
+                return int(val)
+            except ValueError:
+                return None
+    return None
 
+
+class StreamRecorder:
     def __init__(
         self,
         *,
@@ -57,34 +56,15 @@ class StreamRecorder:
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        self._ad_patterns: list[re.Pattern[str]] = [
-            re.compile(p, re.IGNORECASE) for p in (ad_title_patterns or [])
-        ]
+        self._ad_patterns: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in (ad_title_patterns or [])]
         self._no_icy_disable_after = no_icy_disable_after
         self._no_icy_failures = 0
         self._connect_failures = 0
         self._startup_grace_titles = startup_grace_titles
-        # Per-file locks: serialize enrichment vs fingerprinting on the same path
-        # so rename (in _fingerprint_song) doesn't race with write_full (in _enrich_song).
-        self._file_locks: dict[Path, asyncio.Lock] = {}
-        self._last_limit_log = 0.0
-
-    def _lock_for(self, path: Path) -> asyncio.Lock:
-        """Get (or create) the asyncio.Lock for *path*."""
-        lock = self._file_locks.get(path)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._file_locks[path] = lock
-        return lock
-
-    def _release_lock(self, path: Path) -> None:
-        """Remove the per-file lock after the terminal operation completed."""
-        self._file_locks.pop(path, None)
 
     # ------------------------------------------------------------------ lifecycle
 
     def _is_ad_title(self, title: str) -> bool:
-        """Return True if *title* matches any configured ad-title pattern."""
         return bool(self._ad_patterns and any(p.search(title) for p in self._ad_patterns))
 
     def stop(self) -> None:
@@ -125,8 +105,7 @@ class StreamRecorder:
                 break
             if self._connect_failures >= self._no_icy_disable_after:
                 self._log.error(
-                    "[%s] Disabled: connect failed %d times in a row. "
-                    "Removing station from active set.",
+                    "[%s] Disabled: connect failed %d times in a row. Removing station from active set.",
                     self.station_name,
                     self._connect_failures,
                 )
@@ -165,20 +144,21 @@ class StreamRecorder:
             self._connect_failures = 0
             return False
 
-    async def _stream_with_meta(self, stream_url: str) -> bool:
-        """Drive the IcyParser state machine against the live HTTP stream."""
-        headers = {"Icy-MetaData": "1"}
-        first_chunk: bytes | None = None
-        try:
-            agen = self._http.stream_binary(
-                stream_url,
-                headers=headers,
-                timeout=self.settings.request_timeout,
-            )
-            first_chunk = await agen.__anext__()  # warm up so headers are available
-        except Exception as exc:
-            raise StreamConnectionError(f"connect failed: {exc}") from exc
+    # ------------------------------------------------------------------ stream helpers
 
+    async def _connect_stream(self, stream_url: str) -> tuple[Any, IcyParser] | None:
+        headers = {"Icy-MetaData": "1"}
+        agen = self._http.stream_binary(
+            stream_url,
+            headers=headers,
+            timeout=self.settings.request_timeout,
+        )
+        try:
+            first_chunk = await agen.__anext__()
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await agen.aclose()
+            raise StreamConnectionError(f"connect failed: {exc}") from exc
         resp_headers = self._http.response_headers()
         metaint = _parse_metaint(resp_headers)
         if not metaint or metaint <= 0:
@@ -191,10 +171,64 @@ class StreamRecorder:
             )
             with contextlib.suppress(Exception):
                 await agen.aclose()
-            return False
-        self._no_icy_failures = 0  # reset on successful ICY connection
+            return None
+        self._no_icy_failures = 0
         self._log.info("[%s] icy-metaint=%d", self.station_name, metaint)
         parser = IcyParser(metaint)
+        parser.feed(first_chunk or b"")
+        return agen, parser
+
+    async def _check_min_duration(self, path: Path) -> bool:
+        min_dur = self.settings.min_duration_s
+        if min_dur <= 0:
+            return True
+        dur = await get_mp3_duration(path)
+        if dur is None:
+            return True
+        if dur >= min_dur:
+            return True
+        self._log.info(
+            "[%s] Discarded (too short: %.1fs < %.0fs): %s",
+            self.station_name,
+            dur,
+            min_dur,
+            path.name,
+        )
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        return False
+
+    def _make_writer(self, title: str) -> TrackWriter | None:
+        stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
+        stream_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = sanitize_filename(title)
+        if not safe_name:
+            self._log.error("[%s] Cannot create file for title=%r", self.station_name, title)
+            return None
+        file_path = stream_dir / (safe_name + ".mp3")
+        try:
+            return TrackWriter(file_path, min_size=self.settings.min_file_size_bytes)
+        except OSError as exc:
+            self._log.error("[%s] cannot open %s: %s", self.station_name, file_path, exc)
+            return None
+
+    def _should_record_title(self, title: str) -> bool:
+        clean = title.strip()
+        if not clean:
+            self._log.info("[%s] Blank title, skipping", self.station_name)
+            return False
+        if self._is_ad_title(clean):
+            self._log.info("[%s] Ad title detected, skipping: %s", self.station_name, clean)
+            return False
+        return True
+
+    # ------------------------------------------------------------------ main stream loop
+
+    async def _stream_with_meta(self, stream_url: str) -> bool:
+        connected = await self._connect_stream(stream_url)
+        if connected is None:
+            return False
+        agen, parser = connected
 
         first_title_seen: str | None = None
         current_title: str | None = None
@@ -202,75 +236,12 @@ class StreamRecorder:
         recording = False
         grace_remaining = self._startup_grace_titles
 
-        async def _close_writer(finalize: bool) -> None:
-            nonlocal writer, current_title, recording
-            if writer is None:
-                return
-            if finalize:
-                committed = writer.commit()
-                if not committed:
-                    self._log.info(
-                        "[%s] Discarded (too small): %s", self.station_name, writer.final_path.name
-                    )
-                    current_title = None
-                    recording = False
-                    writer = None
-                    return
-                final_path = writer.final_path
-                saved_title = current_title or ""
-                writer = None
-                current_title = None
-                recording = False
-
-                # Check min duration quickly before offloading
-                min_dur = self.settings.min_duration_s
-                if min_dur > 0:
-                    dur = get_mp3_duration(final_path)
-                    if dur is not None and dur < min_dur:
-                        if dur is None:
-                            reason = "unreadable / corrupt"
-                        else:
-                            reason = f"too short ({dur:.1f}s < {min_dur:.0f}s)"
-                        self._log.info(
-                            "[%s] Discarded (%s): %s",
-                            self.station_name,
-                            reason,
-                            final_path.name,
-                        )
-                        with contextlib.suppress(OSError):
-                            final_path.unlink(missing_ok=True)
-                        return
-
-                self._log.info(
-                    "[%s] Streaming result: %s (%d bytes)",
-                    self.station_name,
-                    final_path.name,
-                    _safe_size(final_path),
-                )
-
-                current_title = saved_title  # restore so next title is tracked
-            else:
-                writer.discard()
-                self._log.info(
-                    "[%s] Discarded incomplete: %s (%d bytes)",
-                    self.station_name,
-                    writer.final_path.name,
-                    writer.size,
-                )
-                writer = None
-                current_title = None
-                recording = False
-
         try:
-            # First chunk already pulled above; feed it
-            parser.feed(first_chunk or b"")
             async for chunk in agen:
                 if self._stop_event.is_set():
-                    self._log.info(
-                        "[%s] Stop requested; discarding in-flight song.",
-                        self.station_name,
-                    )
-                    await _close_writer(finalize=False)
+                    self._log.info("[%s] Stop requested; discarding in-flight song.", self.station_name)
+                    if writer is not None:
+                        writer.discard()
                     return True
                 if not chunk:
                     continue
@@ -279,13 +250,11 @@ class StreamRecorder:
                     if isinstance(event, AudioChunk):
                         if recording and writer is not None:
                             writer.write(event.data)
-                        # else: phase 1 / duplicate mode -> discard bytes
                     elif isinstance(event, TitleChanged):
                         new_title = event.title
                         if first_title_seen is None:
                             first_title_seen = new_title
                             current_title = new_title
-
                             self._log.info(
                                 "[%s] Joined mid-song '%s' - waiting for next boundary.",
                                 self.station_name,
@@ -294,79 +263,60 @@ class StreamRecorder:
                             continue
                         if new_title == current_title:
                             continue
-                        # ---- Song-Wechsel ----
+                        # Title change
                         if recording and writer is not None:
-                            await _close_writer(finalize=True)
-                        current_title = new_title
-                        clean = new_title.strip()
-                        if not clean or self._is_ad_title(clean):
-                            if not clean:
-                                self._log.info("[%s] Blank title, skipping", self.station_name)
-                            else:
-                                self._log.info(
-                                    "[%s] Ad title detected, skipping: %s",
-                                    self.station_name,
-                                    clean,
-                                )
-
+                            await self._finalize_writer(writer, current_title)
+                            writer = None
                             recording = False
+                        current_title = new_title
+                        if not self._should_record_title(new_title):
                             continue
                         if grace_remaining > 0:
                             grace_remaining -= 1
                             self._log.info(
                                 "[%s] Grace period: skipping '%s' (%d remaining)",
                                 self.station_name,
-                                clean,
+                                new_title.strip(),
                                 grace_remaining,
                             )
-                            recording = False
                             continue
-                        stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
-                        stream_dir.mkdir(parents=True, exist_ok=True)
-                        raw_name = sanitize_filename(clean) + ".mp3"
-                        file_path = stream_dir / raw_name
-                        try:
-                            writer = TrackWriter(
-                                file_path,
-                                min_size=self.settings.min_file_size_bytes,
-                            )
+                        writer = self._make_writer(new_title.strip())
+                        if writer is not None:
                             recording = True
-                            self._log.info(
-                                "[%s] Recording -> %s",
-                                self.station_name,
-                                file_path.name,
-                            )
-                        except OSError as exc:
-                            self._log.error(
-                                "[%s] cannot open %s: %s",
-                                self.station_name,
-                                file_path,
-                                exc,
-                            )
+                            self._log.info("[%s] Recording -> %s", self.station_name, writer.final_path.name)
+                        else:
                             recording = False
-                            writer = None
-            # EOF: in-flight incomplete -> discard
             self._log.info("[%s] stream ended (EOF).", self.station_name)
-            await _close_writer(finalize=False)
+            if writer is not None:
+                writer.discard()
             return True
         except Exception as exc:
             self._log.warning("[%s] stream interrupted: %s", self.station_name, exc)
-            await _close_writer(finalize=False)
+            if writer is not None:
+                writer.discard()
             return False
         finally:
             with contextlib.suppress(Exception):
                 await agen.aclose()
 
-
-def _parse_metaint(headers: dict[str, str]) -> int | None:
-    for key in ("icy-metaint", "Icy-Metaint", "ICY-METAINT"):
-        val = headers.get(key)
-        if val:
-            try:
-                return int(val)
-            except ValueError:
-                return None
-    return None
+    async def _finalize_writer(self, writer: TrackWriter, _current_title: str | None = None) -> None:
+        committed = writer.commit()
+        if not committed:
+            self._log.info(
+                "[%s] Discarded (too small): %s",
+                self.station_name,
+                writer.final_path.name,
+            )
+            return
+        final_path = writer.final_path
+        ok = await self._check_min_duration(final_path)
+        if ok:
+            self._log.info(
+                "[%s] Streaming result: %s (%d bytes)",
+                self.station_name,
+                final_path.name,
+                _safe_size(final_path),
+            )
 
 
 __all__ = ["StreamRecorder"]

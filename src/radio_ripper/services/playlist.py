@@ -48,9 +48,7 @@ def load_local_m3u(path: Path) -> list[StreamConfig]:
         if "://" not in line:
             continue
         with contextlib.suppress(Exception):
-            stations.append(
-                StreamConfig(name=name, url=HttpUrl(line), enabled=True, source="custom")
-            )
+            stations.append(StreamConfig(name=name, url=HttpUrl(line), enabled=True, source="custom"))
         name = None
     return stations
 
@@ -113,7 +111,7 @@ class StaticPlaylistResolver(PlaylistResolver):
     def __init__(self, urls: list[str]) -> None:
         self._urls = list(urls)
 
-    async def resolve(self, playlist_url: str) -> list[str]:
+    async def resolve(self, _playlist_url: str) -> list[str]:
         return list(self._urls)
 
 

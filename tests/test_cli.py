@@ -1,4 +1,5 @@
 """Tests for radio_ripper.cli (stream)."""
+
 from __future__ import annotations
 
 from pathlib import Path

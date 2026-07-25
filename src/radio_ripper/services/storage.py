@@ -1,11 +1,9 @@
-"""Safe filename + file IO layer for recorded songs."""
-
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -15,25 +13,31 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 def sanitize_filename(name: str) -> str:
     if name is None:
-        return "unknown"
+        return ""
     name = name.strip()
     if not name:
-        return "unknown"
+        return ""
     name = name.replace("\r", " ").replace("\n", " ")
     name = _ILLEGAL_FILENAME_CHARS.sub("", name)
     name = _WHITESPACE_RE.sub(" ", name).strip()
     if not name:
-        return "unknown"
+        return ""
     if len(name) > 200:
         name = name[:200].strip()
-    return name or "unknown"
+    return name
+
+
+class _WriterState:
+    OPEN = "open"
+    COMMITTED = "committed"
+    DISCARDED = "discarded"
 
 
 class TrackWriter:
     def __init__(self, final_path: Path, *, min_size: int = 1024) -> None:
         self.final_path = final_path
         self.min_size = min_size
-        tmp = tempfile.NamedTemporaryFile(
+        tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
             suffix=".mp3.tmp",
             prefix="radio-ripper-",
             delete=False,
@@ -41,11 +45,15 @@ class TrackWriter:
         self._tmp_path = Path(tmp.name)
         self._fh = tmp
         self._size = 0
-        self._closed = False
+        self._state = _WriterState.OPEN
 
     @property
     def size(self) -> int:
         return self._size
+
+    @property
+    def state(self) -> str:
+        return self._state
 
     def write(self, data: bytes) -> None:
         self._fh.write(data)
@@ -55,9 +63,9 @@ class TrackWriter:
         self._fh.flush()
 
     def commit(self) -> bool:
-        if self._closed:
+        if self._state != _WriterState.OPEN:
             return False
-        self._closed = True
+        self._state = _WriterState.COMMITTED
         try:
             self._fh.flush()
             self._fh.close()
@@ -71,9 +79,9 @@ class TrackWriter:
         return True
 
     def discard(self) -> None:
-        if self._closed:
+        if self._state != _WriterState.OPEN:
             return
-        self._closed = True
+        self._state = _WriterState.DISCARDED
         with contextlib.suppress(Exception):
             self._fh.close()
         self._tmp_path.unlink(missing_ok=True)
@@ -93,29 +101,25 @@ class TrackWriter:
             self.discard()
 
 
-def get_mp3_duration(path: Path) -> float | None:
+async def get_mp3_duration(path: Path) -> float | None:
     ffprobe = shutil.which("ffprobe")
     if ffprobe is None:
         return None
     try:
-        result = subprocess.run(
-            [
-                ffprobe,
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
+        proc = await asyncio.create_subprocess_exec(
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if result.returncode != 0:
-            return None
-        val = result.stdout.strip()
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        val = stdout.decode().strip()
         if not val:
             return None
         return float(val)

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -25,14 +24,14 @@ class TestSanitizeFilename:
         result = sanitize_filename(long_name)
         assert len(result) <= 200
 
-    def test_none_returns_unknown(self):
-        assert sanitize_filename(None) == "unknown"
+    def test_none_returns_empty(self):
+        assert sanitize_filename(None) == ""
 
-    def test_blank_returns_unknown(self):
-        assert sanitize_filename("  ") == "unknown"
+    def test_blank_returns_empty(self):
+        assert sanitize_filename("  ") == ""
 
-    def test_after_stripping_illegal_chars_returns_unknown(self):
-        assert sanitize_filename("<>:\"") == "unknown"
+    def test_after_stripping_illegal_chars_returns_empty(self):
+        assert sanitize_filename('<>:"') == ""
 
 
 class TestTrackWriter:
@@ -83,17 +82,22 @@ class TestTrackWriter:
 
     def test_context_manager_discards_on_error(self, tmp_path):
         dst = tmp_path / "out/test.mp3"
-        with pytest.raises(ValueError):
-            with TrackWriter(dst, min_size=1) as w:
-                w.write(b"data")
-                raise ValueError("boom")
+        with pytest.raises(ValueError), TrackWriter(dst, min_size=1) as w:
+            w.write(b"data")
+            raise ValueError("boom")
         assert not dst.exists()
 
 
 class TestGetMp3Duration:
     @patch("shutil.which", return_value=None)
-    def test_ffprobe_not_available(self, mock_which):
-        assert TrackWriter is not None
+    async def test_ffprobe_not_available(self, mock_which, tmp_path):
+        from radio_ripper.services.storage import get_mp3_duration
 
-    def test_duration(self, tmp_path):
-        pass  # basic existence test for the module
+        result = await get_mp3_duration(tmp_path)
+        assert result is None
+
+    async def test_duration_nonexistent_file(self, tmp_path):
+        from radio_ripper.services.storage import get_mp3_duration
+
+        result = await get_mp3_duration(tmp_path / "nonexistent.mp3")
+        assert result is None

@@ -19,7 +19,6 @@ from radio_ripper.services.playlist_discovery import (
     _deduplicate_by_name,
     _distribute_probe_pool,
     _download_mega_m3u,
-    _filter_keywords,
     _keyword_coverage,
     _load_cache,
     _match_keywords,
@@ -70,49 +69,8 @@ class TestParseM3uText:
         assert _parse_m3u_text("", "test.m3u") == []
 
 
-# ---------------------------------------------------------------------------
-# _filter_keywords
-# ---------------------------------------------------------------------------
-
-
-class TestFilterKeywords:
-    ENTRIES: ClassVar[list[M3uEntry]] = [
-        M3uEntry(name="Classic Rock", url="http://a", source="x"),
-        M3uEntry(name="Pop Hits", url="http://b", source="x"),
-        M3uEntry(name="Jazz", url="http://c", source="x"),
-    ]
-
-    def test_match_keyword(self) -> None:
-        result = _filter_keywords(self.ENTRIES, ["rock"])
-        assert len(result) == 1
-        assert result[0].name == "Classic Rock"
-
-    def test_match_extinf(self) -> None:
-        entries = [
-            M3uEntry(
-                name="Some FM",
-                url="http://a",
-                source="x",
-                extinf='#EXTINF:-1 tvg-id="rock.fm",Rock FM',
-            ),
-        ]
-        result = _filter_keywords(entries, ["rock"])
-        assert len(result) == 1
-
-    def test_no_match(self) -> None:
-        assert _filter_keywords(self.ENTRIES, ["country"]) == []
-
-    def test_empty_keywords_list(self) -> None:
-        result = _filter_keywords(self.ENTRIES, [])
-        assert len(result) == 3
-
-    def test_case_insensitive(self) -> None:
-        result = _filter_keywords(self.ENTRIES, ["ROCK"])
-        assert len(result) == 1
-
-    def test_blank_keywords_skipped(self) -> None:
-        result = _filter_keywords(self.ENTRIES, ["", "  "])
-        assert len(result) == 3
+# Filtering is done via _match_keywords + extraction; _filter_keywords was removed
+# in favor of _match_keywords.
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +315,7 @@ class TestPlaylistDiscoveryService:
             database="./rec/ripper.db",
             discovery_enabled=True,
             temp_dir=tmp_path,
+            discovery_min_stations=1,
         )
         cf = tmp_path / "discovered_stations.m3u"
         _save_cache(cf, stations)
@@ -394,7 +353,7 @@ class TestPlaylistDiscoveryService:
 
 
 # ---------------------------------------------------------------------------
-# _discover integration (wired to _download_mega_m3u)
+# load_or_discover integration (wired to _download_mega_m3u)
 # ---------------------------------------------------------------------------
 
 
@@ -416,7 +375,6 @@ class TestDiscover:
             discovery_min_stations=5,
         )
 
-        # Mock the download and ICY probe to return OK for the rock station
         mock_entry = M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u")
         mock_probe = {"icy": True, "bitrate": 128}
 
@@ -431,7 +389,7 @@ class TestDiscover:
             ),
         ):
             svc = PlaylistDiscoveryService(settings)
-            stations = await svc._discover()
+            stations = await svc.load_or_discover()
 
         assert len(stations) == 1
         assert stations[0].name == "Classic Rock"
@@ -455,7 +413,7 @@ class TestDiscover:
             return_value=m3u_text,
         ):
             svc = PlaylistDiscoveryService(settings)
-            stations = await svc._discover()
+            stations = await svc.load_or_discover()
 
         assert stations == []
 
@@ -500,9 +458,7 @@ class TestMatchKeywords:
 
     def test_match_from_extinf_only(self):
         entries = [
-            M3uEntry(
-                name="Some FM", url="http://a", source="x", extinf='#EXTINF:-1 tvg-id="rock.fm"'
-            ),
+            M3uEntry(name="Some FM", url="http://a", source="x", extinf='#EXTINF:-1 tvg-id="rock.fm"'),
         ]
         result = _match_keywords(entries, ["rock"])
         assert len(result) == 1
@@ -538,12 +494,8 @@ class TestDistributeProbePool:
         assert len(result) == 3
 
     def test_multiple_keywords_round_robin(self):
-        rock_entries = [
-            M3uEntry(name=f"Rock {i}", url=f"http://r{i}", source="test") for i in range(3)
-        ]
-        jazz_entries = [
-            M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(3)
-        ]
+        rock_entries = [M3uEntry(name=f"Rock {i}", url=f"http://r{i}", source="test") for i in range(3)]
+        jazz_entries = [M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(3)]
         matched = [(e, {"rock"}) for e in rock_entries] + [(e, {"jazz"}) for e in jazz_entries]
         result = _distribute_probe_pool(matched, ["rock", "jazz"], 4)
         assert len(result) == 4
@@ -554,9 +506,7 @@ class TestDistributeProbePool:
 
     def test_keyword_exhausted_continues_round_robin(self):
         rock_entries = [M3uEntry(name="Rock Only", url="http://r0", source="test")]
-        jazz_entries = [
-            M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(5)
-        ]
+        jazz_entries = [M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(5)]
         matched = [(e, {"rock"}) for e in rock_entries] + [(e, {"jazz"}) for e in jazz_entries]
         result = _distribute_probe_pool(matched, ["rock", "jazz"], 4)
         assert len(result) == 4
@@ -745,24 +695,24 @@ class TestLoadCacheEdgeCases:
     def test_legacy_json_not_a_list_falls_to_m3u(self, tmp_path: Path) -> None:
         cf = tmp_path / "cache.json"
         cf.write_text("[1, 2, 3]")
-        loaded, kh = _load_cache(cf)
+        loaded, _kh = _load_cache(cf)
         assert loaded == []
 
     def test_legacy_json_station_creation_fails_falls_to_m3u(self, tmp_path: Path) -> None:
         cf = tmp_path / "cache.json"
         cf.write_text(json.dumps([{"name": "Bad", "url": "not-a-url", "icy": True}]))
-        loaded, kh = _load_cache(cf)
+        loaded, _kh = _load_cache(cf)
         assert loaded == []
 
     def test_m3u_entry_creation_skipped(self, tmp_path: Path) -> None:
         cf = tmp_path / "cache.json"
         cf.write_text("#EXTM3U\n#EXTINF:-1,Bad URL\nnot-a-valid-url\n")
-        loaded, kh = _load_cache(cf)
+        loaded, _kh = _load_cache(cf)
         assert loaded == []
 
     def test_cache_file_not_found(self, tmp_path: Path) -> None:
         cf = tmp_path / "nonexistent.json"
-        loaded, kh = _load_cache(cf)
+        loaded, _kh = _load_cache(cf)
         assert loaded == []
 
 
@@ -857,7 +807,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             ),
             patch.object(svc, "_discover_from_text", return_value=[]),
         ):
-            await svc._discover()
+            await svc.load_or_discover()
 
     @pytest.mark.asyncio
     async def test_discover_save_raw_mega_fails_gracefully(self, tmp_path: Path) -> None:
@@ -878,7 +828,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             patch("pathlib.Path.write_text", side_effect=OSError("read-only")),
             patch.object(svc, "_discover_from_text", return_value=[]),
         ):
-            await svc._discover()
+            await svc.load_or_discover()
 
     @pytest.mark.asyncio
     async def test_discover_raw_mega_exists_reads_it(self, tmp_path: Path) -> None:
@@ -893,7 +843,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         raw_mega.write_text(m3u_text)
         svc = PlaylistDiscoveryService(settings)
         with patch.object(svc, "_discover_from_text", return_value=[]):
-            await svc._discover()
+            await svc.load_or_discover()
 
     @pytest.mark.asyncio
     async def test_discover_from_text_bitrate_filter(self, tmp_path: Path) -> None:
@@ -907,9 +857,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             discovery_min_stations=10,
         )
         m3u_text = (
-            "#EXTM3U\n"
-            "#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
-            "#EXTINF:-1,Pop Hits\nhttp://pop.example.com\n"
+            "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n#EXTINF:-1,Pop Hits\nhttp://pop.example.com\n"
         )
         mock_results = [
             (

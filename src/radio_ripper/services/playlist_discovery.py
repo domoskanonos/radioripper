@@ -1,13 +1,3 @@
-"""M3U radio-stream discovery — fetch the mega M3U from GitHub.
-
-Downloads the ``---everything-checked-repo.m3u`` file from
-``junguler/m3u-radio-music-playlists``, parses the entries, filters by
-user-defined keywords (matching both station name and #EXTINF attributes),
-probes for ICY support + bitrate, and caches the top-N working stations
-as ``discovered_stations.m3u``.  The cache is persistent — delete it
-manually to re-discover.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -21,8 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from pydantic import HttpUrl
 
 from radio_ripper.infra.config import Settings, StreamConfig
+from radio_ripper.infra.http import AsyncHttpClient
 
 _LOGGER = logging.getLogger("radio_ripper.discovery")
 _MEGA_URL = (
@@ -69,24 +61,7 @@ def _parse_m3u_text(text: str, source: str) -> list[M3uEntry]:
     return entries
 
 
-def _filter_keywords(entries: list[M3uEntry], keywords: list[str]) -> list[M3uEntry]:
-    if not keywords:
-        return entries
-    lowered = [k.lower().strip() for k in keywords if k.strip()]
-    if not lowered:
-        return entries
-    result: list[M3uEntry] = []
-    for e in entries:
-        text = (e.name + " " + e.extinf).lower()
-        if any(kw in text for kw in lowered):
-            result.append(e)
-    return result
-
-
-def _match_keywords(
-    entries: list[M3uEntry], keywords: list[str]
-) -> list[tuple[M3uEntry, set[str]]]:
-    """Return (entry, set_of_matched_keywords) for entries matching any keyword."""
+def _match_keywords(entries: list[M3uEntry], keywords: list[str]) -> list[tuple[M3uEntry, set[str]]]:
     if not keywords:
         return [(e, set()) for e in entries]
     lowered = [k.lower().strip() for k in keywords if k.strip()]
@@ -104,71 +79,6 @@ def _match_keywords(
     return result
 
 
-def _distribute_probe_pool(
-    matched: list[tuple[M3uEntry, set[str]]],
-    keywords: list[str],
-    max_needed: int,
-) -> list[M3uEntry]:
-    """Build a probe pool that gives each keyword a fair chance.
-
-    Allocates up to ``ceil(max_needed / len(keywords))`` slots per keyword
-    and round-robins entries so no single keyword dominates the probe.
-    """
-    lowered = [k.lower().strip() for k in keywords if k.strip()]
-    if not lowered or max_needed <= 0:
-        return [e for e, _ in matched]
-
-    per_keyword: dict[str, list[M3uEntry]] = {kw: [] for kw in lowered}
-    for entry, matched_set in matched:
-        for kw in matched_set:
-            per_keyword[kw].append(entry)
-
-    seen: set[str] = set()
-    pool: list[M3uEntry] = []
-    # Round-robin until we have enough or run out
-    while len(pool) < max_needed:
-        added = 0
-        for kw in lowered:
-            bucket = per_keyword[kw]
-            remaining = [e for e in bucket if e.name.lower().strip() not in seen]
-            if not remaining:
-                continue
-            entry = remaining.pop(0)
-            # Rotate the bucket so we don't pick the same entry next round
-            bucket.remove(entry)
-            seen.add(entry.name.lower().strip())
-            pool.append(entry)
-            added += 1
-            if len(pool) >= max_needed:
-                break
-        if added == 0:
-            break
-
-    for kw in lowered:
-        count = sum(
-            1 for e in pool if any(kw in matched for e2, matched in matched if e2.name == e.name)
-        )
-        if count < 5:
-            _LOGGER.warning("Keyword '%s' has only %d station(s) in probe pool (< 5).", kw, count)
-
-    return pool
-
-
-def _keyword_coverage(
-    good: list[tuple[M3uEntry, dict[str, Any]]],
-    keywords: list[str],
-) -> None:
-    """Log per-keyword station counts after probing."""
-    lowered = [k.lower().strip() for k in keywords if k.strip()]
-    for kw in lowered:
-        text_key = kw
-        count = sum(1 for entry, _ in good if text_key in (entry.name + " " + entry.extinf).lower())
-        if count < 5:
-            _LOGGER.warning("Keyword '%s' has only %d probed station(s) (< 5).", kw, count)
-        else:
-            _LOGGER.info("Keyword '%s': %d stations", kw, count)
-
-
 def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
     seen: set[str] = set()
     result: list[M3uEntry] = []
@@ -180,9 +90,84 @@ def _deduplicate_by_name(entries: list[M3uEntry]) -> list[M3uEntry]:
     return result
 
 
-async def probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict[str, Any]:
+def _distribute_probe_pool(
+    matched: list[tuple[M3uEntry, set[str]]],
+    keywords: list[str],
+    max_needed: int,
+) -> list[M3uEntry]:
+    lowered = [k.lower().strip() for k in keywords if k.strip()]
+    if not lowered or max_needed <= 0:
+        return [e for e, _ in matched]
+
+    per_keyword: dict[str, list[M3uEntry]] = {kw: [] for kw in lowered}
+    for entry, matched_set in matched:
+        for kw in matched_set:
+            per_keyword[kw].append(entry)
+
+    seen: set[str] = set()
+    pool: list[M3uEntry] = []
+    while len(pool) < max_needed:
+        added = 0
+        for kw in lowered:
+            bucket = per_keyword[kw]
+            remaining = [e for e in bucket if e.name.lower().strip() not in seen]
+            if not remaining:
+                continue
+            entry = remaining.pop(0)
+            bucket.remove(entry)
+            seen.add(entry.name.lower().strip())
+            pool.append(entry)
+            added += 1
+            if len(pool) >= max_needed:
+                break
+        if added == 0:
+            break
+
+    for kw in lowered:
+        count = sum(1 for e in pool if kw in (e.name + " " + e.extinf).lower())
+        if count < 5:
+            _LOGGER.warning("Keyword '%s' has only %d station(s) in probe pool (< 5).", kw, count)
+
+    return pool
+
+
+def _keyword_coverage(
+    good: list[tuple[M3uEntry, dict[str, Any]]],
+    keywords: list[str],
+) -> None:
+    lowered = [k.lower().strip() for k in keywords if k.strip()]
+    for kw in lowered:
+        count = sum(1 for entry, _ in good if kw in (entry.name + " " + entry.extinf).lower())
+        if count < 5:
+            _LOGGER.warning("Keyword '%s' has only %d probed station(s) (< 5).", kw, count)
+        else:
+            _LOGGER.info("Keyword '%s': %d stations", kw, count)
+
+
+async def probe_icy(
+    url: str,
+    *,
+    timeout: float = _PROBE_TIMEOUT,
+    http_client: AsyncHttpClient | None = None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {"icy": False, "bitrate": 0, "error": None}
     headers = {"Icy-MetaData": "1", "User-Agent": "Radio-Ripper/2.0"}
+
+    if http_client is not None:
+        try:
+            async for _ in http_client.stream_binary(url, headers=headers, timeout=timeout):
+                break
+            resp_headers = http_client.response_headers()
+            metaint = resp_headers.get("icy-metaint") or resp_headers.get("Icy-Metaint")
+            result["icy"] = metaint is not None
+            br_raw = resp_headers.get("icy-br") or resp_headers.get("Icy-Br")
+            if br_raw:
+                with contextlib.suppress(ValueError, TypeError):
+                    result["bitrate"] = int(br_raw)
+        except Exception as exc:
+            result["error"] = str(exc)[:60]
+        return result
+
     try:
         async with (
             httpx.AsyncClient(
@@ -191,7 +176,7 @@ async def probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict[str, A
             ) as client,
             client.stream("GET", url, headers=headers) as resp,
         ):
-            if resp.status_code != 200 and resp.status_code != 206:
+            if resp.status_code not in (200, 206):
                 result["error"] = f"HTTP {resp.status_code}"
                 return result
             resp_headers = dict(resp.headers)
@@ -201,7 +186,6 @@ async def probe_icy(url: str, *, timeout: float = _PROBE_TIMEOUT) -> dict[str, A
             if br_raw:
                 with contextlib.suppress(ValueError, TypeError):
                     result["bitrate"] = int(br_raw)
-            # Read one chunk to verify the stream actually sends data
             try:
                 async for chunk in resp.aiter_bytes():
                     result["read_bytes"] = len(chunk)
@@ -237,14 +221,12 @@ async def _probe_batch(
     pending = set(tasks)
 
     while pending and len(ok) < max_ok:
-        done_set, pending = await asyncio.wait(
-            pending, timeout=3, return_when=asyncio.FIRST_COMPLETED
-        )
+        done_set, pending = await asyncio.wait(pending, timeout=3, return_when=asyncio.FIRST_COMPLETED)
         for t in done_set:
             try:
-                result = t.result()
-                if result is not None:
-                    ok.append(result)
+                entry_data = t.result()
+                if entry_data is not None:
+                    ok.append(entry_data)
             except Exception:
                 pass
 
@@ -261,7 +243,6 @@ async def _probe_batch(
 
 
 async def _download_mega_m3u(github_pat: str = "") -> str:
-    """Download the ``---everything-checked-repo.m3u`` file and return its text."""
     headers: dict[str, str] = {"User-Agent": "Radio-Ripper/2.0"}
     if github_pat:
         headers["Authorization"] = f"Bearer {github_pat}"
@@ -275,9 +256,7 @@ async def _download_mega_m3u(github_pat: str = "") -> str:
         resp.raise_for_status()
         text = resp.text
     elapsed = time.monotonic() - t0
-    _LOGGER.info(
-        "Downloaded ---everything-checked-repo.m3u (%.1f KiB, %.1fs)", len(text) / 1024, elapsed
-    )
+    _LOGGER.info("Downloaded ---everything-checked-repo.m3u (%.1f KiB, %.1fs)", len(text) / 1024, elapsed)
     return text
 
 
@@ -285,20 +264,20 @@ async def _download_mega_m3u(github_pat: str = "") -> str:
 
 
 def _cache_path(settings: Settings) -> Path:
-    assert settings.temp_dir is not None
-    return settings.temp_dir / "discovered_stations.m3u"
+    td = settings.temp_dir
+    assert td is not None
+    return td / "discovered_stations.m3u"
 
 
 def _raw_mega_path(settings: Settings) -> Path:
-    assert settings.temp_dir is not None
-    return settings.temp_dir / "---everything-checked-repo.m3u"
+    td = settings.temp_dir
+    assert td is not None
+    return td / "---everything-checked-repo.m3u"
 
 
 def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
     try:
         text = cache_file.read_text("utf-8")
-        # Support legacy JSON flat list detection: if the text starts with
-        # '[' treat it as the old flat JSON list and load compatibly.
         if text.strip().startswith("["):
             try:
                 raw = json.loads(text)
@@ -306,17 +285,16 @@ def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
                     stations = [StreamConfig(**s) for s in raw if s.get("icy")]
                     return stations, ""
             except Exception:
-                # fall through to M3U parsing
                 pass
 
         entries = _parse_m3u_text(text, cache_file.name)
-        stations: list[StreamConfig] = []  # type: ignore[no-redef]
+        result: list[StreamConfig] = []
         for e in entries:
             try:
-                stations.append(
+                result.append(
                     StreamConfig(
                         name=e.name,
-                        url=e.url,  # type: ignore[arg-type]
+                        url=HttpUrl(e.url),
                         enabled=True,
                         bitrate=0,
                         icy=True,
@@ -325,7 +303,7 @@ def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
                 )
             except Exception:
                 continue
-        return stations, ""
+        return result, ""
     except Exception:
         return [], ""
 
@@ -342,7 +320,6 @@ def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
         attr_str = (" " + " ".join(attr)) if attr else ""
         lines.append(f"#EXTINF:-1{attr_str},{s.name}")
         lines.append(str(s.url))
-    # Atomic write
     tmp = cache_file.with_suffix(".tmp")
     tmp.write_text("\n".join(lines) + "\n", "utf-8")
     tmp.replace(cache_file)
@@ -352,8 +329,6 @@ def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
 
 
 class PlaylistDiscoveryService:
-    """Fetch the mega M3U, filter, probe, and cache stations."""
-
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._log = _LOGGER
@@ -368,9 +343,7 @@ class PlaylistDiscoveryService:
             cached_stations, _ = _load_cache(cache_file)
             min_needed = self._settings.discovery_min_stations
             if cached_stations and len(cached_stations) >= min_needed:
-                self._log.info(
-                    "Using %d cached stations from %s", len(cached_stations), cache_file.name
-                )
+                self._log.info("Using %d cached stations from %s", len(cached_stations), cache_file.name)
                 return cached_stations
             self._log.info(
                 "Cache has %d stations (need %d), re-discovering…",
@@ -379,41 +352,32 @@ class PlaylistDiscoveryService:
             )
 
         self._log.info("Starting discovery…")
-
-        raw_mega = _raw_mega_path(self._settings)
-        if raw_mega.is_file():
-            text = raw_mega.read_text("utf-8")
-        else:
-            pat = self._settings.github_pat or os.environ.get("GITHUB_PAT", "")
-            text = await _download_mega_m3u(pat)
-            try:
-                raw_mega.parent.mkdir(parents=True, exist_ok=True)
-                raw_mega.write_text(text, "utf-8")
-            except Exception:
-                pass
-
+        text = await self._load_or_download_mega()
         stations = await self._discover_from_text(text)
         if stations:
             _save_cache(cache_file, stations)
         self._log.info("Discovery complete: %d stations", len(stations))
         return stations
 
-    async def _discover(self) -> list[StreamConfig]:
-        pat = self._settings.github_pat or os.environ.get("GITHUB_PAT", "")
+    async def _load_or_download_mega(self) -> str:
         raw_mega = _raw_mega_path(self._settings)
         if raw_mega.is_file():
             try:
-                text = raw_mega.read_text("utf-8")
-            except Exception:
-                text = await _download_mega_m3u(pat)
-        else:
-            text = await _download_mega_m3u(pat)
-            try:
-                raw_mega.parent.mkdir(parents=True, exist_ok=True)
-                raw_mega.write_text(text, "utf-8")
+                return raw_mega.read_text("utf-8")
             except Exception:
                 pass
-        return await self._discover_from_text(text)
+        pat = (
+            self._settings.github_pat.get_secret_value()
+            if self._settings.github_pat
+            else os.environ.get("GITHUB_PAT", "")
+        )
+        text = await _download_mega_m3u(pat)
+        try:
+            raw_mega.parent.mkdir(parents=True, exist_ok=True)
+            raw_mega.write_text(text, "utf-8")
+        except Exception:
+            pass
+        return text
 
     async def _discover_from_text(self, text: str) -> list[StreamConfig]:
         all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
@@ -432,9 +396,7 @@ class PlaylistDiscoveryService:
             return []
 
         min_needed = self._settings.discovery_min_stations
-        # Build a fairly distributed probe pool (round-robin per keyword)
         probe_pool = _distribute_probe_pool(matched, keywords, len(unique))
-        # Probe in batches until we have enough good stations or run out of candidates
         all_good: list[tuple[M3uEntry, dict[str, Any]]] = []
         remaining = probe_pool
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
@@ -475,7 +437,7 @@ class PlaylistDiscoveryService:
                 stations.append(
                     StreamConfig(
                         name=entry.name[:64],
-                        url=entry.url,  # type: ignore[arg-type]
+                        url=HttpUrl(entry.url),
                         enabled=True,
                         bitrate=probe.get("bitrate", 0),
                         icy=True,

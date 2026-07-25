@@ -138,9 +138,7 @@ class FakeClient:
     async def get_text(self, url: str, *, timeout: float | None = None) -> str:
         return self._text
 
-    async def get_json(
-        self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None
-    ) -> Any:
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None) -> Any:
         return {}
 
     async def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:

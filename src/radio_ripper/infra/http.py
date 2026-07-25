@@ -1,10 +1,3 @@
-"""Async HTTP client abstraction.
-
-The :class:`AsyncHttpClient` ABC decouples the rest of the code from the
-concrete HTTP library (httpx), enabling easy mocking with ``respx`` or
-custom in-memory implementations in tests.
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -15,22 +8,16 @@ import httpx
 
 
 class AsyncHttpClient(ABC):
-    """Minimal HTTP client surface needed by radio_ripper."""
-
     @abstractmethod
-    async def get_text(self, url: str, *, timeout: float | None = None) -> str:
-        """Fetch a URL and return its body as text."""
+    async def get_text(self, url: str, *, timeout: float | None = None) -> str: ...
 
     @abstractmethod
     async def get_json(
         self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None
-    ) -> Any:
-        """Fetch a URL and return parsed JSON."""
+    ) -> Any: ...
 
     @abstractmethod
-    async def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes:
-        """Fetch a URL and return raw bytes."""
-
+    async def get_bytes(self, url: str, *, timeout: float | None = None) -> bytes: ...
     @abstractmethod
     def stream_binary(
         self,
@@ -38,31 +25,29 @@ class AsyncHttpClient(ABC):
         *,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
-    ) -> AsyncIterator[bytes]:
-        """Stream binary chunks from ``url``.
-
-        Yields ``bytes`` chunks. The response headers (incl. ICY metadata
-        interval) are accessible via :attr:`response_headers`.
-        """
+    ) -> AsyncIterator[bytes]: ...
 
     @abstractmethod
-    def response_headers(self) -> dict[str, str]:
-        """Headers of the response from the most recent :meth:`stream_binary` call."""
+    def response_headers(self) -> dict[str, str]: ...
 
     @abstractmethod
-    async def aclose(self) -> None:
-        """Release client resources."""
+    async def aclose(self) -> None: ...
 
 
 class HttpxAsyncClient(AsyncHttpClient):
-    """Default httpx-backed implementation."""
-
-    def __init__(self, *, user_agent: str = "Radio-Ripper/2.0", verify: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        user_agent: str = "Radio-Ripper/2.0",
+        verify: bool = True,
+        connect_timeout: float = 10.0,
+        total_timeout: float = 30.0,
+    ) -> None:
         self._client = httpx.AsyncClient(
             headers={"User-Agent": user_agent},
             verify=verify,
             follow_redirects=True,
-            timeout=httpx.Timeout(30.0, connect=10.0),
+            timeout=httpx.Timeout(total_timeout, connect=connect_timeout),
         )
         self._last_headers: dict[str, str] = {}
 
@@ -71,9 +56,7 @@ class HttpxAsyncClient(AsyncHttpClient):
         resp.raise_for_status()
         return resp.text
 
-    async def get_json(
-        self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None
-    ) -> Any:
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None, timeout: float | None = None) -> Any:
         resp = await self._client.get(url, params=params, timeout=timeout)
         resp.raise_for_status()
         return resp.json()

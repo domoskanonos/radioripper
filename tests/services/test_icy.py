@@ -33,9 +33,9 @@ def _make_stream(metaint: int, titles: list[str]) -> bytes:
 
 class TestIcyParserBasics:
     def test_invalid_metaint_rejected(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(StreamProtocolError, match="metaint must be positive"):
             IcyParser(0)
-        with pytest.raises(ValueError):
+        with pytest.raises(StreamProtocolError, match="metaint must be positive"):
             IcyParser(-10)
 
     def test_initial_state(self):

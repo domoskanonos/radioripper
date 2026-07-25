@@ -38,10 +38,36 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG", "RUF", "S"]
+ignore = ["S101", "S110", "S112"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG001", "ARG002", "SIM105", "SIM115", "S110"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_untyped_calls = true
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "respx>=0.23.1",
+    "ruff>=0.15.0",
+    "mypy>=1.14.0",
+    "pre-commit>=4.1.0",
 ]

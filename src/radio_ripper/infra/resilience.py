@@ -1,11 +1,3 @@
-"""Async retry decorator with exponential backoff.
-
-Functions decorated with :func:`retry_async` are retried on exception up to
-``max_attempts`` times, with delays that double each time (capped at
-``max_delay``). When ``max_attempts`` is exhausted, the final exception is
-raised unchanged.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -24,21 +16,12 @@ def retry_async(
     max_attempts: int = 3,
     base_delay: float = 1.0,
     max_delay: float = 60.0,
+    backoff_factor: float = 2.0,
     exceptions: tuple[type[BaseException], ...] = (Exception,),
     on_retry: Callable[[BaseException, int], None] | None = None,
+    sleep_func: Callable[[float], Awaitable[None]] | None = None,
 ) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
-    """Decorate an async function with exponential-backoff retry.
-
-    Args:
-        max_attempts: Maximum total attempts (initial + retries).
-        base_delay: Initial delay in seconds; doubles each retry.
-        max_delay: Upper bound for the delay between attempts.
-        exceptions: Exception types that should trigger a retry.
-        on_retry: Optional callback ``(exc, attempt)`` invoked before each sleep.
-
-    Returns:
-        The decorated async callable.
-    """
+    sleep = sleep_func or asyncio.sleep
 
     def decorator(fn: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
         @functools.wraps(fn)
@@ -63,9 +46,9 @@ def retry_async(
                             delay,
                             exc,
                         )
-                    await asyncio.sleep(delay)
-                    delay = min(delay * 2.0, max_delay)
-            assert last_exc is not None  # pragma: no cover
+                    await sleep(delay)
+                    delay = min(delay * backoff_factor, max_delay)
+            assert last_exc is not None
             raise last_exc
 
         return wrapper
