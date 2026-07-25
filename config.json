@@ -2,6 +2,7 @@
   "destination": "/home/laptop/Musik",
   "work_dir": "./work",
   "log_level": "INFO",
+  "max_recordings": 100,
   "stream_keywords": [
     "classic",
     "retro",
