@@ -286,53 +286,63 @@ class StreamRecorder:
 
                 # Offload enrichment + fingerprinting to background task
                 async def _post_process(fp: Path, trk: TrackInfo, prov: str) -> None:
-                    enriched_path = await register_and_enrich(
-                        fp,
-                        trk,
-                        self.station_name,
-                        prov,
-                        self.settings,
-                        self._repo,
-                        self._tagger,
-                        metadata_provider=self._metadata,
-                        enrich_semaphore=self._enrich_sem,
-                        file_locks=self._file_locks,
-                        logger=self._log,
-                    )
-                    if enriched_path is None:
-                        return
-                    if self._fingerprint is not None:
-                        await fingerprint_song(
-                            enriched_path,
+                    try:
+                        enriched_path = await register_and_enrich(
+                            fp,
                             trk,
                             self.station_name,
                             prov,
                             self.settings,
-                            self._fingerprint,
                             self._repo,
                             self._tagger,
-                            cover_provider=self._cover_provider,
-                            popularity_provider=self._popularity,
+                            metadata_provider=self._metadata,
+                            enrich_semaphore=self._enrich_sem,
                             file_locks=self._file_locks,
                             logger=self._log,
                         )
-                    # Fetch & write lyrics
-                    try:
-                        from radio_ripper.services.lyrics import LyricsOvhProvider
+                        if enriched_path is None:
+                            return
+                        if self._fingerprint is not None:
+                            await fingerprint_song(
+                                enriched_path,
+                                trk,
+                                self.station_name,
+                                prov,
+                                self.settings,
+                                self._fingerprint,
+                                self._repo,
+                                self._tagger,
+                                cover_provider=self._cover_provider,
+                                popularity_provider=self._popularity,
+                                file_locks=self._file_locks,
+                                logger=self._log,
+                            )
+                        # Fetch & write lyrics
+                        try:
+                            from radio_ripper.services.lyrics import LyricsOvhProvider
 
-                        lyrics_provider = LyricsOvhProvider(self._http, timeout=5.0)
-                        lyrics = await lyrics_provider.fetch(trk.artist, trk.title)
-                        if lyrics:
-                            self._tagger.write_lyrics(enriched_path, lyrics)
-                            self._log.info(
-                                "[%s] Lyrics found for %s (%d chars)",
+                            lyrics_provider = LyricsOvhProvider(self._http, timeout=5.0)
+                            lyrics = await lyrics_provider.fetch(trk.artist, trk.title)
+                            if lyrics:
+                                self._tagger.write_lyrics(enriched_path, lyrics)
+                                self._log.info(
+                                    "[%s] Lyrics found for %s (%d chars)",
+                                    self.station_name,
+                                    enriched_path.name,
+                                    len(lyrics),
+                                )
+                        except Exception:
+                            self._log.debug(
+                                "[%s] Lyrics fetch failed for %s",
                                 self.station_name,
                                 enriched_path.name,
-                                len(lyrics),
                             )
-                    except Exception:
-                        self._log.debug(
-                            "[%s] Lyrics fetch failed for %s", self.station_name, enriched_path.name
+                    except Exception as exc:
+                        self._log.exception(
+                            "[%s] Post-processing failed for %s: %s",
+                            self.station_name,
+                            fp.name,
+                            exc,
                         )
 
                 task = asyncio.create_task(_post_process(final_path, track, provenance))

@@ -170,9 +170,14 @@ async def register_and_enrich(
         new_dir = settings.destination / artist_dir / album_dir
         new_dir.mkdir(parents=True, exist_ok=True)
         new_path = new_dir / file_path.name
-        shutil.move(str(file_path), str(new_path))
-        remove_empty_parents(file_path, settings.destination)
-        file_path = new_path
+        try:
+            shutil.move(str(file_path), str(new_path))
+            remove_empty_parents(file_path, settings.destination)
+            file_path = new_path
+        except OSError as exc:
+            logger.warning(
+                "[%s] album dir move failed (race?): %s", station_name, exc
+            )
 
     try:
         await repo.update_enrichment(
