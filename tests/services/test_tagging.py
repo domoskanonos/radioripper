@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mutagen.id3 import ID3
 
 from radio_ripper.domain.models import EnrichedInfo, TrackInfo
 from radio_ripper.infra.errors import TaggingError
-from radio_ripper.services.tagging import ID3Tagger, NullTagger, _scale_cover
+from radio_ripper.services.metadata import MetadataProvider
+from radio_ripper.services.tagging import ID3Tagger, NullTagger, TrackTagger, _scale_cover, enrich_and_tag
 
 
 def _write_blank_mp3(path: Path, size: int = 4096) -> None:
@@ -167,6 +170,72 @@ class TestScaleCover:
         result2 = _scale_cover(b"\x00\x01\x02\x03" * 10)
         assert result2 is not None
 
+    def test_upscale_small_image(self):
+        from PIL import Image
+        img = Image.new("RGB", (100, 100), color="red")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        result = _scale_cover(buf.getvalue())
+        assert result is not None
+        scaled_bytes, mime = result
+        assert mime == "image/jpeg"
+        # Should be upscaled to at least 500px
+        reloaded = Image.open(io.BytesIO(scaled_bytes))
+        assert max(reloaded.size) >= 500
+
+    def test_downscale_large_image(self):
+        from PIL import Image
+        img = Image.new("RGB", (2000, 2000), color="blue")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        result = _scale_cover(buf.getvalue())
+        assert result is not None
+        scaled_bytes, mime = result
+        assert mime == "image/jpeg"
+        reloaded = Image.open(io.BytesIO(scaled_bytes))
+        assert max(reloaded.size) <= 1000
+        assert reloaded.mode == "RGB"
+
+    def test_png_image(self):
+        from PIL import Image
+        img = Image.new("RGBA", (600, 600), color="green")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        result = _scale_cover(buf.getvalue())
+        assert result is not None
+        scaled_bytes, mime = result
+        assert mime == "image/png"
+        reloaded = Image.open(io.BytesIO(scaled_bytes))
+        assert max(reloaded.size) <= 1000
+
+    def test_mode_conversion_for_jpeg(self):
+        from PIL import Image
+        from radio_ripper.services.tagging import _guess_image_mime
+        img = Image.new("P", (500, 500), color=0)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png_data = buf.getvalue()
+        assert _guess_image_mime(png_data) == "image/png"
+        with patch("radio_ripper.services.tagging._guess_image_mime", return_value="image/jpeg"):
+            result = _scale_cover(png_data)
+        assert result is not None
+        scaled_bytes, mime = result
+        assert mime == "image/jpeg"
+        reloaded = Image.open(io.BytesIO(scaled_bytes))
+        assert reloaded.mode == "RGB"
+
+    def test_import_error_returns_original(self):
+        import builtins
+        original_import = builtins.__import__
+        def mock_import(name, *args, **kwargs):
+            if name == "PIL":
+                raise ImportError("No PIL")
+            return original_import(name, *args, **kwargs)
+        with patch.object(builtins, "__import__", mock_import):
+            data = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+            result = _scale_cover(data)
+            assert result == (data, "image/jpeg")
+
 
 class TestGuessJpegMime:
     def test_guess_image_mime_jpeg(self):
@@ -195,6 +264,15 @@ class TestGuessJpegMime:
         track = TrackInfo("A - B", "A", "B")
         with pytest.raises(TaggingError):
             tagger.write_basic(f, track, "S@u")
+
+    def test_write_basic_save_error_raises_tagging_error(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        with patch.object(ID3, "save", side_effect=OSError("disk full")):
+            with pytest.raises(TaggingError, match="failed to save basic tags"):
+                tagger.write_basic(f, track, "S@u")
 
     def test_write_full_to_nonexistent_file_raises_tagging_error(self, tmp_path: Path):
         tagger = ID3Tagger()
@@ -266,3 +344,263 @@ class TestNullTagger:
         enriched = EnrichedInfo(artist="A")
         tagger.write_full(f, track, enriched, b"cover", "S@u")
         assert f.read_bytes() == original
+
+    def test_update_acoustid_noop(self):
+        tagger = NullTagger()
+        tagger.update_acoustid(Path("/nonexistent"), "abc", 0.95)
+        # should not raise
+
+    def test_embed_cover_noop(self):
+        tagger = NullTagger()
+        tagger.embed_cover(Path("/nonexistent"), b"cover")
+        # should not raise
+
+
+class TestID3TaggerUpdateAcoustid:
+    def test_adds_recording_id(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        tagger.update_acoustid(f, "12345", 0.9876)
+        audio = ID3(f)
+        assert audio.get("TXXX:MusicBrainz Recording Id").text == ["12345"]
+        assert audio.get("TXXX:AcoustID Score").text == ["0.9876"]
+
+    def test_omits_recording_id_when_empty(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        tagger.update_acoustid(f, "", 0.5)
+        audio = ID3(f)
+        assert "TXXX:MusicBrainz Recording Id" not in audio
+        assert audio.get("TXXX:AcoustID Score").text == ["0.5"]
+
+    def test_load_error_raises_tagging_error(self):
+        tagger = ID3Tagger()
+        f = Path("/nonexistent_dir/song.mp3")
+        with pytest.raises(TaggingError, match="failed to load .* for acoustid tag"):
+            tagger.update_acoustid(f, "id", 0.5)
+
+    def test_save_error_raises_tagging_error(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        with patch.object(ID3, "save", side_effect=OSError("disk full")):
+            with pytest.raises(TaggingError, match="failed to save acoustid tags"):
+                tagger.update_acoustid(f, "id", 0.5)
+
+
+class TestID3TaggerEmbedCover:
+    def test_embeds_jpeg_cover(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        from PIL import Image
+        img = Image.new("RGB", (500, 500), color="red")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        tagger.embed_cover(f, buf.getvalue())
+        audio = ID3(f)
+        apic = audio.get("APIC:Cover")
+        assert apic is not None
+        assert apic.mime == "image/jpeg"
+
+    def test_embeds_scaled_png_cover(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        from PIL import Image
+        img = Image.new("RGBA", (2000, 2000), color="blue")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        tagger.embed_cover(f, buf.getvalue())
+        audio = ID3(f)
+        apic = audio.get("APIC:Cover")
+        assert apic is not None
+        assert apic.mime == "image/png"
+
+    def test_gif_cover_does_not_embed(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        ID3Tagger().embed_cover(f, b"GIF89a" + b"\x00" * 20)
+        audio = ID3(f)
+        assert "APIC:Cover" not in audio
+
+    def test_load_error_raises_tagging_error(self):
+        tagger = ID3Tagger()
+        with pytest.raises(TaggingError, match="failed to load .* for cover embed"):
+            tagger.embed_cover(Path("/nonexistent/song.mp3"), b"cover")
+
+    def test_save_error_raises_tagging_error(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        with patch.object(ID3, "save", side_effect=OSError("disk full")):
+            with pytest.raises(TaggingError, match="failed to save cover"):
+                tagger.embed_cover(f, b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+
+
+class TestWriteFullEdgeCases:
+    def test_writes_label(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        enriched = EnrichedInfo(artist="A", title="B", label="MyLabel")
+        tagger.write_full(f, track, enriched, None, "Station@u")
+        audio = ID3(f)
+        assert audio.get("TPUB").text == ["MyLabel"]
+
+    def test_writes_track_number(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        enriched = EnrichedInfo(artist="A", title="B", track_number=3)
+        tagger.write_full(f, track, enriched, None, "S@u")
+        audio = ID3(f)
+        assert audio.get("TRCK").text == ["3"]
+
+    def test_writes_disc_and_track(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        enriched = EnrichedInfo(artist="A", title="B", track_number=5, disc_number=2)
+        tagger.write_full(f, track, enriched, None, "S@u")
+        audio = ID3(f)
+        assert audio.get("TRCK").text == ["2/5"]
+
+    def test_save_error_raises_tagging_error(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        enriched = EnrichedInfo(artist="A", title="B")
+        with patch.object(ID3, "save", side_effect=OSError("disk full")):
+            with pytest.raises(TaggingError, match="failed to save enriched tags"):
+                tagger.write_full(f, track, enriched, None, "S@u")
+
+    def test_load_error_raises_tagging_error(self, tmp_path: Path):
+        tagger = ID3Tagger()
+        track = TrackInfo("A - B", "A", "B")
+        enriched = EnrichedInfo(artist="A")
+        with pytest.raises(TaggingError, match="failed to load"):
+            tagger.write_full(tmp_path / "no_dir" / "x.mp3", track, enriched, None, "S@u")
+
+
+class TestEnrichAndTag:
+    @pytest.fixture
+    def track(self):
+        return TrackInfo(stream_title="Artist - Song", artist="Artist", title="Song")
+
+    @pytest.fixture
+    def mock_provider(self):
+        provider = AsyncMock(spec=MetadataProvider)
+        provider.fetch.return_value = EnrichedInfo(artist="Artist", title="Song", album="Album")
+        provider.download_image.return_value = b"\xff\xd8\xff\xe0" + b"\x00" * 50
+        return provider
+
+    @pytest.fixture
+    def mock_tagger(self):
+        return MagicMock(spec=TrackTagger)
+
+    @pytest.mark.asyncio
+    async def test_enriches_with_cover(self, mock_provider, mock_tagger, track, tmp_path):
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u")
+        assert result is not None
+        assert result.album == "Album"
+        mock_tagger.write_full.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_info_fallback_cover_embedded(self, mock_provider, mock_tagger, track, tmp_path):
+        mock_provider.fetch.return_value = None
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        fallback = tmp_path / "cover.jpg"
+        fallback.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 50)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
+                                       fallback_cover_path=fallback, embed_cover_art=True)
+        assert result is None
+        mock_tagger.write_full.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_info_no_fallback(self, mock_provider, mock_tagger, track, tmp_path):
+        mock_provider.fetch.return_value = None
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u")
+        assert result is None
+        mock_tagger.write_full.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fallback_cover_read_error_suppressed(self, mock_provider, mock_tagger, track, tmp_path):
+        mock_provider.fetch.return_value = None
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
+                                       fallback_cover_path=tmp_path / "nonexistent.jpg")
+        assert result is None
+        mock_tagger.write_full.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_info_embed_cover_art_false(self, mock_provider, mock_tagger, track, tmp_path):
+        mock_provider.fetch.return_value = None
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        fallback = tmp_path / "cover.jpg"
+        fallback.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 50)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
+                                       fallback_cover_path=fallback, embed_cover_art=False)
+        assert result is None
+        mock_tagger.write_full.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_enriches_with_artwork_download(self, mock_provider, mock_tagger, track, tmp_path):
+        mock_provider.fetch.return_value = EnrichedInfo(
+            artist="Artist", title="Song", album="Album", artwork_url="http://example.com/cover.jpg"
+        )
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u")
+        assert result is not None
+        mock_provider.download_image.assert_awaited_once_with("http://example.com/cover.jpg")
+
+    @pytest.mark.asyncio
+    async def test_info_not_none_embed_false_skips_download(self, mock_provider, mock_tagger, track, tmp_path):
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
+                                       embed_cover_art=False)
+        assert result is not None
+        mock_provider.download_image.assert_not_called()
+        mock_tagger.write_full.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_write_exception_logged(self, mock_provider, mock_tagger, track, tmp_path, caplog):
+        import logging
+        caplog.set_level(logging.WARNING)
+        mock_tagger.write_full.side_effect = OSError("permission denied")
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
+                                       logger=logging.getLogger(__name__))
+        assert result is not None
+        assert "tag-enrichment failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_fallback_cover_write_exception_logged(self, mock_provider, mock_tagger, track, tmp_path, caplog):
+        import logging
+        caplog.set_level(logging.WARNING)
+        mock_provider.fetch.return_value = None
+        mock_tagger.write_full.side_effect = OSError("permission denied")
+        f = tmp_path / "s.mp3"
+        _write_blank_mp3(f)
+        fallback = tmp_path / "cover.jpg"
+        fallback.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 50)
+        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
+                                       fallback_cover_path=fallback, logger=logging.getLogger(__name__))
+        assert result is None
+        assert "fallback-cover embed failed" in caplog.text

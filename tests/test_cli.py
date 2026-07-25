@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from radio_ripper.cli import _build_arg_parser, _find_config_path, main
+from radio_ripper.cli import _build_arg_parser, _find_config_path, _run_async, main
 
 
 class TestBuildArgParser:
@@ -153,3 +155,167 @@ class TestMain:
 
             await run_test()
             mock_factory.assert_called()
+
+
+class TestRunAsync:
+    @pytest.mark.asyncio
+    async def test_stop_event_terminates(self, tmp_path):
+        from radio_ripper.infra.config import load_settings
+        from radio_ripper.infra.logging import configure_logging
+
+        cfg = {
+            "destination": str(tmp_path / "recordings"),
+            "database": str(tmp_path / "ripper.db"),
+            "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
+            "enrich_metadata": False,
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+        settings = load_settings(p)
+        logger = configure_logging("WARNING", None)
+
+        mock_app = AsyncMock()
+        mock_app.start = AsyncMock()
+        mock_app.stop = AsyncMock()
+        mock_app.cancel = AsyncMock()
+        with patch("radio_ripper.cli.RadioRipperApp.from_settings", return_value=mock_app):
+            with patch("asyncio.get_running_loop") as mock_loop:
+                fake_loop = AsyncMock()
+
+                def fake_add_signal_handler(sig, handler, *args):
+                    handler(*args)
+
+                fake_loop.add_signal_handler = fake_add_signal_handler
+                mock_loop.return_value = fake_loop
+
+                result = await _run_async(settings, logger, config_path=str(p))
+
+        assert result == 0
+        mock_app.start.assert_awaited_once()
+        mock_app.stop.assert_awaited_once()
+        # SIGINT+SIGTERM both registered, each calls cancel
+        mock_app.cancel.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_signal_handler_calls_cancel(self):
+        from radio_ripper.infra.config import Settings
+        from radio_ripper.infra.logging import configure_logging
+
+        settings = Settings(destination="/tmp", database="/tmp/db.sqlite", streams=[])
+        logger = configure_logging("WARNING", None)
+
+        mock_app = AsyncMock()
+        mock_app.start = AsyncMock()
+        mock_app.stop = AsyncMock()
+        mock_app.cancel = AsyncMock()
+
+        with patch("radio_ripper.cli.RadioRipperApp.from_settings", return_value=mock_app):
+            loop = asyncio.get_running_loop()
+            signal_handlers = {}
+            original_add = loop.add_signal_handler
+
+            def recording_add(sig, handler, *args):
+                signal_handlers[sig] = (handler, args)
+                original_add(sig, handler, *args)
+
+            loop.add_signal_handler = recording_add
+            try:
+                stop_event = asyncio.Event()
+                with patch("radio_ripper.cli.asyncio.Event", return_value=stop_event):
+                    async def trigger():
+                        await asyncio.sleep(0.05)
+                        for handler, args in signal_handlers.values():
+                            handler(*args)
+
+                    asyncio.ensure_future(trigger())
+                    result = await _run_async(settings, logger, config_path="/tmp/cfg.json")
+            finally:
+                loop.add_signal_handler = original_add
+
+        assert result == 0
+        mock_app.cancel.assert_called()
+
+
+class TestMainIntegration:
+    def test_log_level_override_configure_logging(self, tmp_path):
+        cfg = {
+            "destination": str(tmp_path / "recordings"),
+            "database": str(tmp_path / "ripper.db"),
+            "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
+            "enrich_metadata": False,
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+
+        from radio_ripper.infra.config import load_settings
+        real_settings = load_settings(p)
+
+        with patch("radio_ripper.cli.load_settings", return_value=real_settings):
+            with patch("radio_ripper.cli.configure_logging") as mock_cfg:
+                with patch("radio_ripper.cli._run_async", return_value=0):
+                    result = main(["--config", str(p), "--log-level", "DEBUG"])
+
+        assert result == 0
+        mock_cfg.assert_called_once()
+        args, _ = mock_cfg.call_args
+        assert args[0] == "DEBUG"
+
+    def test_no_enrich_override_captures_settings(self, tmp_path):
+        cfg = {
+            "destination": str(tmp_path / "recordings"),
+            "database": str(tmp_path / "ripper.db"),
+            "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
+            "enrich_metadata": True,
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+
+        settings_arg = None
+
+        def capture_settings(settings, logger, config_path=None):
+            nonlocal settings_arg
+            settings_arg = settings
+            return 0
+
+        with patch("radio_ripper.cli._run_async", side_effect=capture_settings):
+            from radio_ripper.infra.config import load_settings
+            result = main(["--config", str(p), "--no-enrich"])
+
+        assert result == 0
+        assert settings_arg.enrich_metadata is False
+        assert settings_arg.embed_cover_art is False
+
+    def test_keyboard_interrupt(self, tmp_path):
+        cfg = {
+            "destination": str(tmp_path / "recordings"),
+            "database": str(tmp_path / "ripper.db"),
+            "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
+            "enrich_metadata": False,
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+
+        with patch("radio_ripper.cli.load_settings"):
+            with patch("radio_ripper.cli.configure_logging"):
+                with patch("asyncio.run", side_effect=KeyboardInterrupt):
+                    result = main(["--config", str(p)])
+
+        assert result == 0
+
+    def test_main_success_path(self, tmp_path):
+        cfg = {
+            "destination": str(tmp_path / "recordings"),
+            "database": str(tmp_path / "ripper.db"),
+            "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
+            "enrich_metadata": False,
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+
+        with patch("radio_ripper.cli.load_settings"):
+            with patch("radio_ripper.cli.configure_logging"):
+                with patch("asyncio.run", return_value=0) as mock_run:
+                    result = main(["--config", str(p)])
+
+        assert result == 0
+        mock_run.assert_called_once()

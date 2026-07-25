@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -225,6 +226,7 @@ def _make_recorder(
     http_client: Any,
     repo: TrackRepository,
     destination: Any,
+    **kwargs: Any,
 ) -> StreamRecorder:
     return StreamRecorder(
         station_name="TestStation",
@@ -236,6 +238,7 @@ def _make_recorder(
         tagger=NullTagger(),
         metadata_provider=NullMetadataProvider(),
         enrich_semaphore=asyncio.Semaphore(1),
+        **kwargs,
     )
 
 
@@ -728,3 +731,196 @@ class TestFileLocks:
         assert path in rec._file_locks
         rec._release_lock(path)
         assert path not in rec._file_locks
+
+
+class _FailingResolver:
+    """Playlist resolver that always raises — triggers catch-all in _run_forever."""
+
+    async def resolve(self, url: str) -> list[str]:
+        raise RuntimeError("playlist resolution failed")
+
+
+class _ListAllRepo(FakeRepoFresh):
+    """Repo that returns pre-defined records from list_all."""
+
+    def __init__(self, records: list[TrackRecord] | None = None) -> None:
+        super().__init__()
+        self._records = records or []
+
+    async def list_all(self) -> list[TrackRecord]:
+        return self._records
+
+
+class _HttpClientStreamingError(FakeHttpClient):
+    """Fake HTTP client whose stream_binary raises on the first chunk."""
+
+    async def stream_binary(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> AsyncIterator[bytes]:
+        raise OSError("connection refused")
+
+
+class TestRunForeverExceptions:
+    """Edge cases in _run_forever's main loop."""
+
+    async def test_uncaught_error_in_run_once(self, tmp_path: Path, caplog: Any) -> None:
+        """A generic exception from the playlist resolver is caught by the
+        catch-all in _run_forever; the loop continues."""
+        dest = tmp_path / "recordings"
+        dest.mkdir()
+        src = _make_stream_bytes(["Song A"])
+        client = FakeHttpClient(src)
+        settings = _make_settings(
+            tmp_path, reconnect_base_delay=0.1, reconnect_max_delay=1.0
+        )
+        repo = FakeRepoFresh()
+        rec = StreamRecorder(
+            station_name="TestStation",
+            playlist_url="http://fake.example.com/listen.m3u",
+            settings=settings,
+            http_client=client,
+            playlist_resolver=_FailingResolver(),
+            repository=repo,
+            tagger=NullTagger(),
+            metadata_provider=NullMetadataProvider(),
+            enrich_semaphore=asyncio.Semaphore(1),
+        )
+        caplog.set_level(logging.DEBUG, logger="radio_ripper.stream")
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        assert "Uncaught error in recorder 'TestStation'" in caplog.text
+
+    async def test_disabled_after_no_icy_limit(self, tmp_path: Path, caplog: Any) -> None:
+        """Recorder disables itself after no_icy_disable_after consecutive
+        streams without ICY metadata."""
+        dest = tmp_path / "recordings"
+        dest.mkdir()
+        stream = _make_stream_bytes(["Does not matter"])
+        client = FakeHttpClientNoMeta(stream)
+        settings = _make_settings(tmp_path, no_icy_disable_after=1)
+        repo = FakeRepoFresh()
+        rec = _make_recorder(
+            settings=settings,
+            http_client=client,
+            repo=repo,
+            destination=dest,
+            no_icy_disable_after=1,
+        )
+        caplog.set_level(logging.DEBUG, logger="radio_ripper.stream")
+        task = rec.start()
+        await asyncio.wait_for(task, timeout=10)
+        assert "no ICY metadata after 1 consecutive attempts" in caplog.text
+        assert not rec._stop_event.is_set()
+
+    async def test_disabled_after_too_many_connect_failures(
+        self, tmp_path: Path, caplog: Any
+    ) -> None:
+        """Recorder disables after no_icy_disable_after connect failures."""
+        dest = tmp_path / "recordings"
+        dest.mkdir()
+        settings = _make_settings(tmp_path)
+        repo = FakeRepoFresh()
+        rec = StreamRecorder(
+            station_name="TestStation",
+            playlist_url="http://fake.example.com/listen.m3u",
+            settings=settings,
+            http_client=_HttpClientStreamingError(b""),
+            playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+            repository=repo,
+            tagger=NullTagger(),
+            metadata_provider=NullMetadataProvider(),
+            enrich_semaphore=asyncio.Semaphore(1),
+            no_icy_disable_after=1,
+        )
+        caplog.set_level(logging.DEBUG, logger="radio_ripper.stream")
+        task = rec.start()
+        await asyncio.wait_for(task, timeout=10)
+        assert "connect failed" in caplog.text
+        assert "connect failed 1 times in a row" in caplog.text
+
+
+class TestBlankOrAdTitles:
+    """Blank / whitespace-only stream titles."""
+
+    async def test_blank_title_skips_recording(self, tmp_path: Path) -> None:
+        """A stream title that contains only whitespace is skipped."""
+        stream = _make_stream_bytes(["Joining", "   ", "Artist - Real Song", "Another - Song"])
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path)
+        repo = FakeRepoFresh()
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=settings.destination
+        )
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        titles = [t.stream_title for _, t in repo.registered]
+        assert "   " not in titles
+        assert "Artist - Real Song" in titles
+
+
+class TestMaxRecordingsGuard:
+    """The max_recordings setting prevents recording when the limit is met."""
+
+    async def test_stops_recording_when_limit_reached(self, tmp_path: Path, caplog: Any) -> None:
+        """Once the total recording count reaches max_recordings, new songs are
+        not recorded."""
+        dest = tmp_path / "recordings"
+        dest.mkdir()
+        old_track = SavedTrack(
+            stream_title="Old Song",
+            artist="",
+            title="",
+            file_path=str(dest / "old.mp3"),
+            file_size=100,
+        )
+        existing = [
+            TrackRecord(station_name="TestStation", track=old_track),
+        ]
+        repo = _ListAllRepo(existing)
+        stream = _make_stream_bytes(["Joining", "Artist - New Song", "Another - Song"])
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, max_recordings=1)
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=dest
+        )
+        caplog.set_level(logging.DEBUG, logger="radio_ripper.stream")
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        assert len(repo.registered) == 0
+        assert "Max recordings (1) reached" in caplog.text
+
+
+class TestDiscardSmallFile:
+    """Discard path in _close_writer — file too small to commit."""
+
+    async def test_discards_when_below_min_file_size(self, tmp_path: Path, caplog: Any) -> None:
+        """A song with less audio than min_file_size_bytes is discarded."""
+        dest = tmp_path / "recordings"
+        dest.mkdir()
+        # Each song gets METADATA_INTERVAL=100 bytes; set min higher to trigger discard.
+        # The middle title ("Artist - Too Small") is finalized by the 3rd title's
+        # TitleChanged event, hitting the commit min-size check.
+        stream = _make_stream_bytes(["Joining", "Artist - Too Small", "Next - Song"])
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, min_file_size_bytes=200)
+        repo = FakeRepoFresh()
+        rec = _make_recorder(
+            settings=settings, http_client=client, repo=repo, destination=dest
+        )
+        caplog.set_level(logging.DEBUG, logger="radio_ripper.stream")
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        assert "Discarded (too small)" in caplog.text
+        assert len(repo.registered) == 0

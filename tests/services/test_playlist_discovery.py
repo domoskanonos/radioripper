@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,10 +17,14 @@ from radio_ripper.services.playlist_discovery import (
     M3uEntry,
     PlaylistDiscoveryService,
     _deduplicate_by_name,
+    _distribute_probe_pool,
     _download_mega_m3u,
     _filter_keywords,
+    _keyword_coverage,
     _load_cache,
+    _match_keywords,
     _parse_m3u_text,
+    _probe_batch,
     _probe_icy,
     _save_cache,
 )
@@ -451,4 +457,500 @@ class TestDiscover:
             svc = PlaylistDiscoveryService(settings)
             stations = await svc._discover()
 
+        assert stations == []
+
+
+# ---------------------------------------------------------------------------
+# _match_keywords
+# ---------------------------------------------------------------------------
+
+
+class TestMatchKeywords:
+    ENTRIES: ClassVar[list[M3uEntry]] = [
+        M3uEntry(name="Classic Rock", url="http://a", source="x"),
+        M3uEntry(name="Pop Hits", url="http://b", source="x"),
+        M3uEntry(name="Jazz Cafe", url="http://c", source="x", extinf="#EXTINF:-1,Jazz Cafe"),
+    ]
+
+    def test_empty_keywords_all_returned(self):
+        result = _match_keywords(self.ENTRIES, [])
+        assert len(result) == 3
+        for _, matched in result:
+            assert matched == set()
+
+    def test_only_blank_keywords_all_returned(self):
+        result = _match_keywords(self.ENTRIES, ["", "  "])
+        assert len(result) == 3
+
+    def test_match_single_keyword(self):
+        result = _match_keywords(self.ENTRIES, ["rock"])
+        assert len(result) == 1
+        entry, matched = result[0]
+        assert entry.name == "Classic Rock"
+        assert matched == {"rock"}
+
+    def test_match_multiple_keywords_in_one_entry(self):
+        entries = [
+            M3uEntry(name="Classic Rock Pop", url="http://a", source="x"),
+        ]
+        result = _match_keywords(entries, ["rock", "pop"])
+        assert len(result) == 1
+        _, matched = result[0]
+        assert matched == {"rock", "pop"}
+
+    def test_match_from_extinf_only(self):
+        entries = [
+            M3uEntry(name="Some FM", url="http://a", source="x", extinf='#EXTINF:-1 tvg-id="rock.fm"'),
+        ]
+        result = _match_keywords(entries, ["rock"])
+        assert len(result) == 1
+
+    def test_no_match_returns_empty(self):
+        result = _match_keywords(self.ENTRIES, ["country"])
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _distribute_probe_pool
+# ---------------------------------------------------------------------------
+
+
+class TestDistributeProbePool:
+    def _make_match(self, name: str, kw: str, url: str = "http://a") -> tuple[M3uEntry, set[str]]:
+        return M3uEntry(name=name, url=url, source="test"), {kw}
+
+    def test_no_keywords_returns_all(self):
+        entry = M3uEntry(name="Rock", url="http://a", source="test")
+        result = _distribute_probe_pool([(entry, {"rock"})], [], 10)
+        assert result == [entry]
+
+    def test_max_needed_zero_returns_all(self):
+        entry = M3uEntry(name="Rock", url="http://a", source="test")
+        result = _distribute_probe_pool([(entry, {"rock"})], ["rock"], 0)
+        assert result == [entry]
+
+    def test_single_keyword_selects_up_to_max(self):
+        entries = [M3uEntry(name=f"Rock {i}", url=f"http://{i}", source="test") for i in range(5)]
+        matched = [(e, {"rock"}) for e in entries]
+        result = _distribute_probe_pool(matched, ["rock"], 3)
+        assert len(result) == 3
+
+    def test_multiple_keywords_round_robin(self):
+        rock_entries = [M3uEntry(name=f"Rock {i}", url=f"http://r{i}", source="test") for i in range(3)]
+        jazz_entries = [M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(3)]
+        matched = [(e, {"rock"}) for e in rock_entries] + [(e, {"jazz"}) for e in jazz_entries]
+        result = _distribute_probe_pool(matched, ["rock", "jazz"], 4)
+        assert len(result) == 4
+        rock_in_pool = sum(1 for e in result if "Rock" in e.name)
+        jazz_in_pool = sum(1 for e in result if "Jazz" in e.name)
+        assert rock_in_pool >= 1
+        assert jazz_in_pool >= 1
+
+    def test_keyword_exhausted_continues_round_robin(self):
+        rock_entries = [M3uEntry(name="Rock Only", url="http://r0", source="test")]
+        jazz_entries = [M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(5)]
+        matched = [(e, {"rock"}) for e in rock_entries] + [(e, {"jazz"}) for e in jazz_entries]
+        result = _distribute_probe_pool(matched, ["rock", "jazz"], 4)
+        assert len(result) == 4
+        assert result[0].name == "Rock Only"
+
+    def test_runs_out_of_entries(self):
+        entries = [M3uEntry(name="Rock", url="http://a", source="test")]
+        matched = [(e, {"rock"}) for e in entries]
+        result = _distribute_probe_pool(matched, ["rock", "jazz"], 10)
+        assert len(result) == 1
+
+    def test_warns_when_fewer_than_5_per_keyword(self, caplog):
+        caplog.set_level(logging.WARNING, logger="radio_ripper.discovery")
+        entries = [M3uEntry(name=f"Rock {i}", url=f"http://{i}", source="test") for i in range(3)]
+        matched = [(e, {"rock"}) for e in entries]
+        _distribute_probe_pool(matched, ["rock"], 5)
+        assert "has only 3 station(s) in probe pool" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# _keyword_coverage
+# ---------------------------------------------------------------------------
+
+
+class TestKeywordCoverage:
+    def _make_good(self, name: str, kw: str) -> tuple[M3uEntry, dict]:
+        return (
+            M3uEntry(name=name, url="http://a", source="test", extinf=f'tvg-name="{kw}"'),
+            {"icy": True, "bitrate": 128},
+        )
+
+    def test_warning_fewer_than_5(self, caplog):
+        caplog.set_level(logging.WARNING, logger="radio_ripper.discovery")
+        good = [self._make_good("Rock FM", "rock")]
+        _keyword_coverage(good, ["rock"])
+        assert "has only 1 probed station(s) (< 5)" in caplog.text
+
+    def test_info_5_or_more(self, caplog):
+        caplog.set_level(logging.INFO, logger="radio_ripper.discovery")
+        good = [self._make_good(f"Rock {i}", "rock") for i in range(5)]
+        _keyword_coverage(good, ["rock"])
+        assert "5 stations" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# _probe_icy — additional edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestProbeIcyEdgeCases:
+    @pytest.mark.asyncio
+    async def test_read_chunk_raises(self):
+        async def _aiter_error():
+            raise RuntimeError("connection lost")
+            yield  # pragma: no cover
+
+        resp = _make_resp(200, {"icy-metaint": "8192"})
+        resp.aiter_bytes = _aiter_error
+        stream_cm = _AsyncCtxMgr(value=resp)
+        client = _make_client(stream_cm)
+        with patch("httpx.AsyncClient", return_value=client):
+            result = await _probe_icy("http://example.com/stream")
+        assert result["error"] == "no data: connection lost"
+
+    @pytest.mark.asyncio
+    async def test_remote_protocol_error(self):
+        client = _make_client()
+        client.stream.side_effect = httpx.RemoteProtocolError("protocol error")
+        with patch("httpx.AsyncClient", return_value=client):
+            result = await _probe_icy("http://example.com/stream")
+        assert result["error"] == "protocol"
+
+    @pytest.mark.asyncio
+    async def test_generic_exception(self):
+        client = _make_client()
+        client.stream.side_effect = RuntimeError("something unexpected")
+        with patch("httpx.AsyncClient", return_value=client):
+            result = await _probe_icy("http://example.com/stream")
+        assert result["error"] == "something unexpected"
+
+    @pytest.mark.asyncio
+    async def test_non_http_status_206_accepted(self):
+        resp = _make_resp(206, {"icy-metaint": "8192"})
+        stream_cm = _AsyncCtxMgr(value=resp)
+        client = _make_client(stream_cm)
+        with patch("httpx.AsyncClient", return_value=client):
+            result = await _probe_icy("http://example.com/stream")
+        assert result["icy"] is True
+
+    @pytest.mark.asyncio
+    async def test_read_chunk_yields_data(self):
+        async def _aiter_one():
+            yield b"some data"
+
+        resp = _make_resp(200, {"icy-metaint": "8192"})
+        resp.aiter_bytes = _aiter_one
+        stream_cm = _AsyncCtxMgr(value=resp)
+        client = _make_client(stream_cm)
+        with patch("httpx.AsyncClient", return_value=client):
+            result = await _probe_icy("http://example.com/stream")
+        assert result["icy"] is True
+        assert result["read_bytes"] == 9
+
+
+# ---------------------------------------------------------------------------
+# _probe_batch
+# ---------------------------------------------------------------------------
+
+
+class TestProbeBatch:
+    @pytest.mark.asyncio
+    async def test_all_icy(self):
+        entries = [
+            M3uEntry(name="Rock", url="http://a", source="test"),
+            M3uEntry(name="Jazz", url="http://b", source="test"),
+        ]
+        with patch(
+            "radio_ripper.services.playlist_discovery._probe_icy",
+            new_callable=AsyncMock,
+            side_effect=[
+                {"icy": True, "bitrate": 128, "error": None},
+                {"icy": True, "bitrate": 256, "error": None},
+            ],
+        ):
+            sem = asyncio.Semaphore(50)
+            results = await _probe_batch(entries, 10, sem)
+        assert len(results) == 2
+
+    @pytest.mark.asyncio
+    async def test_mixed_icy(self):
+        entries = [
+            M3uEntry(name="Rock", url="http://a", source="test"),
+            M3uEntry(name="Jazz", url="http://b", source="test"),
+        ]
+        with patch(
+            "radio_ripper.services.playlist_discovery._probe_icy",
+            new_callable=AsyncMock,
+            side_effect=[
+                {"icy": True, "bitrate": 128, "error": None},
+                {"icy": False, "bitrate": 0, "error": None},
+            ],
+        ):
+            sem = asyncio.Semaphore(50)
+            results = await _probe_batch(entries, 10, sem)
+        assert len(results) == 1
+
+    @pytest.mark.asyncio
+    async def test_task_exception_skipped(self):
+        entries = [
+            M3uEntry(name="Rock", url="http://a", source="test"),
+        ]
+        with patch(
+            "radio_ripper.services.playlist_discovery._probe_icy",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("probe failed"),
+        ):
+            sem = asyncio.Semaphore(50)
+            results = await _probe_batch(entries, 10, sem)
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_max_ok_cancels_remaining(self):
+        call_count = 0
+
+        async def _staggered(url: str, **kw: object) -> dict:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return {"icy": True, "bitrate": 128, "error": None}
+            await asyncio.sleep(100)
+            return {"icy": True, "bitrate": 128}  # pragma: no cover
+
+        entries = [
+            M3uEntry(name=f"S{i}", url=f"http://{i}", source="test") for i in range(3)
+        ]
+        with patch("radio_ripper.services.playlist_discovery._probe_icy", _staggered):
+            sem = asyncio.Semaphore(50)
+            results = await _probe_batch(entries, 2, sem)
+        assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# _load_cache — additional edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestLoadCacheEdgeCases:
+    def test_legacy_json_not_a_list_falls_to_m3u(self, tmp_path: Path) -> None:
+        cf = tmp_path / "cache.json"
+        cf.write_text("[1, 2, 3]")
+        loaded, kh = _load_cache(cf)
+        assert loaded == []
+
+    def test_legacy_json_station_creation_fails_falls_to_m3u(self, tmp_path: Path) -> None:
+        cf = tmp_path / "cache.json"
+        cf.write_text(json.dumps([{"name": "Bad", "url": "not-a-url", "icy": True}]))
+        loaded, kh = _load_cache(cf)
+        assert loaded == []
+
+    def test_m3u_entry_creation_skipped(self, tmp_path: Path) -> None:
+        cf = tmp_path / "cache.json"
+        cf.write_text("#EXTM3U\n#EXTINF:-1,Bad URL\nnot-a-valid-url\n")
+        loaded, kh = _load_cache(cf)
+        assert loaded == []
+
+    def test_cache_file_not_found(self, tmp_path: Path) -> None:
+        cf = tmp_path / "nonexistent.json"
+        loaded, kh = _load_cache(cf)
+        assert loaded == []
+
+
+# ---------------------------------------------------------------------------
+# PlaylistDiscoveryService — additional edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestPlaylistDiscoveryServiceEdgeCases:
+    @pytest.mark.asyncio
+    async def test_load_or_discover_cache_empty_runs_discovery(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+        )
+        cf = tmp_path / "discovered_stations.m3u"
+        cf.write_text("#EXTM3U\n")
+        with patch(
+            "radio_ripper.services.playlist_discovery._download_mega_m3u",
+            return_value="#EXTM3U\n",
+        ):
+            svc = PlaylistDiscoveryService(settings)
+            result = await svc.load_or_discover()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_load_or_discover_download_save_fails_gracefully(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+            stream_keywords=["rock"],
+        )
+        m3u_text = "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
+        mock_entry = M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u")
+        with (
+            patch(
+                "radio_ripper.services.playlist_discovery._download_mega_m3u",
+                return_value=m3u_text,
+            ),
+            patch(
+                "radio_ripper.services.playlist_discovery._probe_batch",
+                return_value=[(mock_entry, {"icy": True, "bitrate": 128})],
+            ),
+            patch.object(Path, "write_text", side_effect=OSError("read-only")),
+            patch(
+                "radio_ripper.services.playlist_discovery._save_cache",
+            ),
+        ):
+            svc = PlaylistDiscoveryService(settings)
+            result = await svc.load_or_discover()
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_load_or_discover_no_stations_after_discover(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+            stream_keywords=["rock"],
+        )
+        with patch(
+            "radio_ripper.services.playlist_discovery._download_mega_m3u",
+            return_value="#EXTM3U\n#EXTINF:-1,Other\nhttp://other\n",
+        ):
+            svc = PlaylistDiscoveryService(settings)
+            result = await svc.load_or_discover()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_discover_raw_mega_read_fails_downloads(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+            stream_keywords=["rock"],
+        )
+        raw_mega = tmp_path / "---everything-checked-repo.m3u"
+        raw_mega.write_text("ignored")
+        m3u_text = "#EXTM3U\n"
+        svc = PlaylistDiscoveryService(settings)
+        with (
+            patch("pathlib.Path.read_text", side_effect=OSError("denied")),
+            patch(
+                "radio_ripper.services.playlist_discovery._download_mega_m3u",
+                return_value=m3u_text,
+            ),
+            patch.object(svc, "_discover_from_text", return_value=[]),
+        ):
+            await svc._discover()
+
+    @pytest.mark.asyncio
+    async def test_discover_save_raw_mega_fails_gracefully(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+            stream_keywords=["rock"],
+        )
+        m3u_text = "#EXTM3U\n"
+        svc = PlaylistDiscoveryService(settings)
+        with (
+            patch(
+                "radio_ripper.services.playlist_discovery._download_mega_m3u",
+                return_value=m3u_text,
+            ),
+            patch("pathlib.Path.write_text", side_effect=OSError("read-only")),
+            patch.object(svc, "_discover_from_text", return_value=[]),
+        ):
+            await svc._discover()
+
+    @pytest.mark.asyncio
+    async def test_discover_raw_mega_exists_reads_it(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+        )
+        raw_mega = tmp_path / "---everything-checked-repo.m3u"
+        m3u_text = "#EXTM3U\n"
+        raw_mega.write_text(m3u_text)
+        svc = PlaylistDiscoveryService(settings)
+        with patch.object(svc, "_discover_from_text", return_value=[]):
+            await svc._discover()
+
+    @pytest.mark.asyncio
+    async def test_discover_from_text_bitrate_filter(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+            stream_keywords=["rock"],
+            discovery_min_bitrate=200,
+            discovery_max_stations=10,
+        )
+        m3u_text = (
+            "#EXTM3U\n"
+            "#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
+            "#EXTINF:-1,Pop Hits\nhttp://pop.example.com\n"
+        )
+        mock_results = [
+            (M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u"), {"icy": True, "bitrate": 128}),
+            (M3uEntry(name="Pop Hits", url="http://pop.example.com", source="mega.m3u"), {"icy": True, "bitrate": 256}),
+        ]
+        with (
+            patch(
+                "radio_ripper.services.playlist_discovery._probe_batch",
+                return_value=mock_results,
+            ),
+        ):
+            svc = PlaylistDiscoveryService(settings)
+            stations = await svc._discover_from_text(m3u_text)
+        assert len(stations) == 1
+        assert stations[0].name == "Pop Hits"
+
+    @pytest.mark.asyncio
+    async def test_discover_from_text_skips_invalid_entry(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+            stream_keywords=["rock"],
+            discovery_max_stations=10,
+        )
+        m3u_text = "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
+        mock_results = [
+            (M3uEntry(name="Classic Rock", url="not-a-valid-url", source="mega.m3u"), {"icy": True, "bitrate": 128}),
+        ]
+        with patch(
+            "radio_ripper.services.playlist_discovery._probe_batch",
+            return_value=mock_results,
+        ):
+            svc = PlaylistDiscoveryService(settings)
+            stations = await svc._discover_from_text(m3u_text)
+        assert stations == []
+
+    @pytest.mark.asyncio
+    async def test_discover_from_text_no_unique_stations(self, tmp_path: Path) -> None:
+        settings = Settings(
+            destination="./rec",
+            database="./rec/ripper.db",
+            discovery_enabled=True,
+            temp_dir=tmp_path,
+            stream_keywords=["nonexistent"],
+        )
+        svc = PlaylistDiscoveryService(settings)
+        stations = await svc._discover_from_text("#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://a\n")
         assert stations == []
