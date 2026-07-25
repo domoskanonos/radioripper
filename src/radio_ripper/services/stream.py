@@ -279,7 +279,7 @@ class StreamRecorder:
                 track = TrackInfo.from_stream_title(current_title or "")
                 provenance = f"{self.station_name}@{self.playlist_url}"
 
-                final_path = await register_and_enrich(
+                final_path = await register_and_enrich(  # type: ignore[assignment]
                     final_path,
                     track,
                     self.station_name,
@@ -444,20 +444,22 @@ class StreamRecorder:
                         # Existing songs are still recorded for replace-if-better check.
                         if self.settings.max_recordings is not None:
                             all_records = await self._repo.list_all()
-                            if len(all_records) >= self.settings.max_recordings \
-                               and not await self._repo.exists(self.station_name, clean):
+                            if len(
+                                all_records
+                            ) >= self.settings.max_recordings and not await self._repo.exists(
+                                self.station_name, clean
+                            ):
                                 now = time.monotonic()
                                 if now - self._last_limit_log >= 60.0:
-                                        self._log.warning(
-                                            "[%s] Max recordings (%d) reached —"
-                                            " not recording more.",
-                                            self.station_name,
-                                            self.settings.max_recordings,
-                                        )
-                                        self._last_limit_log = now
-                                    self._audio_buffer.clear()
-                                    recording = False
-                                    continue
+                                    self._log.warning(
+                                        "[%s] Max recordings (%d) reached — not recording more.",
+                                        self.station_name,
+                                        self.settings.max_recordings,
+                                    )
+                                    self._last_limit_log = now
+                                self._audio_buffer.clear()
+                                recording = False
+                                continue
                         try:
                             writer = TrackWriter(
                                 file_path,

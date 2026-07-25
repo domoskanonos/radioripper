@@ -89,7 +89,7 @@
   "user_agent": "Radio-Ripper/2.0",
   "overwrite_existing_files": false,
   "min_file_size_bytes": 1024,
-  "enrichment_workers": 4,
+  "enrichment_workers": 64,
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
   "no_icy_disable_after": 10,

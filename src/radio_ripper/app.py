@@ -138,7 +138,7 @@ class RadioRipperApp:
         )
         temp_dir = settings.temp_dir or (settings.work_dir / "temp")
         app._uploader = Uploader(
-            inbox=settings.mp3_inbox,
+            inbox=settings.mp3_inbox,  # type: ignore[arg-type]
             temp_dir=temp_dir,
             settings=settings,
             fingerprint_provider=fp_provider,

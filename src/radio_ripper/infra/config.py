@@ -83,7 +83,7 @@ class Settings(BaseModel):
     no_icy_disable_after: int = Field(default=10, ge=1)
 
     fallback_cover_path: Path | None = None
-    enrichment_workers: int = Field(default=4, ge=1, le=32)
+    enrichment_workers: int = Field(default=32)
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
 
