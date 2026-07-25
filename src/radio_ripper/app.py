@@ -25,6 +25,7 @@ from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.fingerprint import (
     AcoustidFingerprintProvider,
     FingerprintProvider,
+    NullFingerprintProvider,
 )
 from radio_ripper.services.metadata import (
     CoverArtArchiveProvider,
@@ -102,17 +103,19 @@ class RadioRipperApp:
 
             load_dotenv()
         api_key = os.environ.get("ACOUSTID_API_KEY") or os.environ.get("ACCOUST_ID", "")
-        if not api_key:
-            raise ConfigurationError(
-                "AcoustID API-Key required. "
-                "Set ACOUSTID_API_KEY env var (docker: -e ACOUSTID_API_KEY=your_key) "
-                "in a .env file or as environment variable."
-            )
         os.environ.setdefault("ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup")
-        fp_provider: FingerprintProvider = AcoustidFingerprintProvider(
-            api_key,
-            min_score=settings.acoustid_min_score,
-        )
+        fp_provider: FingerprintProvider
+        if api_key:
+            fp_provider = AcoustidFingerprintProvider(
+                api_key,
+                min_score=settings.acoustid_min_score,
+            )
+        else:
+            log.warning(
+                "ACOUSTID_API_KEY not set — fingerprinting disabled. "
+                "Set the env var or recordings will never get AcoustID matches."
+            )
+            fp_provider = NullFingerprintProvider()
         # Cover Art Archive: secondary cover-art source keyed on MusicBrainz
         # recording IDs returned by AcoustID. Used by StreamRecorder when
         # iTunes enrichment returned no artwork.

@@ -539,7 +539,7 @@ class TestStop:
 class TestFromSettings:
     """RadioRipperApp.from_settings() — error path."""
 
-    async def test_missing_api_key_raises_configuration_error(self, tmp_path) -> None:
+    async def test_missing_api_key_falls_back_to_null_fingerprint(self, tmp_path) -> None:
         settings = _make_settings(tmp_path)
         with (
             patch.dict("os.environ", {"ACOUSTID_API_KEY": "", "ACCOUST_ID": ""}),
@@ -548,8 +548,9 @@ class TestFromSettings:
             patch("radio_ripper.app.ID3Tagger"),
         ):
             mock_repo_cls.return_value = AsyncMock()
-            with pytest.raises(ConfigurationError, match="AcoustID API-Key required"):
-                RadioRipperApp.from_settings(settings)
+            app = RadioRipperApp.from_settings(settings)
+            from radio_ripper.services.fingerprint import NullFingerprintProvider
+            assert isinstance(app.fingerprint, NullFingerprintProvider)
 
 
 __all__ = []
