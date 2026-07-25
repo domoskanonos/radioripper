@@ -76,12 +76,5 @@ class ConfigApi:
 
     @staticmethod
     def default_settings() -> Settings:
-        """Return a :class:`Settings` with one placeholder stream (for new configs)."""
-        return Settings(
-            destination=Path("./recordings"),
-            streams=[
-                StreamConfig(
-                    name="TopHits", url=HttpUrl("http://tophits.radiomonster.fm/listen.m3u")
-                ),
-            ],
-        )
+        """Return a :class:`Settings` with defaults for a new config."""
+        return Settings(destination=Path("./recordings"))

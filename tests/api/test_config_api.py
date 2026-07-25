@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from radio_ripper.api.config_api import ConfigApi
-from radio_ripper.infra.config import Settings, StreamConfig
+from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import ConfigurationError
 
 
@@ -81,11 +81,10 @@ class TestConfigApi:
         stream = ConfigApi.make_stream("Rock", "http://x/listen.m3u")
         assert stream.name == "Rock"
 
-    def test_default_settings_has_one_stream(self) -> None:
+    def test_default_settings_returns_settings(self) -> None:
         s = ConfigApi.default_settings()
         assert isinstance(s, Settings)
-        assert len(s.streams) == 1
-        assert isinstance(s.streams[0], StreamConfig)
+        assert s.destination == Path("./recordings")
 
     def test_load_missing_file_raises(self, tmp_path: Path) -> None:
         api = ConfigApi(tmp_path / "nonexistent.json")

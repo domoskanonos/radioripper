@@ -102,6 +102,9 @@ class Settings(BaseModel):
     min_popularity_rank: int = Field(default=100000, ge=0)
     enable_coverartarchive: bool = True
 
+    max_concurrent_streams: int = Field(default=400, ge=1, le=500)
+    disable_automatic_streams: bool = False
+
     @field_validator("log_level")
     @classmethod
     def _valid_level(cls, v: str) -> str:

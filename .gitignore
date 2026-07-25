@@ -14,3 +14,4 @@ build/
 .coverage
 radio_ripper.pid
 acoustid_key.ok
+work

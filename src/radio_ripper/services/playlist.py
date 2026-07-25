@@ -6,9 +6,53 @@ files or static configurations in tests and future use cases.
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
+from pathlib import Path
 
+from pydantic import HttpUrl
+
+from radio_ripper.infra.config import StreamConfig
 from radio_ripper.infra.http import AsyncHttpClient
+
+
+def load_local_m3u(path: Path) -> list[StreamConfig]:
+    """Parse a local M3U file and return a list of stream configurations.
+
+    Standard M3U format with ``#EXTINF`` lines is expected:
+        #EXTM3U
+        #EXTINF:-1,Station Name
+        http://stream.url
+
+    Lines that cannot be parsed (missing name or invalid URL) are silently
+    skipped.
+    """
+    if not path.is_file():
+        return []
+    stations: list[StreamConfig] = []
+    name: str | None = None
+    for line in path.read_text("utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#EXTINF:"):
+            # Extract the display name after the last comma
+            idx = line.rfind(",")
+            if idx != -1:
+                name = line[idx + 1 :].strip()
+            continue
+        if line.startswith("#"):
+            continue
+        if name is None:
+            continue
+        if "://" not in line:
+            continue
+        with contextlib.suppress(Exception):
+            stations.append(
+                StreamConfig(name=name, url=HttpUrl(line), enabled=True, source="custom")
+            )
+        name = None
+    return stations
 
 
 def parse_m3u(text: str) -> list[str]:
@@ -77,6 +121,7 @@ __all__ = [
     "HttpPlaylistResolver",
     "PlaylistResolver",
     "StaticPlaylistResolver",
+    "load_local_m3u",
     "parse_m3u",
     "parse_pls",
 ]

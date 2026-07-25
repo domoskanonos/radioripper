@@ -106,5 +106,7 @@
   "reprobe_on_start": true,
   "acoustid_min_score": 0.85,
   "discard_unmatched": true,
-  "min_popularity_rank": 100000
+  "min_popularity_rank": 100000,
+  "max_concurrent_streams": 400,
+  "disable_automatic_streams": false
 }
