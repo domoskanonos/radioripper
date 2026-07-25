@@ -184,6 +184,7 @@ class RadioRipperApp:
                 record.track.acoustid_recording_id
                 and record.track.album
                 and record.track.enrichment == "itunes"
+                and record.track.label
             ):
                 expected = compute_file_path(
                     self.settings.destination,
@@ -202,6 +203,7 @@ class RadioRipperApp:
             needs_enrich = (
                 not record.track.album
                 or not record.track.year
+                or not record.track.label
                 or record.track.enrichment != "itunes"
             )
             if needs_enrich and not isinstance(self.metadata, NullMetadataProvider):
@@ -240,6 +242,9 @@ class RadioRipperApp:
                         record.track.stream_title,
                         album=album,
                         enrichment="itunes",
+                        label=info.label if info else None,
+                        track_number=info.track_number if info else None,
+                        disc_number=info.disc_number if info else None,
                     )
                 except Exception as exc:
                     self.logger.debug("[%s] db enrichment update: %s", record.station_name, exc)
@@ -267,11 +272,12 @@ class RadioRipperApp:
                         fallback_cover=fallback_cover,
                     )
                     self.logger.info(
-                        "[%s] Rewrote enriched tags: album=%s year=%s genre=%s",
+                        "[%s] Rewrote enriched tags: album=%s year=%s genre=%s label=%s",
                         record.station_name,
                         info.album or "-",
                         info.year or "-",
                         info.genre or "-",
+                        info.label or "-",
                     )
                 except Exception as exc:
                     self.logger.debug(

@@ -52,6 +52,9 @@ _MIGRATION_COLUMNS = (
     ("enrichment", "TEXT"),
     ("acoustid_recording_id", "TEXT"),
     ("acoustid_score", "REAL"),
+    ("label", "TEXT"),
+    ("track_number", "INTEGER"),
+    ("disc_number", "INTEGER"),
 )
 
 
@@ -112,6 +115,9 @@ class TrackRepository(ABC):
         title: str | None = None,
         album: str | None = None,
         year: str | None = None,
+        label: str | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
         file_size: int | None = None,
         has_cover: bool = False,
         enrichment: str = "",
@@ -192,8 +198,9 @@ class SQLiteTrackRepository(TrackRepository):
                 INSERT OR IGNORE INTO songs
                     (station_name, stream_title, artist, title,
                      album, year, file_path, file_size, has_cover, enrichment,
-                     acoustid_recording_id, acoustid_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     acoustid_recording_id, acoustid_score,
+                     label, track_number, disc_number)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     station_name,
@@ -208,6 +215,9 @@ class SQLiteTrackRepository(TrackRepository):
                     track.enrichment,
                     track.acoustid_recording_id,
                     track.acoustid_score,
+                    track.label,
+                    track.track_number,
+                    track.disc_number,
                 ),
             )
         except sqlite3.Error as exc:
@@ -222,6 +232,9 @@ class SQLiteTrackRepository(TrackRepository):
         title: str | None = None,
         album: str | None = None,
         year: str | None = None,
+        label: str | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
         file_size: int | None = None,
         has_cover: bool = False,
         enrichment: str = "",
@@ -235,6 +248,9 @@ class SQLiteTrackRepository(TrackRepository):
                 title,
                 album,
                 year,
+                label,
+                track_number,
+                disc_number,
                 file_size,
                 has_cover,
                 enrichment,
@@ -248,6 +264,9 @@ class SQLiteTrackRepository(TrackRepository):
         title: str | None,
         album: str | None,
         year: str | None,
+        label: str | None,
+        track_number: int | None,
+        disc_number: int | None,
         file_size: int | None,
         has_cover: bool,
         enrichment: str,
@@ -260,6 +279,9 @@ class SQLiteTrackRepository(TrackRepository):
                     title  = COALESCE(?, title),
                     album  = COALESCE(?, album),
                     year   = COALESCE(?, year),
+                    label  = COALESCE(?, label),
+                    track_number = COALESCE(?, track_number),
+                    disc_number  = COALESCE(?, disc_number),
                     file_size = COALESCE(?, file_size),
                     has_cover = ?,
                     enrichment = ?
@@ -270,6 +292,9 @@ class SQLiteTrackRepository(TrackRepository):
                     title,
                     album,
                     year,
+                    label,
+                    track_number,
+                    disc_number,
                     file_size,
                     1 if has_cover else 0,
                     enrichment,
@@ -351,7 +376,8 @@ class SQLiteTrackRepository(TrackRepository):
                 """
                 SELECT station_name, stream_title, artist, title,
                        file_path, file_size, album, year, has_cover,
-                       enrichment, acoustid_recording_id, acoustid_score
+                       enrichment, acoustid_recording_id, acoustid_score,
+                       label, track_number, disc_number
                 FROM songs WHERE acoustid_recording_id=?
                 """,
                 (recording_id,),
@@ -373,6 +399,9 @@ class SQLiteTrackRepository(TrackRepository):
                             enrichment=row["enrichment"],
                             acoustid_recording_id=row["acoustid_recording_id"],
                             acoustid_score=row["acoustid_score"],
+                            label=row["label"],
+                            track_number=row["track_number"],
+                            disc_number=row["disc_number"],
                         ),
                     )
                 )
@@ -390,7 +419,8 @@ class SQLiteTrackRepository(TrackRepository):
                 """
                 SELECT station_name, stream_title, artist, title,
                        file_path, file_size, album, year, has_cover,
-                       enrichment, acoustid_recording_id, acoustid_score
+                       enrichment, acoustid_recording_id, acoustid_score,
+                       label, track_number, disc_number
                 FROM songs WHERE acoustid_recording_id=? LIMIT 1
                 """,
                 (recording_id,),
@@ -412,10 +442,13 @@ class SQLiteTrackRepository(TrackRepository):
                     enrichment=row["enrichment"],
                     acoustid_recording_id=row["acoustid_recording_id"],
                     acoustid_score=row["acoustid_score"],
+                    label=row["label"],
+                    track_number=row["track_number"],
+                    disc_number=row["disc_number"],
                 ),
             )
         except sqlite3.Error as exc:
-            raise RepositoryError(f"update_fingerprint() failed: {exc}") from exc
+            raise RepositoryError(f"find_by_recording_id() failed: {exc}") from exc
 
     async def find_by_artist_title_any_station(
         self, artist: str, title: str, exclude_station: str | None = None
@@ -437,7 +470,8 @@ class SQLiteTrackRepository(TrackRepository):
                     """
                     SELECT station_name, stream_title, artist, title,
                            file_path, file_size, album, year, has_cover,
-                           enrichment, acoustid_recording_id, acoustid_score
+                           enrichment, acoustid_recording_id, acoustid_score,
+                           label, track_number, disc_number
                     FROM songs
                     WHERE LOWER(artist)=LOWER(?) AND LOWER(title)=LOWER(?)
                       AND station_name!=?
@@ -450,7 +484,8 @@ class SQLiteTrackRepository(TrackRepository):
                     """
                     SELECT station_name, stream_title, artist, title,
                            file_path, file_size, album, year, has_cover,
-                           enrichment, acoustid_recording_id, acoustid_score
+                           enrichment, acoustid_recording_id, acoustid_score,
+                           label, track_number, disc_number
                     FROM songs
                     WHERE LOWER(artist)=LOWER(?) AND LOWER(title)=LOWER(?)
                     LIMIT 1
@@ -462,21 +497,24 @@ class SQLiteTrackRepository(TrackRepository):
                 return None
             return TrackRecord(
                 station_name=row["station_name"],
-                track=SavedTrack(
-                    stream_title=row["stream_title"],
-                    artist=row["artist"] or "",
-                    title=row["title"] or "",
-                    file_path=row["file_path"],
-                    file_size=row["file_size"] or 0,
-                    album=row["album"],
-                    year=row["year"],
-                    has_cover=bool(row["has_cover"]),
-                    enrichment=row["enrichment"],
-                    acoustid_recording_id=row["acoustid_recording_id"],
-                    acoustid_score=row["acoustid_score"],
-                ),
-            )
-        except sqlite3.Error as exc:
+                    track=SavedTrack(
+                        stream_title=row["stream_title"],
+                        artist=row["artist"] or "",
+                        title=row["title"] or "",
+                        file_path=row["file_path"],
+                        file_size=row["file_size"] or 0,
+                        album=row["album"],
+                        year=row["year"],
+                        has_cover=bool(row["has_cover"]),
+                        enrichment=row["enrichment"],
+                        acoustid_recording_id=row["acoustid_recording_id"],
+                        acoustid_score=row["acoustid_score"],
+                        label=row["label"],
+                        track_number=row["track_number"],
+                        disc_number=row["disc_number"],
+                    ),
+                )
+        except (sqlite3.Error, KeyError) as exc:
             raise RepositoryError(f"find_by_artist_title_any_station() failed: {exc}") from exc
 
     async def find_all_by_artist_title(self, artist: str, title: str) -> list[TrackRecord]:
@@ -493,7 +531,8 @@ class SQLiteTrackRepository(TrackRepository):
                 """
                 SELECT station_name, stream_title, artist, title,
                        file_path, file_size, album, year, has_cover,
-                       enrichment, acoustid_recording_id, acoustid_score
+                       enrichment, acoustid_recording_id, acoustid_score,
+                       label, track_number, disc_number
                 FROM songs
                 WHERE LOWER(artist)=LOWER(?) AND LOWER(title)=LOWER(?)
                 """,
@@ -516,6 +555,9 @@ class SQLiteTrackRepository(TrackRepository):
                             enrichment=row["enrichment"],
                             acoustid_recording_id=row["acoustid_recording_id"],
                             acoustid_score=row["acoustid_score"],
+                            label=row["label"],
+                            track_number=row["track_number"],
+                            disc_number=row["disc_number"],
                         ),
                     )
                 )
@@ -533,7 +575,8 @@ class SQLiteTrackRepository(TrackRepository):
                 """
                 SELECT station_name, stream_title, artist, title,
                        file_path, file_size, album, year, has_cover,
-                       enrichment, acoustid_recording_id, acoustid_score
+                       enrichment, acoustid_recording_id, acoustid_score,
+                       label, track_number, disc_number
                 FROM songs WHERE file_path=? LIMIT 1
                 """,
                 (file_path,),
@@ -555,6 +598,9 @@ class SQLiteTrackRepository(TrackRepository):
                     enrichment=row["enrichment"],
                     acoustid_recording_id=row["acoustid_recording_id"],
                     acoustid_score=row["acoustid_score"],
+                    label=row["label"],
+                    track_number=row["track_number"],
+                    disc_number=row["disc_number"],
                 ),
             )
         except sqlite3.Error as exc:
@@ -570,7 +616,8 @@ class SQLiteTrackRepository(TrackRepository):
                 """
                 SELECT station_name, stream_title, artist, title,
                        file_path, file_size, album, year, has_cover,
-                       enrichment, acoustid_recording_id, acoustid_score
+                       enrichment, acoustid_recording_id, acoustid_score,
+                       label, track_number, disc_number
                 FROM songs WHERE file_path LIKE '%.untested.mp3'
                 """
             )
@@ -591,6 +638,9 @@ class SQLiteTrackRepository(TrackRepository):
                             enrichment=row["enrichment"],
                             acoustid_recording_id=row["acoustid_recording_id"],
                             acoustid_score=row["acoustid_score"],
+                            label=row["label"],
+                            track_number=row["track_number"],
+                            disc_number=row["disc_number"],
                         ),
                     )
                 )
@@ -608,7 +658,8 @@ class SQLiteTrackRepository(TrackRepository):
                 """
                 SELECT station_name, stream_title, artist, title,
                        file_path, file_size, album, year, has_cover,
-                       enrichment, acoustid_recording_id, acoustid_score
+                       enrichment, acoustid_recording_id, acoustid_score,
+                       label, track_number, disc_number
                 FROM songs ORDER BY station_name, stream_title
                 """
             )
@@ -629,6 +680,9 @@ class SQLiteTrackRepository(TrackRepository):
                             enrichment=row["enrichment"],
                             acoustid_recording_id=row["acoustid_recording_id"],
                             acoustid_score=row["acoustid_score"],
+                            label=row["label"],
+                            track_number=row["track_number"],
+                            disc_number=row["disc_number"],
                         ),
                     )
                 )

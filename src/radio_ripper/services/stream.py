@@ -322,6 +322,9 @@ class StreamRecorder:
                         file_size=final_path.stat().st_size,
                         has_cover=(info is not None),
                         enrichment="itunes" if info else "",
+                        label=info.label if info else None,
+                        track_number=info.track_number if info else None,
+                        disc_number=info.disc_number if info else None,
                     )
                 except Exception as exc:
                     self._log.warning("[%s] db update enrichment: %s", self.station_name, exc)

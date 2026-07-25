@@ -42,6 +42,9 @@ class EnrichedInfo:
     album: str | None = None
     year: str | None = None
     genre: str | None = None
+    label: str | None = None
+    track_number: int | None = None
+    disc_number: int | None = None
     artwork_url: str | None = None
 
 
@@ -77,6 +80,9 @@ class SavedTrack:
     enrichment: str | None = None
     acoustid_recording_id: str | None = None
     acoustid_score: float | None = None
+    label: str | None = None
+    track_number: int | None = None
+    disc_number: int | None = None
     extras: dict[str, str] = field(default_factory=dict)
 
 

@@ -67,6 +67,9 @@ class ITunesMetadataProvider(MetadataProvider):
             album=hit.get("collectionName"),
             year=(hit.get("releaseDate") or "")[:4] or None,
             genre=hit.get("primaryGenreName"),
+            label=hit.get("recordLabel"),
+            track_number=hit.get("trackNumber"),
+            disc_number=hit.get("discNumber"),
             artwork_url=artwork,
         )
 

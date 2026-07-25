@@ -31,8 +31,8 @@ from mutagen.id3 import (
     TDRC,
     TIT2,
     TPE1,
-    TPE2,
     TPUB,
+    TRCK,
     TRSN,
     TXXX,
     ID3NoHeaderError,
@@ -156,7 +156,6 @@ class ID3Tagger(TrackTagger):
         audio.delall("TXXX:RIPPEDBY")
         if track.artist:
             audio.add(TPE1(encoding=3, text=track.artist))
-            audio.add(TPE2(encoding=3, text=track.artist))
         if track.title:
             audio.add(TIT2(encoding=3, text=track.title))
         # Album fallback: prefer the song title (without artist) over empty,
@@ -193,6 +192,7 @@ class ID3Tagger(TrackTagger):
         audio.delall("TALB")
         audio.delall("TCON")
         audio.delall("TDRC")
+        audio.delall("TRCK")
         audio.delall("TRSN")
         audio.delall("TPUB")
         audio.delall("COMM")
@@ -203,7 +203,6 @@ class ID3Tagger(TrackTagger):
         title = enriched.title or track.title
         if artist:
             audio.add(TPE1(encoding=3, text=artist))
-            audio.add(TPE2(encoding=3, text=artist))
         if title:
             audio.add(TIT2(encoding=3, text=title))
         if enriched.album:
@@ -219,7 +218,14 @@ class ID3Tagger(TrackTagger):
         # Extract station name from provenance (format: "station@url")
         station_name = provenance.split("@")[0] if "@" in provenance else provenance
         audio.add(TRSN(encoding=3, text=station_name))
-        audio.add(TPUB(encoding=3, text=station_name))
+        # Label: use iTunes recordLabel when available, fall back to station name
+        audio.add(TPUB(encoding=3, text=enriched.label or station_name))
+
+        if enriched.track_number is not None:
+            trck = str(enriched.track_number)
+            if enriched.disc_number is not None:
+                trck = f"{enriched.disc_number}/{trck}"
+            audio.add(TRCK(encoding=3, text=trck))
         audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
         effective_cover = cover_bytes or fallback_cover

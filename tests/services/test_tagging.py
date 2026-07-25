@@ -27,7 +27,6 @@ class TestID3Tagger:
         tagger.write_basic(f, track, "Rock@http://x")
         audio = ID3(f)
         assert audio.get("TPE1").text == ["Adele"]
-        assert audio.get("TPE2").text == ["Adele"]
         assert audio.get("TIT2").text == ["Hello"]
         assert audio.get("COMM::eng").text == ["Recorded via Radio-Ripper"]
         assert audio.get("TXXX:RIPPEDBY").text == ["Rock@http://x"]
@@ -60,8 +59,11 @@ class TestID3Tagger:
         audio = ID3(f)
         assert audio.get("TALB").text == ["25"]
         assert str(audio.get("TDRC").text[0]) == "2015"
-        assert audio.get("TPE2").text == ["Adele"]
         assert audio.get("TCON").text == ["Pop"]
+        # TPUB falls back to station name when label is missing
+        assert audio.get("TPUB").text == ["Rock"]
+        # TRCK absent when no track/disc number
+        assert "TRCK" not in audio
         apic = audio.get("APIC:Cover")
         assert apic is not None
         assert apic.mime == "image/jpeg"
@@ -75,8 +77,11 @@ class TestID3Tagger:
         tagger.write_full(f, track, enriched, None, "S@u")
         audio = ID3(f)
         assert str(audio.get("TDRC").text[0]) == "2020"
-        assert audio.get("TPE2").text == ["A"]
         assert audio.get("TCON").text == ["Pop"]
+        # TPUB falls back to station name when label is missing
+        assert audio.get("TPUB").text == ["S"]
+        # TRCK absent when no track/disc number
+        assert "TRCK" not in audio
         assert "APIC:Cover" not in audio
 
     def test_write_full_prefers_enriched_over_track(self, tmp_path: Path):
