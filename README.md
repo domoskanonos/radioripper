@@ -1,8 +1,8 @@
-# Radio-Ripper
+# Radio-Ripper – Stream
 
-Dieses Repository enthält zwei unabhängige Projekte:
+Dauerhafte parallele Aufnahme von Webradio-Streams mit ICY-Metadaten.
 
-- **[`stream/`](stream/)** – Webradio-Stream-Recorder mit ICY-Metadaten-Parsing, Playlist-Discovery und parallelem Recording
-- **[`tag/`](tag/)** – MP3-Tagger mit AcoustID-Fingerprinting, iTunes-Enrichment und ID3v2-Tagging
-
-Jedes Projekt hat eigene `pyproject.toml`, `Dockerfile`, `docker-compose.yml`, Tests und Dokumentation.
+```bash
+uv sync
+uv run radio-ripper --config config.json
+```

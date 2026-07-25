@@ -1,17 +1,11 @@
 # radio-ripper-stream CI/CD
-name: stream
+name: CI
 
 on:
   push:
     branches: [main, master]
-    paths: ['stream/**', '.github/workflows/stream-ci.yml']
   pull_request:
     branches: [main, master]
-    paths: ['stream/**']
-
-defaults:
-  run:
-    working-directory: stream
 
 env:
   UV_LINK_MODE: copy
@@ -59,8 +53,8 @@ jobs:
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
         with:
-          name: stream-coverage-html
-          path: stream/htmlcov/
+          name: coverage-html
+          path: htmlcov/
           retention-days: 30
 
   docker:
@@ -79,10 +73,10 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Extract version
         id: version
-        run: echo "version=$(grep ^version stream/pyproject.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(grep ^version pyproject.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: stream
+          context: .
           push: true
           tags: domoskanonos/radio-ripper-stream:${{ steps.version.outputs.version }},domoskanonos/radio-ripper-stream:latest
