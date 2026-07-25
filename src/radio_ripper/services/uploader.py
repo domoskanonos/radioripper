@@ -90,8 +90,7 @@ class Uploader:
             try:
                 await self._process_one(mp3_path)
             except Exception:
-                self._log.exception("Unexpected error processing %s — moving to temp", mp3_path)
-                self._move_to_temp(mp3_path)
+                self._log.exception("Unexpected error processing %s", mp3_path)
 
     async def _process_one(self, mp3_path: Path) -> None:
         proc_path = mp3_path.with_suffix(".processing")
@@ -101,6 +100,13 @@ class Uploader:
             self._log.warning("Cannot rename %s (concurrent access?) — skipping", mp3_path)
             return
 
+        try:
+            await self._fingerprint_and_route(proc_path)
+        except Exception:
+            self._log.exception("Failed to process %s — moving to temp", proc_path.name)
+            self._move_to_temp(proc_path)
+
+    async def _fingerprint_and_route(self, proc_path: Path) -> None:
         try:
             result = await self._fingerprint.fingerprint(proc_path)
         except NonRetriableFingerprintError:

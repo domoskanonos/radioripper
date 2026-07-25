@@ -16,6 +16,7 @@
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,
   "no_icy_disable_after": 10,
+  "mp3_inbox": "./work/mp3_inbox",
   "discovery_enabled": true,
   "discovery_max_stations": 150,
   "discovery_min_bitrate": 0,
