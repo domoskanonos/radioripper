@@ -17,6 +17,7 @@ from typing import Any
 from radio_ripper.domain.models import TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.services.fingerprint import (
+    FingerprintError,
     FingerprintProvider,
     NonRetriableFingerprintError,
 )
@@ -139,6 +140,13 @@ class Uploader:
             self._log.warning("Corrupt/unreadable %s — deleting", proc_path.name)
             self._cleanup_file(proc_path)
             return
+        except FingerprintError:
+            self._log.warning(
+                "Fingerprint infrastructure error for %s — moving to temp for retry",
+                proc_path.name,
+            )
+            self._move_to_temp(proc_path)
+            return
 
         if result is None or not result.recording_id:
             self._log.info(
@@ -200,7 +208,10 @@ class Uploader:
 
     def _move_to_temp(self, path: Path) -> None:
         self._temp_dir.mkdir(parents=True, exist_ok=True)
+        # Restore original .mp3 extension (the file was renamed to .processing)
         dest = self._temp_dir / path.name
+        if dest.suffix == ".processing":
+            dest = dest.with_suffix(".mp3")
         try:
             shutil.move(str(path), str(dest))
             self._log.info("Moved %s → %s", path.name, dest)

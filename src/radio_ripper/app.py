@@ -92,14 +92,10 @@ class RadioRipperApp:
         assert settings.database is not None
         repository = SQLiteTrackRepository(settings.database)
         tagger: TrackTagger = ID3Tagger()
-        metadata: MetadataProvider = (
-            ITunesMetadataProvider(
-                client,
-                metadata_timeout=settings.metadata_timeout,
-                cover_timeout=settings.cover_timeout,
-            )
-            if settings.enrich_metadata
-            else NullMetadataProvider()
+        metadata: MetadataProvider = ITunesMetadataProvider(
+            client,
+            metadata_timeout=settings.metadata_timeout,
+            cover_timeout=settings.cover_timeout,
         )
         resolver = HttpPlaylistResolver(client, timeout=settings.request_timeout)
         with contextlib.suppress(ImportError):

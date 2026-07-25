@@ -214,7 +214,6 @@ def _make_settings(tmp_path, **overrides) -> Settings:
         "reconnect_base_delay": 0.1,
         "reconnect_max_delay": 1.0,
         "min_file_size_bytes": 10,
-        "enrich_metadata": False,
     }
     base.update(overrides)
     return Settings.model_validate(base)

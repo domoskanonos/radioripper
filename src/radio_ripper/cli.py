@@ -52,7 +52,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Beispiel:\n"
             "  uv run radio-ripper --config config.json\n"
             "  uv run radio-ripper --log-level DEBUG\n"
-            "  uv run radio-ripper --no-enrich\n"
             "\n"
             "Stop mit Strg+C."
         ),
@@ -69,11 +68,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Ueberschreibt log_level aus der config.json.",
-    )
-    parser.add_argument(
-        "--no-enrich",
-        action="store_true",
-        help="Schaltet iTunes-Enrichment & Cover-Download ab (override config).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
@@ -113,14 +107,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if args.log_level:
         settings = settings.model_copy(update={"log_level": args.log_level})
-    if args.no_enrich:
-        settings = settings.model_copy(
-            update={
-                "enrich_metadata": False,
-                "embed_cover_art": False,
-            }
-        )
-
     logger = configure_logging(settings.log_level, settings.log_file)
     logger.info("=== Radio-Ripper %s starting up ===", __version__)
     logger.info("Config file : %s", cfg_path)
@@ -128,9 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     logger.info("Database    : %s", settings.database)
     logger.info("Streams     : %d", len(settings.streams))
     logger.info(
-        "Enrichment  : metadata=%s cover_art=%s workers=%d",
-        settings.enrich_metadata,
-        settings.embed_cover_art,
+        "Enrichment  : workers=%d",
         settings.enrichment_workers,
     )
     try:

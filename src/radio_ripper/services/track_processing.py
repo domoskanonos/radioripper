@@ -79,7 +79,7 @@ async def enrich_song(
                 track,
                 provenance,
                 fallback_cover_path=settings.fallback_cover_path,
-                embed_cover_art=settings.embed_cover_art,
+                embed_cover_art=True,
                 logger=logger,
             )
             if info is not None:
@@ -151,7 +151,7 @@ async def register_and_enrich(
         logger.warning("[%s] tag failed: %s", station_name, exc)
 
     info: EnrichedInfo | None = None
-    if metadata_provider and settings.enrich_metadata:
+    if metadata_provider:
         info = await enrich_song(
             file_path,
             track,

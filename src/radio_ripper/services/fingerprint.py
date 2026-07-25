@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -79,8 +80,12 @@ class AcoustidFingerprintProvider(FingerprintProvider):
             ) from exc
         loop = asyncio.get_running_loop()
         try:
-            gen = await loop.run_in_executor(None, acoustid.match, self._api_key, str(path))
-            results = list(gen)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                gen = await loop.run_in_executor(
+                    None, acoustid.match, self._api_key, str(path)
+                )
+                results = list(gen)
         except acoustid.WebServiceError as exc:
             msg = str(exc)
             if "status: error" in msg:

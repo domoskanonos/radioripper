@@ -35,11 +35,6 @@ class TestBuildArgParser:
         args = parser.parse_args(["--log-level", "DEBUG"])
         assert args.log_level == "DEBUG"
 
-    def test_no_enrich_flag(self):
-        parser = _build_arg_parser()
-        args = parser.parse_args(["--no-enrich"])
-        assert args.no_enrich is True
-
     def test_no_config_defaults_to_none(self):
         parser = _build_arg_parser()
         args = parser.parse_args([])
@@ -107,7 +102,6 @@ class TestMain:
             "destination": str(tmp_path / "recordings"),
             "database": str(tmp_path / "ripper.db"),
             "streams": [{"name": "TestStation", "url": "http://fake.example.com/listen.m3u"}],
-            "enrich_metadata": False,
         }
         p = tmp_path / "config.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
@@ -167,7 +161,6 @@ class TestRunAsync:
             "destination": str(tmp_path / "recordings"),
             "database": str(tmp_path / "ripper.db"),
             "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
-            "enrich_metadata": False,
         }
         p = tmp_path / "config.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
@@ -242,7 +235,6 @@ class TestMainIntegration:
             "destination": str(tmp_path / "recordings"),
             "database": str(tmp_path / "ripper.db"),
             "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
-            "enrich_metadata": False,
         }
         p = tmp_path / "config.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
@@ -260,37 +252,11 @@ class TestMainIntegration:
         args, _ = mock_cfg.call_args
         assert args[0] == "DEBUG"
 
-    def test_no_enrich_override_captures_settings(self, tmp_path):
-        cfg = {
-            "destination": str(tmp_path / "recordings"),
-            "database": str(tmp_path / "ripper.db"),
-            "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
-            "enrich_metadata": True,
-        }
-        p = tmp_path / "config.json"
-        p.write_text(json.dumps(cfg), encoding="utf-8")
-
-        settings_arg = None
-
-        def capture_settings(settings, logger):
-            nonlocal settings_arg
-            settings_arg = settings
-            return 0
-
-        with patch("radio_ripper.cli._run_async", side_effect=capture_settings):
-            from radio_ripper.infra.config import load_settings
-            result = main(["--config", str(p), "--no-enrich"])
-
-        assert result == 0
-        assert settings_arg.enrich_metadata is False
-        assert settings_arg.embed_cover_art is False
-
     def test_keyboard_interrupt(self, tmp_path):
         cfg = {
             "destination": str(tmp_path / "recordings"),
             "database": str(tmp_path / "ripper.db"),
             "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
-            "enrich_metadata": False,
         }
         p = tmp_path / "config.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
@@ -307,7 +273,6 @@ class TestMainIntegration:
             "destination": str(tmp_path / "recordings"),
             "database": str(tmp_path / "ripper.db"),
             "streams": [{"name": "T", "url": "http://example.com/listen.m3u"}],
-            "enrich_metadata": False,
         }
         p = tmp_path / "config.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")

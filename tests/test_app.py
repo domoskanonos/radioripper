@@ -29,7 +29,6 @@ def _make_settings(tmp_path, **overrides) -> Settings:
         "destination": tmp_path / "recordings",
         "database": tmp_path / "ripper.db",
         "streams": [StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
-        "enrich_metadata": False,
         "enrichment_workers": 2,
     }
     base.update(overrides)
@@ -133,7 +132,6 @@ class TestRadioRipperApp:
                     {"name": "Station2", "url": "http://example.com/2.m3u"},
                     {"name": "Station3", "url": "http://example.com/3.m3u"},
                 ],
-                "enrich_metadata": False,
             }
         )
         client = AsyncMock()
@@ -158,7 +156,7 @@ class TestRadioRipperApp:
                 "destination": str(tmp_path / "recordings"),
                 "database": str(tmp_path / "ripper.db"),
                 "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
-                "enrich_metadata": False,
+
             }
         )
         # Empty streams list — need to use model_validate with override
@@ -169,7 +167,7 @@ class TestRadioRipperApp:
                 "destination": str(tmp_path / "recordings"),
                 "database": str(tmp_path / "ripper.db"),
                 "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
-                "enrich_metadata": False,
+
             }
         )
         client = AsyncMock()

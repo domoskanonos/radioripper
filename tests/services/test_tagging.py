@@ -622,18 +622,6 @@ class TestEnrichAndTag:
         mock_tagger.write_full.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_no_info_embed_cover_art_false(self, mock_provider, mock_tagger, track, tmp_path):
-        mock_provider.fetch.return_value = None
-        f = tmp_path / "s.mp3"
-        _write_blank_mp3(f)
-        fallback = tmp_path / "cover.jpg"
-        fallback.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 50)
-        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
-                                       fallback_cover_path=fallback, embed_cover_art=False)
-        assert result is None
-        mock_tagger.write_full.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_enriches_with_artwork_download(self, mock_provider, mock_tagger, track, tmp_path):
         mock_provider.fetch.return_value = EnrichedInfo(
             artist="Artist", title="Song", album="Album", artwork_url="http://example.com/cover.jpg"
@@ -643,16 +631,6 @@ class TestEnrichAndTag:
         result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u")
         assert result is not None
         mock_provider.download_image.assert_awaited_once_with("http://example.com/cover.jpg")
-
-    @pytest.mark.asyncio
-    async def test_info_not_none_embed_false_skips_download(self, mock_provider, mock_tagger, track, tmp_path):
-        f = tmp_path / "s.mp3"
-        _write_blank_mp3(f)
-        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
-                                       embed_cover_art=False)
-        assert result is not None
-        mock_provider.download_image.assert_not_called()
-        mock_tagger.write_full.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_write_exception_logged(self, mock_provider, mock_tagger, track, tmp_path, caplog):

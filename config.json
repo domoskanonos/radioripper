@@ -4,6 +4,7 @@
   "log_file": "./work/radio_ripper.log",
   "mp3_inbox": "./work/mp3_inbox",
   "temp_directory": "./temp",
+  "log_level": "INFO",
   "max_recordings": 100,
   "stream_keywords": [
     "classic",
@@ -91,9 +92,6 @@
   "user_agent": "Radio-Ripper/2.0",
   "overwrite_existing_files": false,
   "min_file_size_bytes": 1024,
-  "log_level": "INFO",
-  "enrich_metadata": true,
-  "embed_cover_art": true,
   "enrichment_workers": 4,
   "metadata_timeout": 8.0,
   "cover_timeout": 15.0,

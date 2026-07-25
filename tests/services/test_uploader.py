@@ -27,8 +27,6 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
         "destination": tmp_path / "recordings",
         "database": tmp_path / "ripper.db",
         "mp3_inbox": tmp_path / "mp3_inbox",
-        "enrich_metadata": True,
-        "embed_cover_art": True,
         "overwrite_existing_files": False,
     }
     base.update(overrides)
@@ -375,8 +373,8 @@ class TestProcessOneMatch:
         dest = s.destination / "AlbumArtist" / "MyAlbum" / "AlbumArtist - AlbumSong.mp3"
         assert dest.is_file()
 
-    async def test_match_enrichment_disabled_still_files(self, tmp_path: Path) -> None:
-        s = _settings(tmp_path, enrich_metadata=False)
+    async def test_match_no_enrichment_data_still_files(self, tmp_path: Path) -> None:
+        s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "unenriched.mp3")
         repo = _TrackingRepo()
         fp = _stub_fingerprint(FingerprintResult(artist="U", title="V", score=0.8, recording_id="r-uv"))
@@ -385,17 +383,13 @@ class TestProcessOneMatch:
             temp_dir=tmp_path / "temp",
             settings=s,
             fingerprint_provider=fp,
-            metadata_provider=_stub_metadata(EnrichedInfo(album="W")),  # even if metadata available
+            metadata_provider=_stub_metadata(),  # returns None — no enrich data
             repository=repo,
             tagger=_stub_tagger(),
         )
         await u._process_one(mp3)
         dest = s.destination / "U" / "U - V.mp3"
         assert dest.is_file()
-        # No enrich => no album subdir; update_enrichment is still called to update DB state
-        assert len(repo.enrichment_calls) == 1
-        _, _, ei = repo.enrichment_calls[0]
-        assert ei.album is None  # no enrichment data
 
     async def test_match_destination_collision_appends_suffix(self, tmp_path: Path) -> None:
         s = _settings(tmp_path)
@@ -461,7 +455,7 @@ class TestProcessOneNoMatch:
         await u._process_one(mp3)
         assert not (s.mp3_inbox / "nobody.mp3").exists()
         assert not (s.mp3_inbox / "nobody.processing").exists()
-        assert (tmp_path / "temp" / "nobody.processing").is_file()
+        assert (tmp_path / "temp" / "nobody.mp3").is_file()
 
     async def test_match_recording_id_empty_treated_as_no_match(self, tmp_path: Path) -> None:
         s = _settings(tmp_path)
@@ -478,7 +472,7 @@ class TestProcessOneNoMatch:
             tagger=_stub_tagger(),
         )
         await u._process_one(mp3)
-        assert (tmp_path / "temp" / "empty_rid.processing").is_file()
+        assert (tmp_path / "temp" / "empty_rid.mp3").is_file()
 
     async def test_non_retriable_error_deletes_file(self, tmp_path: Path) -> None:
         s = _settings(tmp_path)
@@ -515,7 +509,7 @@ class TestProcessOneNoMatch:
             tagger=_stub_tagger(),
         )
         await u._process_inbox()
-        assert (tmp_path / "temp" / "net_error.processing").is_file()
+        assert (tmp_path / "temp" / "net_error.mp3").is_file()
 
     async def test_unexpected_exception_moves_to_temp(self, tmp_path: Path) -> None:
         s = _settings(tmp_path)
@@ -532,7 +526,7 @@ class TestProcessOneNoMatch:
             tagger=_stub_tagger(),
         )
         await u._process_inbox()
-        assert (tmp_path / "temp" / "boom.processing").is_file()
+        assert (tmp_path / "temp" / "boom.mp3").is_file()
 
     async def test_enrichment_failure_still_files_to_dest(self, tmp_path: Path) -> None:
         """If enrich_and_tag returns None, file still goes to destination (no album subdir)."""
@@ -599,7 +593,7 @@ class TestTempDir:
         )
         await u._process_one(mp3)
         assert temp.is_dir()
-        assert (temp / "notemp.processing").is_file()
+        assert (temp / "notemp.mp3").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -662,7 +656,7 @@ class TestPollingLoop:
             await asyncio.sleep(0.1)  # let one poll cycle happen
             await asyncio.sleep(0.1)  # second cycle to be safe
             assert not (s.mp3_inbox / "poll_test.mp3").exists()
-            assert (tmp_path / "temp" / "poll_test.processing").is_file()
+            assert (tmp_path / "temp" / "poll_test.mp3").is_file()
         finally:
             await u.stop()
 
@@ -724,4 +718,4 @@ class TestInternalHelpers:
         _touch(src)
         u._move_to_temp(src)
         assert not src.exists()
-        assert (tmp_path / "temp" / "some.processing").is_file()
+        assert (tmp_path / "temp" / "some.mp3").is_file()

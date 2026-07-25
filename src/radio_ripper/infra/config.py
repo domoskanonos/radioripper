@@ -82,8 +82,6 @@ class Settings(BaseModel):
     ad_title_patterns: list[str] = Field(default_factory=list)
     no_icy_disable_after: int = Field(default=10, ge=1)
 
-    enrich_metadata: bool = True
-    embed_cover_art: bool = True
     fallback_cover_path: Path | None = None
     enrichment_workers: int = Field(default=4, ge=1, le=32)
     metadata_timeout: float = Field(default=8.0, ge=0.5)
