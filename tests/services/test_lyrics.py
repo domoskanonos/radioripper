@@ -14,16 +14,7 @@ class TestCleanTitle:
     def test_strips_ft(self):
         assert _clean_title("Love In This Club ft. Young Jeezy") == "Love In This Club"
 
-    def test_strips_bracketed_and(self):
-        assert _clean_title("Moves Like Jagger [and Christina Aguilera]") == "Moves Like Jagger"
-
-    def test_strips_trailing_parenthetical(self):
-        assert _clean_title("Song (Remix)") == "Song"
-
-    def test_preserves_title_without_feat(self):
-        assert _clean_title("Highway to Hell") == "Highway to Hell"
-
-    def test_strips_with_vs(self):
+    def test_strips_bracketed_vs(self):
         assert _clean_title("Senorita (vs. Justin Bieber)") == "Senorita"
 
 

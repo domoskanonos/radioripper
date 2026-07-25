@@ -18,10 +18,10 @@ _log = logging.getLogger(__name__)
 _LYRICS_OVH_URL = "https://api.lyrics.ovh/v1/{artist}/{title}"
 # Pattern: strip feat./ft./and etc. from song titles for lyrics lookup
 _FEAT_RE = re.compile(
-    r"\s*[(\[]?(?:feat\.|ft\.?|featuring|and|with|vs\.?)\s+\S.*?[)\]]?\s*$",
+    r"\s*[(\[]?(?:feat\.|ft\.?|featuring|vs\.?)\s+\S.*?[)\]]?\s*$",
     re.IGNORECASE,
 )
-_PAREN_RE = re.compile(r"\s*\(.*?\)\s*$")
+_PAREN_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
 
 def _clean_title(title: str) -> str:
