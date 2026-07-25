@@ -873,7 +873,7 @@ class TestMaxRecordingsGuard:
 
     async def test_stops_recording_when_limit_reached(self, tmp_path: Path, caplog: Any) -> None:
         """Once the total recording count reaches max_recordings, new songs are
-        not recorded."""
+        not recorded (unless they replace an existing one with a better score)."""
         dest = tmp_path / "recordings"
         dest.mkdir()
         old_track = SavedTrack(
@@ -889,11 +889,13 @@ class TestMaxRecordingsGuard:
         repo = _ListAllRepo(existing)
         stream = _make_stream_bytes(["Joining", "Artist - New Song", "Another - Song"])
         client = FakeHttpClient(stream)
-        settings = _make_settings(tmp_path, max_recordings=1)
+        settings = _make_settings(tmp_path, max_recordings=1, discard_unmatched=False)
+        fp = _ScriptedFingerprint(result=None)  # no AcoustID match for new songs
         rec = _make_recorder(
-            settings=settings, http_client=client, repo=repo, destination=dest
+            settings=settings, http_client=client, repo=repo, destination=dest,
+            fingerprint_provider=fp,
         )
-        caplog.set_level(logging.DEBUG, logger="radio_ripper.stream")
+        caplog.set_level(logging.WARNING, logger="radio_ripper.stream")
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -914,7 +916,7 @@ class TestDiscardSmallFile:
         # TitleChanged event, hitting the commit min-size check.
         stream = _make_stream_bytes(["Joining", "Artist - Too Small", "Next - Song"])
         client = FakeHttpClient(stream)
-        settings = _make_settings(tmp_path, min_file_size_bytes=200)
+        settings = _make_settings(tmp_path, min_file_size_bytes=250)
         repo = FakeRepoFresh()
         rec = _make_recorder(
             settings=settings, http_client=client, repo=repo, destination=dest

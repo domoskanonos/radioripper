@@ -31,7 +31,7 @@ class TestID3Tagger:
         audio = ID3(f)
         assert audio.get("TPE1").text == ["Adele"]
         assert audio.get("TIT2").text == ["Hello"]
-        assert audio.get("COMM::eng").text == ["Recorded via Radio-Ripper"]
+        assert audio.get("COMM::eng").text == ["Recorded via radiostream"]
         assert audio.get("TXXX:RIPPEDBY").text == ["Rock@http://x"]
 
     def test_write_basic_without_artist(self, tmp_path: Path):

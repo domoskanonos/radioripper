@@ -10,7 +10,7 @@ Tags written:
     - ``TYER``  (Year) — optional
     - ``TRSN``  (Internet Radio Station Name) — from provenance
     - ``TPUB``  (Publisher/Label) — radio station name for Jellyfin
-    - ``COMM``  (Recorded via Radio-Ripper)
+    - ``COMM``  (Recorded via radiostream)
     - ``TXXX:RIPPEDBY`` (station@playlist) — provenance
     - ``TLEN``  (Track length in ms) — optional, from iTunes
     - ``TXXX:ITunes*``  (iTunes metadata IDs/URLs) — optional
@@ -179,7 +179,7 @@ class ID3Tagger(TrackTagger):
         station_name = provenance.split("@")[0] if "@" in provenance else provenance
         audio.add(TRSN(encoding=3, text=station_name))
         # TPUB intentionally omitted — written only when we have a real label
-        audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
+        audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via radiostream"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
         try:
             audio.save(file_path, v2_version=3, v1=2)
@@ -253,7 +253,7 @@ class ID3Tagger(TrackTagger):
             audio.add(TRCK(encoding=3, text=trck))
         if enriched.track_length is not None:
             audio.add(TLEN(encoding=3, text=str(enriched.track_length)))
-        audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via Radio-Ripper"))
+        audio.add(COMM(encoding=3, lang="eng", desc="", text="Recorded via radiostream"))
         audio.add(TXXX(encoding=3, desc="RIPPEDBY", text=provenance))
 
         # iTunes ancillary TXXX frames
