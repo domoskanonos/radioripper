@@ -87,6 +87,7 @@ async def _run_async(settings: Settings, logger: logging.Logger, config_path: st
     def _signal_handler(signum: int, _frame: object | None) -> None:
         logger.info("Signal %s received - initiating graceful shutdown...", signum)
         stop_event.set()
+        app.cancel()
 
     loop.add_signal_handler(signal.SIGINT, _signal_handler, signal.SIGINT, None)
     loop.add_signal_handler(signal.SIGTERM, _signal_handler, signal.SIGTERM, None)

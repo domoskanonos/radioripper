@@ -407,6 +407,9 @@ class RadioRipperApp:
         """Create and launch one :class:`StreamRecorder` task per stream."""
         await self._cleanup_orphans()
         await self._reprocess_all()
+        if self._cancel_requested:
+            self.logger.info("Startup cancelled — not starting streams.")
+            return
         if self.fingerprint is not None:
             await self._validate_acoustid_key()
         # Use pre-populated streams when set (API layer or tests); otherwise
