@@ -157,66 +157,6 @@ def remux_mp3(path: Path) -> None:
             tmp.unlink(missing_ok=True)
 
 
-def trim_trailing(
-    path: Path,
-    *,
-    window_s: float = 3.0,
-    silence_thresh: int = -40,
-    min_silence_ms: int = 150,
-) -> None:
-    """Trim trailing audio that belongs to the next song.
-
-    Scans the last *window_s* seconds of *path* for a silence gap followed
-    by loud audio (the next song's beginning).  When found the file is cut
-    at the start of that silence, removing the next-song contamination.
-
-    Non-fatal: if pydub/ffmpeg is unavailable or the file is too short the
-    original is kept.  Silent fade-outs (no subsequent loud audio) are left
-    untouched.
-    """
-    tmp = path.with_suffix(".trim.tmp")
-    try:
-        from pydub import AudioSegment
-        from pydub.silence import detect_silence
-
-        audio = AudioSegment.from_file(str(path), format="mp3")
-        dur_ms = len(audio)
-        tail_ms = int(window_s * 1000)
-        if dur_ms < tail_ms + 5000:  # at least 5 s of usable audio
-            return
-
-        tail = audio[dur_ms - tail_ms :]
-
-        ranges = detect_silence(
-            tail,
-            min_silence_len=min_silence_ms,
-            silence_thresh=silence_thresh,
-        )
-        if not ranges:
-            return
-
-        # Find the last silence that has audio AFTER it (next song start)
-        trim_at_ms: int | None = None
-        for start_ms, end_ms in reversed(ranges):
-            if end_ms < len(tail) - 50:
-                trim_at_ms = dur_ms - tail_ms + start_ms
-                break
-
-        if trim_at_ms is None:
-            return
-        trimmed = audio[:trim_at_ms]
-        if len(trimmed) < 5000:
-            return
-
-        trimmed.export(str(tmp), format="mp3", tags={})
-        tmp.replace(path)
-    except ImportError:
-        pass
-    except Exception:
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
-
-
 def get_mp3_duration(path: Path) -> float | None:
     """Return MP3 duration in seconds via ``ffprobe``, or ``None`` on failure.
 

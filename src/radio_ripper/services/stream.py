@@ -39,7 +39,6 @@ from radio_ripper.services.storage import (
     get_mp3_duration,
     remove_empty_parents,
     remux_mp3,
-    trim_trailing,
 )
 from radio_ripper.services.tagging import TrackTagger
 from radio_ripper.services.track_processing import (
@@ -99,10 +98,6 @@ class StreamRecorder:
         # so rename (in _fingerprint_song) doesn't race with write_full (in _enrich_song).
         self._file_locks: dict[Path, asyncio.Lock] = {}
         self._last_limit_log = 0.0
-        # Rolling audio buffer: captures ~1 s of audio to recover song beginnings
-        # lost to ICY metadata-interval latency (audio arrives before StreamTitle).
-        self._audio_buffer: bytearray = bytearray()
-        self._max_buffer: int = 16384
 
     def _lock_for(self, path: Path) -> asyncio.Lock:
         """Get (or create) the asyncio.Lock for *path*."""
@@ -229,7 +224,6 @@ class StreamRecorder:
             return False
         self._no_icy_failures = 0  # reset on successful ICY connection
         self._log.info("[%s] icy-metaint=%d", self.station_name, metaint)
-        self._max_buffer = min(metaint, 24576)
         parser = IcyParser(metaint)
 
         first_title_seen: str | None = None
@@ -263,7 +257,6 @@ class StreamRecorder:
                 # Quick post-processing in thread pool (non-blocking for event loop)
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, remux_mp3, final_path)
-                await loop.run_in_executor(None, trim_trailing, final_path)
 
                 min_dur = self.settings.min_duration_s
                 if min_dur > 0:
@@ -377,11 +370,6 @@ class StreamRecorder:
                 parser.feed(chunk)
                 for event in parser.events():
                     if isinstance(event, AudioChunk):
-                        # Rolling buffer für Song-Anfänge (ICY-Latenz)
-                        self._audio_buffer.extend(event.data)
-                        if len(self._audio_buffer) > self._max_buffer:
-                            excess = len(self._audio_buffer) - self._max_buffer
-                            del self._audio_buffer[:excess]
                         if recording and writer is not None:
                             writer.write(event.data)
                         # else: phase 1 / duplicate mode -> discard bytes
@@ -390,7 +378,7 @@ class StreamRecorder:
                         if first_title_seen is None:
                             first_title_seen = new_title
                             current_title = new_title
-                            self._audio_buffer.clear()
+
                             self._log.info(
                                 "[%s] Joined mid-song '%s' - waiting for next boundary.",
                                 self.station_name,
@@ -405,7 +393,7 @@ class StreamRecorder:
                         current_title = new_title
                         clean = new_title.strip()
                         if not clean:
-                            self._audio_buffer.clear()
+
                             recording = False
                             continue
                         if self._is_ad_title(clean):
@@ -414,7 +402,7 @@ class StreamRecorder:
                                 self.station_name,
                                 clean,
                             )
-                            self._audio_buffer.clear()
+
                             recording = False
                             continue
                         try:
@@ -424,7 +412,7 @@ class StreamRecorder:
                                     self.station_name,
                                     clean,
                                 )
-                                self._audio_buffer.clear()
+
                                 recording = False
                                 continue
                         except Exception:
@@ -468,7 +456,7 @@ class StreamRecorder:
                                     self.station_name,
                                     exc,
                                 )
-                            self._audio_buffer.clear()
+
                             recording = False
                             continue
                         # ---- max_recordings guard: no new songs at limit ----
@@ -488,7 +476,7 @@ class StreamRecorder:
                                         self.settings.max_recordings,
                                     )
                                     self._last_limit_log = now
-                                self._audio_buffer.clear()
+
                                 recording = False
                                 continue
                         try:
@@ -496,11 +484,6 @@ class StreamRecorder:
                                 file_path,
                                 min_size=self.settings.min_file_size_bytes,
                             )
-                            # Prepend rolling buffer to recover song-beginning audio
-                            # lost to ICY metadata-interval latency
-                            if self._audio_buffer:
-                                writer.write(bytes(self._audio_buffer))
-                                self._audio_buffer.clear()
                             recording = True
                             self._log.info(
                                 "[%s] Recording -> %s",
