@@ -82,6 +82,7 @@ class RadioRipperApp:
         self._enrich_sem = asyncio.Semaphore(settings.enrichment_workers)
         self._recorders: list[StreamRecorder] = []
         self._config_path: str | None = None
+        self._cancel_requested = False
 
     @classmethod
     def from_settings(
@@ -297,6 +298,9 @@ class RadioRipperApp:
             count += 1
             if count % 500 == 0:
                 self.logger.info("Reprocess-all: %d files processed so far…", count)
+            if self._cancel_requested:
+                self.logger.info("Reprocess-all cancelled — %d files processed.", count)
+                return
         self.logger.info("Reprocess-all: %d files processed.", count)
         if self._config_path:
             try:
@@ -468,8 +472,13 @@ class RadioRipperApp:
             self._recorders.append(rec)
         self.logger.info("Started %d stream recorders.", len(self._recorders))
 
+    def cancel(self) -> None:
+        """Request cancellation of startup reprocessing (thread-safe)."""
+        self._cancel_requested = True
+
     async def stop(self) -> None:
         """Gracefully stop recorders, wait for enrichment tasks, close resources."""
+        self._cancel_requested = True
         self.logger.info("Stopping all recorders...")
         for rec in self._recorders:
             rec.stop()

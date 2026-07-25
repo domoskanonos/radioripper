@@ -66,6 +66,8 @@ class RipperApi:
             if self._status not in (RipperStatus.RUNNING, RipperStatus.STARTING):
                 return "Ripper läuft nicht."
             self._status = RipperStatus.STOPPING
+        if self._app is not None:
+            self._app.cancel()
         if self._loop and self._stop_event:
             self._loop.call_soon_threadsafe(self._stop_event.set)
         if self._thread:
