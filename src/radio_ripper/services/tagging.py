@@ -39,8 +39,8 @@ from mutagen.id3 import (
     TRCK,
     TRSN,
     TSRC,
-    USLT,
     TXXX,
+    USLT,
     ID3NoHeaderError,
 )
 

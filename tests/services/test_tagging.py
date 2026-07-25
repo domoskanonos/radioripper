@@ -475,7 +475,7 @@ class TestID3TaggerWriteLyrics:
         tagger = ID3Tagger()
         tagger.write_lyrics(f, "Hello\nWorld")
         audio = ID3(f)
-        assert audio.get("USLT::eng").text == ["Hello\nWorld"]
+        assert audio.get("USLT::eng").text == "Hello\nWorld"
 
     def test_overwrites_previous_lyrics(self, tmp_path: Path):
         f = tmp_path / "song.mp3"
@@ -484,7 +484,7 @@ class TestID3TaggerWriteLyrics:
         tagger.write_lyrics(f, "Old")
         tagger.write_lyrics(f, "New")
         audio = ID3(f)
-        assert audio.get("USLT::eng").text == ["New"]
+        assert audio.get("USLT::eng").text == "New"
 
     def test_load_error_raises_tagging_error(self):
         tagger = ID3Tagger()
