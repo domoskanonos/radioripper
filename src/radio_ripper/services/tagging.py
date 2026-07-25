@@ -346,7 +346,13 @@ class ID3Tagger(TrackTagger):
         if mb_data.release_id:
             audio.add(TXXX(encoding=3, desc="MusicBrainz Release Id", text=mb_data.release_id))
         if mb_data.release_group_type:
-            audio.add(TXXX(encoding=3, desc="MusicBrainz Release Group Type", text=mb_data.release_group_type))
+            audio.add(
+                TXXX(
+                    encoding=3,
+                    desc="MusicBrainz Release Group Type",
+                    text=mb_data.release_group_type,
+                )
+            )
         if mb_data.genres:
             audio.add(TXXX(encoding=3, desc="MusicBrainz Genres", text=", ".join(mb_data.genres)))
         if mb_data.release_catalog_no:
@@ -414,11 +420,21 @@ async def enrich_and_tag(
         if fallback_cover and embed_cover_art:
             try:
                 tagger.write_full(
-                    file_path, track, EnrichedInfo(), None, provenance, fallback_cover=fallback_cover
+                    file_path,
+                    track,
+                    EnrichedInfo(),
+                    None,
+                    provenance,
+                    fallback_cover=fallback_cover,
                 )
             except Exception as exc:
                 if logger:
-                    logger.warning("[%s] fallback-cover embed failed %s: %s", track.stream_title, file_path.name, exc)
+                    logger.warning(
+                        "[%s] fallback-cover embed failed %s: %s",
+                        track.stream_title,
+                        file_path.name,
+                        exc,
+                    )
         return None
 
     cover: bytes | None = None
@@ -429,7 +445,9 @@ async def enrich_and_tag(
         tagger.write_full(file_path, track, info, cover, provenance, fallback_cover=fallback_cover)
     except Exception as exc:
         if logger:
-            logger.warning("[%s] tag-enrichment failed %s: %s", track.stream_title, file_path.name, exc)
+            logger.warning(
+                "[%s] tag-enrichment failed %s: %s", track.stream_title, file_path.name, exc
+            )
 
     return info
 

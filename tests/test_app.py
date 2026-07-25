@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -156,7 +155,6 @@ class TestRadioRipperApp:
                 "destination": str(tmp_path / "recordings"),
                 "database": str(tmp_path / "ripper.db"),
                 "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
-
             }
         )
         # Empty streams list — need to use model_validate with override
@@ -167,7 +165,6 @@ class TestRadioRipperApp:
                 "destination": str(tmp_path / "recordings"),
                 "database": str(tmp_path / "ripper.db"),
                 "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
-
             }
         )
         client = AsyncMock()
@@ -530,8 +527,10 @@ class TestStop:
         app = _make_app(settings, FakeRepo(), NullTagger(), NullFingerprintProvider())
         await app.start()
         rec = app.recorders()[0]
+
         async def slow_join():
             await asyncio.sleep(100)
+
         rec.join = slow_join
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(app.stop(), timeout=0.3)

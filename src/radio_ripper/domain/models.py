@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,4 +124,11 @@ class SavedTrack:
     disc_number: int | None = None
 
 
-__all__ = ["EnrichedInfo", "FingerprintResult", "ITunesTrackData", "MusicBrainzData", "SavedTrack", "TrackInfo"]
+__all__ = [
+    "EnrichedInfo",
+    "FingerprintResult",
+    "ITunesTrackData",
+    "MusicBrainzData",
+    "SavedTrack",
+    "TrackInfo",
+]

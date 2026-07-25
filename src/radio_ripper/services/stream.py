@@ -444,12 +444,10 @@ class StreamRecorder:
                         # Existing songs are still recorded for replace-if-better check.
                         if self.settings.max_recordings is not None:
                             all_records = await self._repo.list_all()
-                            if len(all_records) >= self.settings.max_recordings:
-                                if not await self._repo.exists(
-                                    self.station_name, clean
-                                ):
-                                    now = time.monotonic()
-                                    if now - self._last_limit_log >= 60.0:
+                            if len(all_records) >= self.settings.max_recordings \
+                               and not await self._repo.exists(self.station_name, clean):
+                                now = time.monotonic()
+                                if now - self._last_limit_log >= 60.0:
                                         self._log.warning(
                                             "[%s] Max recordings (%d) reached —"
                                             " not recording more.",

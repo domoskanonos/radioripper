@@ -12,7 +12,13 @@ from mutagen.id3 import ID3
 from radio_ripper.domain.models import EnrichedInfo, TrackInfo
 from radio_ripper.infra.errors import TaggingError
 from radio_ripper.services.metadata import MetadataProvider
-from radio_ripper.services.tagging import ID3Tagger, NullTagger, TrackTagger, _scale_cover, enrich_and_tag
+from radio_ripper.services.tagging import (
+    ID3Tagger,
+    NullTagger,
+    TrackTagger,
+    _scale_cover,
+    enrich_and_tag,
+)
 
 
 def _write_blank_mp3(path: Path, size: int = 4096) -> None:
@@ -172,6 +178,7 @@ class TestScaleCover:
 
     def test_upscale_small_image(self):
         from PIL import Image
+
         img = Image.new("RGB", (100, 100), color="red")
         buf = io.BytesIO()
         img.save(buf, format="JPEG")
@@ -185,6 +192,7 @@ class TestScaleCover:
 
     def test_downscale_large_image(self):
         from PIL import Image
+
         img = Image.new("RGB", (2000, 2000), color="blue")
         buf = io.BytesIO()
         img.save(buf, format="JPEG")
@@ -198,6 +206,7 @@ class TestScaleCover:
 
     def test_png_image(self):
         from PIL import Image
+
         img = Image.new("RGBA", (600, 600), color="green")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -210,7 +219,9 @@ class TestScaleCover:
 
     def test_mode_conversion_for_jpeg(self):
         from PIL import Image
+
         from radio_ripper.services.tagging import _guess_image_mime
+
         img = Image.new("P", (500, 500), color=0)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -226,11 +237,14 @@ class TestScaleCover:
 
     def test_import_error_returns_original(self):
         import builtins
+
         original_import = builtins.__import__
+
         def mock_import(name, *args, **kwargs):
             if name == "PIL":
                 raise ImportError("No PIL")
             return original_import(name, *args, **kwargs)
+
         with patch.object(builtins, "__import__", mock_import):
             data = b"\xff\xd8\xff\xe0" + b"\x00" * 20
             result = _scale_cover(data)
@@ -357,6 +371,7 @@ class TestNullTagger:
 
     def test_update_musicbrainz_metadata_noop(self):
         from radio_ripper.domain.models import MusicBrainzData
+
         tagger = NullTagger()
         tagger.update_musicbrainz_metadata(Path("/nonexistent"), MusicBrainzData(recording_id="x"))
         # should not raise
@@ -402,6 +417,7 @@ class TestID3TaggerEmbedCover:
         _write_blank_mp3(f)
         tagger = ID3Tagger()
         from PIL import Image
+
         img = Image.new("RGB", (500, 500), color="red")
         buf = io.BytesIO()
         img.save(buf, format="JPEG")
@@ -416,6 +432,7 @@ class TestID3TaggerEmbedCover:
         _write_blank_mp3(f)
         tagger = ID3Tagger()
         from PIL import Image
+
         img = Image.new("RGBA", (2000, 2000), color="blue")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -518,6 +535,7 @@ class TestWriteFullEdgeCases:
 class TestID3TaggerUpdateMusicBrainz:
     def test_writes_mb_metadata(self, tmp_path: Path):
         from radio_ripper.domain.models import MusicBrainzData
+
         f = tmp_path / "song.mp3"
         _write_blank_mp3(f)
         tagger = ID3Tagger()
@@ -547,11 +565,14 @@ class TestID3TaggerUpdateMusicBrainz:
 
     def test_overwrites_tlen(self, tmp_path: Path):
         from radio_ripper.domain.models import MusicBrainzData
+
         f = tmp_path / "song.mp3"
         _write_blank_mp3(f)
         tagger = ID3Tagger()
         track = TrackInfo("A - B", "A", "B")
-        tagger.write_full(f, track, EnrichedInfo(artist="A", title="B", track_length=259720), None, "S@u")
+        tagger.write_full(
+            f, track, EnrichedInfo(artist="A", title="B", track_length=259720), None, "S@u"
+        )
         mb = MusicBrainzData(recording_id="x", length_ms=261000)
         tagger.update_musicbrainz_metadata(f, mb)
         audio = ID3(f)
@@ -559,6 +580,7 @@ class TestID3TaggerUpdateMusicBrainz:
 
     def test_load_error_raises_tagging_error(self, tmp_path: Path):
         from radio_ripper.domain.models import MusicBrainzData
+
         tagger = ID3Tagger()
         mb = MusicBrainzData(recording_id="x")
         with pytest.raises(TaggingError, match="failed to load .* for MB metadata"):
@@ -591,14 +613,23 @@ class TestEnrichAndTag:
         mock_tagger.write_full.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_no_info_fallback_cover_embedded(self, mock_provider, mock_tagger, track, tmp_path):
+    async def test_no_info_fallback_cover_embedded(
+        self, mock_provider, mock_tagger, track, tmp_path
+    ):
         mock_provider.fetch.return_value = None
         f = tmp_path / "s.mp3"
         _write_blank_mp3(f)
         fallback = tmp_path / "cover.jpg"
         fallback.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 50)
-        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
-                                       fallback_cover_path=fallback, embed_cover_art=True)
+        result = await enrich_and_tag(
+            mock_provider,
+            mock_tagger,
+            f,
+            track,
+            "S@u",
+            fallback_cover_path=fallback,
+            embed_cover_art=True,
+        )
         assert result is None
         mock_tagger.write_full.assert_called_once()
 
@@ -612,17 +643,27 @@ class TestEnrichAndTag:
         mock_tagger.write_full.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_fallback_cover_read_error_suppressed(self, mock_provider, mock_tagger, track, tmp_path):
+    async def test_fallback_cover_read_error_suppressed(
+        self, mock_provider, mock_tagger, track, tmp_path
+    ):
         mock_provider.fetch.return_value = None
         f = tmp_path / "s.mp3"
         _write_blank_mp3(f)
-        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
-                                       fallback_cover_path=tmp_path / "nonexistent.jpg")
+        result = await enrich_and_tag(
+            mock_provider,
+            mock_tagger,
+            f,
+            track,
+            "S@u",
+            fallback_cover_path=tmp_path / "nonexistent.jpg",
+        )
         assert result is None
         mock_tagger.write_full.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enriches_with_artwork_download(self, mock_provider, mock_tagger, track, tmp_path):
+    async def test_enriches_with_artwork_download(
+        self, mock_provider, mock_tagger, track, tmp_path
+    ):
         mock_provider.fetch.return_value = EnrichedInfo(
             artist="Artist", title="Song", album="Album", artwork_url="http://example.com/cover.jpg"
         )
@@ -633,20 +674,27 @@ class TestEnrichAndTag:
         mock_provider.download_image.assert_awaited_once_with("http://example.com/cover.jpg")
 
     @pytest.mark.asyncio
-    async def test_write_exception_logged(self, mock_provider, mock_tagger, track, tmp_path, caplog):
+    async def test_write_exception_logged(
+        self, mock_provider, mock_tagger, track, tmp_path, caplog
+    ):
         import logging
+
         caplog.set_level(logging.WARNING)
         mock_tagger.write_full.side_effect = OSError("permission denied")
         f = tmp_path / "s.mp3"
         _write_blank_mp3(f)
-        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
-                                       logger=logging.getLogger(__name__))
+        result = await enrich_and_tag(
+            mock_provider, mock_tagger, f, track, "S@u", logger=logging.getLogger(__name__)
+        )
         assert result is not None
         assert "tag-enrichment failed" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_fallback_cover_write_exception_logged(self, mock_provider, mock_tagger, track, tmp_path, caplog):
+    async def test_fallback_cover_write_exception_logged(
+        self, mock_provider, mock_tagger, track, tmp_path, caplog
+    ):
         import logging
+
         caplog.set_level(logging.WARNING)
         mock_provider.fetch.return_value = None
         mock_tagger.write_full.side_effect = OSError("permission denied")
@@ -654,7 +702,14 @@ class TestEnrichAndTag:
         _write_blank_mp3(f)
         fallback = tmp_path / "cover.jpg"
         fallback.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 50)
-        result = await enrich_and_tag(mock_provider, mock_tagger, f, track, "S@u",
-                                       fallback_cover_path=fallback, logger=logging.getLogger(__name__))
+        result = await enrich_and_tag(
+            mock_provider,
+            mock_tagger,
+            f,
+            track,
+            "S@u",
+            fallback_cover_path=fallback,
+            logger=logging.getLogger(__name__),
+        )
         assert result is None
         assert "fallback-cover embed failed" in caplog.text

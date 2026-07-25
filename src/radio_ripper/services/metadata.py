@@ -173,7 +173,7 @@ class CoverArtArchiveProvider:
 
         isrcs: tuple[str, ...] = ()
         with contextlib.suppress(Exception):
-            raw = (payload.get("isrcs") or [])
+            raw = payload.get("isrcs") or []
             isrcs = tuple(r["isrc"] for r in raw if r.get("isrc"))
 
         genres: tuple[str, ...] = ()
@@ -188,14 +188,12 @@ class CoverArtArchiveProvider:
             return MusicBrainzData(recording_id=recording_id, isrcs=isrcs, genres=genres)
 
         release_payload: dict[str, Any] | None = None
-        try:
+        with contextlib.suppress(Exception):
             release_payload = await self._client.get_json(
                 self._MBZ_RELEASE_URL.format(release_id=chosen["id"]),
                 params={"fmt": "json", "inc": "labels+release-groups"},
                 timeout=self._timeout,
             )
-        except Exception:
-            pass
 
         label_name: str | None = None
         catalog_no: str | None = None
@@ -211,7 +209,7 @@ class CoverArtArchiveProvider:
             with contextlib.suppress(Exception):
                 rg = release_payload.get("release-group") or {}
                 prim = rg.get("primary-type") or ""
-                sec = (rg.get("secondary-types") or [])
+                sec = rg.get("secondary-types") or []
                 parts = [prim] + [s for s in sec if s]
                 rg_type = " / ".join(parts) if parts else None
 

@@ -30,7 +30,6 @@ from radio_ripper.services.metadata import (
     CoverArtArchiveProvider,
     ITunesMetadataProvider,
     MetadataProvider,
-    NullMetadataProvider,
 )
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver, load_local_m3u
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
@@ -156,8 +155,6 @@ class RadioRipperApp:
     def recorders(self) -> Sequence[StreamRecorder]:
         return list(self._recorders)
 
-
-
     async def _cleanup_orphans(self) -> None:
         """Remove DB records whose ``file_path`` no longer exists on disk.
         Also removes ``.untested.mp3`` files that have no matching DB record.
@@ -205,18 +202,19 @@ class RadioRipperApp:
                 return
             cache_file.unlink(missing_ok=True)
 
-        api_url = os.environ.get(
-            "ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup"
-        )
+        api_url = os.environ.get("ACOUSTID_API_URL", "https://api.acoustid.org/v2/lookup")
         api_key = os.environ.get("ACOUSTID_API_KEY") or os.environ.get("ACCOUST_ID", "")
-        params = urllib.parse.urlencode({
-            "client": api_key,
-            "format": "json",
-            "duration": 1,
-            "fingerprint": "AQAA",
-        })
+        params = urllib.parse.urlencode(
+            {
+                "client": api_key,
+                "format": "json",
+                "duration": 1,
+                "fingerprint": "AQAA",
+            }
+        )
         url = f"{api_url}?{params}"
         import httpx
+
         try:
             async with httpx.AsyncClient() as c:
                 resp = await c.get(url, timeout=5.0)
@@ -238,9 +236,7 @@ class RadioRipperApp:
         except ConfigurationError:
             raise
         except Exception as exc:
-            self.logger.warning(
-                "AcoustID key validation request failed (non-fatal): %s", exc
-            )
+            self.logger.warning("AcoustID key validation request failed (non-fatal): %s", exc)
 
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
@@ -280,7 +276,10 @@ class RadioRipperApp:
                 if custom_count >= max_streams:
                     stations = stations[:max_streams]
                 else:
-                    stations = stations[:custom_count] + stations[custom_count:][: max_streams - custom_count]
+                    stations = (
+                        stations[:custom_count]
+                        + stations[custom_count:][: max_streams - custom_count]
+                    )
 
             self.settings.streams = stations
         for stream in self.settings.streams:

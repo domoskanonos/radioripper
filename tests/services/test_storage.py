@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -45,7 +44,7 @@ class TestSanitizeFilename:
         assert len(result) == 200
 
     def test_all_chars_removed_returns_unknown(self):
-        assert sanitize_filename("<>:\"") == "unknown"
+        assert sanitize_filename('<>:"') == "unknown"
 
 
 class TestComputeFilePath:
@@ -217,6 +216,7 @@ class TestRemuxMp3:
         p = tmp_path / "track.mp3"
         p.write_bytes(b"garbage")
         import builtins
+
         orig_import = builtins.__import__
 
         def _mock_import(name, *a: object, **kw: object) -> object:

@@ -81,10 +81,8 @@ class Uploader:
         self._stop_event.set()
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
     async def _run(self) -> None:
@@ -98,12 +96,8 @@ class Uploader:
                 await self._process_inbox()
             except Exception:
                 self._log.exception("Uploader inbox scan failed")
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self._poll_interval
-                )
-            except TimeoutError:
-                pass
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self._poll_interval)
         self._log.info("Uploader stopped")
 
     async def _process_inbox(self) -> None:
@@ -120,17 +114,13 @@ class Uploader:
         try:
             mp3_path.rename(proc_path)
         except OSError:
-            self._log.warning(
-                "Cannot rename %s (concurrent access?) — skipping", mp3_path
-            )
+            self._log.warning("Cannot rename %s (concurrent access?) — skipping", mp3_path)
             return
 
         try:
             await self._fingerprint_and_route(proc_path)
         except Exception:
-            self._log.exception(
-                "Failed to process %s — moving to temp", proc_path.name
-            )
+            self._log.exception("Failed to process %s — moving to temp", proc_path.name)
             self._move_to_temp(proc_path)
 
     async def _fingerprint_and_route(self, proc_path: Path) -> None:
@@ -149,9 +139,7 @@ class Uploader:
             return
 
         if result is None or not result.recording_id:
-            self._log.info(
-                "No fingerprint match for %s — moving to temp", proc_path.name
-            )
+            self._log.info("No fingerprint match for %s — moving to temp", proc_path.name)
             self._move_to_temp(proc_path)
             return
 
@@ -164,9 +152,7 @@ class Uploader:
             stream_title,
             overwrite=self._settings.overwrite_existing_files,
         )
-        untested = base_path.with_name(
-            base_path.stem + ".untested" + base_path.suffix
-        )
+        untested = base_path.with_name(base_path.stem + ".untested" + base_path.suffix)
         untested.parent.mkdir(parents=True, exist_ok=True)
         try:
             proc_path.rename(untested)

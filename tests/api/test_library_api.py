@@ -162,9 +162,7 @@ class TestLibraryApi:
         api, _ = library
         assert api.delete_song(999) is False
 
-    def test_delete_missing_file_still_succeeds(
-        self, library: tuple[LibraryApi, None]
-    ) -> None:
+    def test_delete_missing_file_still_succeeds(self, library: tuple[LibraryApi, None]) -> None:
         """delete_song returns True even when the MP3 file doesn't exist on disk."""
         api, _ = library
         ok = api.delete_song(1)
@@ -341,10 +339,7 @@ class TestResolvePath:
             "CREATE TABLE songs (id, station_name, stream_title, artist, title, "
             "album, year, file_path, file_size, has_cover, enrichment, created_at)"
         )
-        conn.execute(
-            "INSERT INTO songs VALUES (1,'Test','','','','','',"
-            "'',0,0,'','2026-01-01')"
-        )
+        conn.execute("INSERT INTO songs VALUES (1,'Test','','','','','','',0,0,'','2026-01-01')")
         conn.commit()
         conn.close()
         settings = Settings(

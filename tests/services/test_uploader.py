@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from radio_ripper.domain.models import EnrichedInfo, FingerprintResult, TrackInfo
-from radio_ripper.infra.config import Settings, StreamConfig
+from radio_ripper.domain.models import EnrichedInfo, FingerprintResult
+from radio_ripper.infra.config import Settings
 from radio_ripper.services.fingerprint import (
     FingerprintError,
     FingerprintProvider,
@@ -39,7 +36,9 @@ def _touch(path: Path) -> Path:
     return path
 
 
-def _stub_fingerprint(result: FingerprintResult | None = None, *, fail: type[Exception] | None = None):
+def _stub_fingerprint(
+    result: FingerprintResult | None = None, *, fail: type[Exception] | None = None
+):
     """Return a FingerprintProvider stub."""
     fp = MagicMock(spec=FingerprintProvider)
     if fail is not None:
@@ -82,10 +81,19 @@ class _TrackingRepo(TrackRepository):
     async def register(self, track: object, station_name: str) -> None:
         self.registered.append((station_name, str(track)))
 
-    async def update_enrichment(self, station_name: str, stream_title: str, **kwargs: object) -> None:
+    async def update_enrichment(
+        self, station_name: str, stream_title: str, **kwargs: object
+    ) -> None:
         import dataclasses
+
         valid = {f.name for f in dataclasses.fields(EnrichedInfo)}
-        self.enrichment_calls.append((station_name, stream_title, EnrichedInfo(**{k: v for k, v in kwargs.items() if k in valid and v is not None})))
+        self.enrichment_calls.append(
+            (
+                station_name,
+                stream_title,
+                EnrichedInfo(**{k: v for k, v in kwargs.items() if k in valid and v is not None}),
+            )
+        )
 
     async def update_fingerprint(
         self, station_name: str, stream_title: str, *, recording_id: str, score: float
@@ -245,7 +253,9 @@ class TestInboxScan:
         _touch(s.mp3_inbox / "song.wav")
         _touch(s.mp3_inbox / "notes.md")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="A", title="B", score=0.9, recording_id="r1"))
+        fp = _stub_fingerprint(
+            FingerprintResult(artist="A", title="B", score=0.9, recording_id="r1")
+        )
         u = Uploader(
             inbox=s.mp3_inbox,
             temp_dir=tmp_path / "temp",
@@ -292,7 +302,11 @@ class TestProcessOneMatch:
         s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "track.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="Artist One", title="Song Two", score=0.95, recording_id="rec-abc"))
+        fp = _stub_fingerprint(
+            FingerprintResult(
+                artist="Artist One", title="Song Two", score=0.95, recording_id="rec-abc"
+            )
+        )
         u = Uploader(
             inbox=s.mp3_inbox,
             temp_dir=tmp_path / "temp",
@@ -312,7 +326,9 @@ class TestProcessOneMatch:
         s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "test.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="A", title="B", score=0.9, recording_id="rec-xyz"))
+        fp = _stub_fingerprint(
+            FingerprintResult(artist="A", title="B", score=0.9, recording_id="rec-xyz")
+        )
         u = Uploader(
             inbox=s.mp3_inbox,
             temp_dir=tmp_path / "temp",
@@ -334,7 +350,9 @@ class TestProcessOneMatch:
         s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "enriched.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="E", title="F", score=0.95, recording_id="rec-ef"))
+        fp = _stub_fingerprint(
+            FingerprintResult(artist="E", title="F", score=0.95, recording_id="rec-ef")
+        )
         info = EnrichedInfo(album="Great Album", year="2024", genre="Rock", label="Big Label")
         u = Uploader(
             inbox=s.mp3_inbox,
@@ -358,7 +376,11 @@ class TestProcessOneMatch:
         s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "album_track.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="AlbumArtist", title="AlbumSong", score=0.9, recording_id="r99"))
+        fp = _stub_fingerprint(
+            FingerprintResult(
+                artist="AlbumArtist", title="AlbumSong", score=0.9, recording_id="r99"
+            )
+        )
         info = EnrichedInfo(album="MyAlbum")
         u = Uploader(
             inbox=s.mp3_inbox,
@@ -377,7 +399,9 @@ class TestProcessOneMatch:
         s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "unenriched.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="U", title="V", score=0.8, recording_id="r-uv"))
+        fp = _stub_fingerprint(
+            FingerprintResult(artist="U", title="V", score=0.8, recording_id="r-uv")
+        )
         u = Uploader(
             inbox=s.mp3_inbox,
             temp_dir=tmp_path / "temp",
@@ -397,7 +421,9 @@ class TestProcessOneMatch:
         _touch(existing)
         mp3 = _touch(s.mp3_inbox / "collision.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="Artist", title="Song", score=0.95, recording_id="r-c1"))
+        fp = _stub_fingerprint(
+            FingerprintResult(artist="Artist", title="Song", score=0.95, recording_id="r-c1")
+        )
         u = Uploader(
             inbox=s.mp3_inbox,
             temp_dir=tmp_path / "temp",
@@ -416,7 +442,11 @@ class TestProcessOneMatch:
         s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "weird.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist='Art"ist', title="Song: Title?", score=0.9, recording_id="r-spec"))
+        fp = _stub_fingerprint(
+            FingerprintResult(
+                artist='Art"ist', title="Song: Title?", score=0.9, recording_id="r-spec"
+            )
+        )
         u = Uploader(
             inbox=s.mp3_inbox,
             temp_dir=tmp_path / "temp",
@@ -533,7 +563,9 @@ class TestProcessOneNoMatch:
         s = _settings(tmp_path)
         mp3 = _touch(s.mp3_inbox / "partial.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="P", title="Partial", score=0.9, recording_id="r-part"))
+        fp = _stub_fingerprint(
+            FingerprintResult(artist="P", title="Partial", score=0.9, recording_id="r-part")
+        )
         # enrich disabled in settings so enrich_and_tag returns None
         u = Uploader(
             inbox=s.mp3_inbox,
@@ -611,7 +643,9 @@ class TestEnrichmentErrors:
         s = _settings(tmp_path)
         _touch(s.mp3_inbox / "bad_meta.mp3")
         repo = _TrackingRepo()
-        fp = _stub_fingerprint(FingerprintResult(artist="Meta", title="Fail", score=0.9, recording_id="r-meta"))
+        fp = _stub_fingerprint(
+            FingerprintResult(artist="Meta", title="Fail", score=0.9, recording_id="r-meta")
+        )
         mp = _stub_metadata(fail=RuntimeError)
         u = Uploader(
             inbox=s.mp3_inbox,

@@ -776,9 +776,7 @@ class TestRunForeverExceptions:
         dest.mkdir()
         src = _make_stream_bytes(["Song A"])
         client = FakeHttpClient(src)
-        settings = _make_settings(
-            tmp_path, reconnect_base_delay=0.1, reconnect_max_delay=1.0
-        )
+        settings = _make_settings(tmp_path, reconnect_base_delay=0.1, reconnect_max_delay=1.0)
         repo = FakeRepoFresh()
         rec = StreamRecorder(
             station_name="TestStation",
@@ -892,7 +890,10 @@ class TestMaxRecordingsGuard:
         settings = _make_settings(tmp_path, max_recordings=1, discard_unmatched=False)
         fp = _ScriptedFingerprint(result=None)  # no AcoustID match for new songs
         rec = _make_recorder(
-            settings=settings, http_client=client, repo=repo, destination=dest,
+            settings=settings,
+            http_client=client,
+            repo=repo,
+            destination=dest,
             fingerprint_provider=fp,
         )
         caplog.set_level(logging.WARNING, logger="radio_ripper.stream")
@@ -918,9 +919,7 @@ class TestDiscardSmallFile:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=250)
         repo = FakeRepoFresh()
-        rec = _make_recorder(
-            settings=settings, http_client=client, repo=repo, destination=dest
-        )
+        rec = _make_recorder(settings=settings, http_client=client, repo=repo, destination=dest)
         caplog.set_level(logging.DEBUG, logger="radio_ripper.stream")
         task = rec.start()
         await asyncio.sleep(0.5)

@@ -5,9 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-from radio_ripper.infra.config import StreamConfig
 from radio_ripper.infra.http import HttpxAsyncClient
 from radio_ripper.services.playlist import (
     HttpPlaylistResolver,
@@ -55,7 +52,7 @@ class TestLoadLocalM3u:
 
     def test_invalid_url_suppressed(self, tmp_path: Path):
         p = tmp_path / "bad_url.m3u"
-        p.write_text('#EXTINF:-1,Test\nnot a url\n')
+        p.write_text("#EXTINF:-1,Test\nnot a url\n")
         assert load_local_m3u(p) == []
 
     def test_blank_lines_skipped(self, tmp_path: Path):
@@ -66,24 +63,14 @@ class TestLoadLocalM3u:
 
     def test_consecutive_urls_name_resets(self, tmp_path: Path):
         p = tmp_path / "consecutive.m3u"
-        p.write_text(
-            "#EXTINF:-1,Only\n"
-            "http://a.com/1\n"
-            "http://a.com/2\n"
-        )
+        p.write_text("#EXTINF:-1,Only\nhttp://a.com/1\nhttp://a.com/2\n")
         result = load_local_m3u(p)
         # Second URL has no name (was reset after first), so only one station
         assert len(result) == 1
 
     def test_comment_lines_skipped(self, tmp_path: Path):
         p = tmp_path / "comments.m3u"
-        p.write_text(
-            "#EXTM3U\n"
-            "# comment\n"
-            "#EXTINF:-1,S\n"
-            "# another comment\n"
-            "http://example.com/s\n"
-        )
+        p.write_text("#EXTM3U\n# comment\n#EXTINF:-1,S\n# another comment\nhttp://example.com/s\n")
         result = load_local_m3u(p)
         assert len(result) == 1
 

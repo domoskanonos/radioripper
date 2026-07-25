@@ -215,6 +215,7 @@ class TestRunAsync:
             try:
                 stop_event = asyncio.Event()
                 with patch("radio_ripper.cli.asyncio.Event", return_value=stop_event):
+
                     async def trigger():
                         await asyncio.sleep(0.05)
                         for handler, args in signal_handlers.values():
@@ -240,6 +241,7 @@ class TestMainIntegration:
         p.write_text(json.dumps(cfg), encoding="utf-8")
 
         from radio_ripper.infra.config import load_settings
+
         real_settings = load_settings(p)
 
         with patch("radio_ripper.cli.load_settings", return_value=real_settings):

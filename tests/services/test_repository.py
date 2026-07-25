@@ -133,7 +133,6 @@ class TestSQLiteTrackRepository:
         assert all_by_id[0].track.stream_title == "A - B"
         assert all_by_id[0].track.acoustid_score == 0.95
 
-
     async def test_find_all_by_artist_title(self, sqlite_repo: SQLiteTrackRepository):
         t1 = SavedTrack("A - X", "A", "X", "/a.mp3", 100)
         t2 = SavedTrack("A - X", "A", "X", "/a2.mp3", 200)
@@ -144,7 +143,9 @@ class TestSQLiteTrackRepository:
         assert results[0].station_name == "Rock"
         assert results[1].station_name == "Dance"
 
-    async def test_find_all_by_artist_title_case_insensitive(self, sqlite_repo: SQLiteTrackRepository):
+    async def test_find_all_by_artist_title_case_insensitive(
+        self, sqlite_repo: SQLiteTrackRepository
+    ):
         track = SavedTrack("A - X", "A", "X", "/a.mp3", 100)
         await sqlite_repo.register(track, "Rock")
         results = await sqlite_repo.find_all_by_artist_title("a", "x")

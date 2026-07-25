@@ -82,16 +82,12 @@ class AcoustidFingerprintProvider(FingerprintProvider):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
-                gen = await loop.run_in_executor(
-                    None, acoustid.match, self._api_key, str(path)
-                )
+                gen = await loop.run_in_executor(None, acoustid.match, self._api_key, str(path))
                 results = list(gen)
         except acoustid.WebServiceError as exc:
             msg = str(exc)
             if "status: error" in msg:
-                raise FingerprintError(
-                    f"AcoustID API error (invalid key?): {exc}"
-                ) from exc
+                raise FingerprintError(f"AcoustID API error (invalid key?): {exc}") from exc
             raise FingerprintError(f"acoustid lookup failed: {exc}") from exc
         except acoustid.FingerprintGenerationError as exc:
             raise NonRetriableFingerprintError(str(exc)) from exc

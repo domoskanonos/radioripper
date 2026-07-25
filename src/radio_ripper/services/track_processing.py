@@ -357,25 +357,24 @@ async def fingerprint_song(
                 except Exception:
                     all_records = []
                 if len(all_records) >= settings.max_recordings:
-                    existing = await repo.find_all_by_artist_title(
-                        track.artist, track.title
-                    )
+                    existing = await repo.find_all_by_artist_title(track.artist, track.title)
                     if existing:
                         my_records = [
-                            e for e in existing
+                            e
+                            for e in existing
                             if not (
                                 e.station_name == station_name
-                                and e.track.stream_title.lower()
-                                == track.stream_title.lower()
+                                and e.track.stream_title.lower() == track.stream_title.lower()
                             )
                         ]
-                        best_score = max(
-                            (e.track.acoustid_score or 0) for e in my_records
-                        ) if my_records else 0.0
+                        best_score = (
+                            max((e.track.acoustid_score or 0) for e in my_records)
+                            if my_records
+                            else 0.0
+                        )
                         if result.score > best_score:
                             logger.info(
-                                "[%s] Replacing existing version"
-                                " (new score %.2f > old %.2f): %s",
+                                "[%s] Replacing existing version (new score %.2f > old %.2f): %s",
                                 station_name,
                                 result.score,
                                 best_score,
@@ -384,18 +383,13 @@ async def fingerprint_song(
                             for rec in my_records + existing:
                                 if (
                                     rec.station_name == station_name
-                                    and rec.track.stream_title.lower()
-                                    == track.stream_title.lower()
+                                    and rec.track.stream_title.lower() == track.stream_title.lower()
                                 ):
                                     continue
                                 with contextlib.suppress(OSError):
                                     Path(rec.track.file_path).unlink(missing_ok=True)
-                                try:
-                                    await repo.remove(
-                                        rec.station_name, rec.track.stream_title
-                                    )
-                                except Exception:
-                                    pass
+                                with contextlib.suppress(Exception):
+                                    await repo.remove(rec.station_name, rec.track.stream_title)
                         else:
                             logger.info(
                                 "[%s] Max recordings reached, new score (%.2f)"
@@ -408,30 +402,23 @@ async def fingerprint_song(
                             with contextlib.suppress(OSError):
                                 file_path.unlink(missing_ok=True)
                                 remove_empty_parents(file_path, settings.destination)
-                            try:
+                            with contextlib.suppress(Exception):
                                 await repo.remove(station_name, track.stream_title)
-                            except Exception:
-                                pass
                             return
                     else:
                         logger.info(
-                            "[%s] Max recordings reached, no existing match"
-                            " — discarding: %s",
+                            "[%s] Max recordings reached, no existing match — discarding: %s",
                             station_name,
                             file_path.name,
                         )
                         with contextlib.suppress(OSError):
                             file_path.unlink(missing_ok=True)
                             remove_empty_parents(file_path, settings.destination)
-                        try:
+                        with contextlib.suppress(Exception):
                             await repo.remove(station_name, track.stream_title)
-                        except Exception:
-                            pass
                         return
 
-            new_path = file_path.with_name(
-                file_path.stem.replace(".untested", "") + ".mp3"
-            )
+            new_path = file_path.with_name(file_path.stem.replace(".untested", "") + ".mp3")
             applied = await apply_fingerprint_match(
                 recording_id=result.recording_id,
                 score=result.score,
@@ -458,9 +445,7 @@ async def fingerprint_song(
             try:
                 all_existing = await repo.find_all_by_recording_id(result.recording_id)
             except Exception as exc:
-                logger.debug(
-                    "[%s] find_all_by_recording_id: %s", station_name, exc
-                )
+                logger.debug("[%s] find_all_by_recording_id: %s", station_name, exc)
                 return
 
             if all_existing:
@@ -473,9 +458,7 @@ async def fingerprint_song(
                     )
                     for e in all_existing
                 ]
-                candidates.append(
-                    (result.score, station_name, track.stream_title, new_path)
-                )
+                candidates.append((result.score, station_name, track.stream_title, new_path))
                 candidates.sort(key=lambda c: c[0], reverse=True)
                 (best_score, best_station, best_stream, best_path) = candidates[0]
                 for score, station, stream_title, p in candidates:
@@ -487,8 +470,7 @@ async def fingerprint_song(
                     ):
                         continue
                     logger.info(
-                        "[%s] AcoustID dedup: discarding inferior"
-                        " (score %.2f < best %.2f): %s",
+                        "[%s] AcoustID dedup: discarding inferior (score %.2f < best %.2f): %s",
                         station_name,
                         score,
                         best_score,
@@ -500,9 +482,7 @@ async def fingerprint_song(
                     try:
                         await repo.remove(station, stream_title)
                     except Exception as exc:
-                        logger.debug(
-                            "[%s] db remove dedup: %s", station_name, exc
-                        )
+                        logger.debug("[%s] db remove dedup: %s", station_name, exc)
 
             if track.artist and track.title:
                 try:
@@ -515,8 +495,7 @@ async def fingerprint_song(
                 for rec in unmatched:
                     if (
                         rec.station_name == station_name
-                        and rec.track.stream_title.lower()
-                        == track.stream_title.lower()
+                        and rec.track.stream_title.lower() == track.stream_title.lower()
                     ):
                         continue
                     if rec.track.acoustid_recording_id:
@@ -531,9 +510,7 @@ async def fingerprint_song(
                         old_path.unlink(missing_ok=True)
                         remove_empty_parents(old_path, settings.destination)
                     try:
-                        await repo.remove(
-                            rec.station_name, rec.track.stream_title
-                        )
+                        await repo.remove(rec.station_name, rec.track.stream_title)
                     except Exception as exc:
                         logger.debug(
                             "[%s] db remove unmatched for replacement: %s",
@@ -593,18 +570,14 @@ async def apply_fingerprint_match(
             )
             return None
 
-    logger.info(
-        "[%s] AcoustID match applied: %s", station_name, new_path.name
-    )
+    logger.info("[%s] AcoustID match applied: %s", station_name, new_path.name)
 
     try:
         tagger.update_acoustid(new_path, recording_id, score)
     except Exception as exc:
         logger.debug("[%s] acoustid tag update: %s", station_name, exc)
     try:
-        await repository.update_file_path(
-            station_name, stream_title, str(new_path)
-        )
+        await repository.update_file_path(station_name, stream_title, str(new_path))
     except Exception as exc:
         logger.debug("[%s] db update_file_path: %s", station_name, exc)
     try:
@@ -619,9 +592,7 @@ async def apply_fingerprint_match(
 
     if recording_id and cover_provider is not None:
         try:
-            cover_bytes = await cover_provider.fetch_cover_by_recording_id(
-                recording_id
-            )
+            cover_bytes = await cover_provider.fetch_cover_by_recording_id(recording_id)
         except Exception as exc:
             logger.debug(
                 "[%s] Cover Art Archive lookup failed: %s",
@@ -676,11 +647,7 @@ async def apply_fingerprint_match(
                     exc,
                 )
 
-    if (
-        min_popularity_rank > 0
-        and popularity_provider is not None
-        and (artist or title)
-    ):
+    if min_popularity_rank > 0 and popularity_provider is not None and (artist or title):
         deleted = await maybe_delete_obscure(
             file_path=new_path,
             station_name=station_name,

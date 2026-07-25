@@ -199,6 +199,7 @@ class TestMaybeDeleteObscure:
 
         def _fail_unlink(*a: object, **kw: object) -> None:
             raise OSError("permission denied")
+
         monkeypatch.setattr(Path, "unlink", _fail_unlink)
 
         result = await maybe_delete_obscure(
@@ -234,7 +235,9 @@ class TestMaybeDeleteObscure:
         assert result is True
         assert not fp.exists()
 
-    async def test_debug_log_when_repo_remove_fails(self, tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    async def test_debug_log_when_repo_remove_fails(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ):
         caplog.set_level(logging.DEBUG, logger="radio_ripper.popularity")
         provider = AsyncMock(spec=DeezerPopularityChecker)
         provider.get_rank.return_value = 10

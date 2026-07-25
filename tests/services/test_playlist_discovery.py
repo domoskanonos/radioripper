@@ -500,7 +500,9 @@ class TestMatchKeywords:
 
     def test_match_from_extinf_only(self):
         entries = [
-            M3uEntry(name="Some FM", url="http://a", source="x", extinf='#EXTINF:-1 tvg-id="rock.fm"'),
+            M3uEntry(
+                name="Some FM", url="http://a", source="x", extinf='#EXTINF:-1 tvg-id="rock.fm"'
+            ),
         ]
         result = _match_keywords(entries, ["rock"])
         assert len(result) == 1
@@ -536,8 +538,12 @@ class TestDistributeProbePool:
         assert len(result) == 3
 
     def test_multiple_keywords_round_robin(self):
-        rock_entries = [M3uEntry(name=f"Rock {i}", url=f"http://r{i}", source="test") for i in range(3)]
-        jazz_entries = [M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(3)]
+        rock_entries = [
+            M3uEntry(name=f"Rock {i}", url=f"http://r{i}", source="test") for i in range(3)
+        ]
+        jazz_entries = [
+            M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(3)
+        ]
         matched = [(e, {"rock"}) for e in rock_entries] + [(e, {"jazz"}) for e in jazz_entries]
         result = _distribute_probe_pool(matched, ["rock", "jazz"], 4)
         assert len(result) == 4
@@ -548,7 +554,9 @@ class TestDistributeProbePool:
 
     def test_keyword_exhausted_continues_round_robin(self):
         rock_entries = [M3uEntry(name="Rock Only", url="http://r0", source="test")]
-        jazz_entries = [M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(5)]
+        jazz_entries = [
+            M3uEntry(name=f"Jazz {i}", url=f"http://j{i}", source="test") for i in range(5)
+        ]
         matched = [(e, {"rock"}) for e in rock_entries] + [(e, {"jazz"}) for e in jazz_entries]
         result = _distribute_probe_pool(matched, ["rock", "jazz"], 4)
         assert len(result) == 4
@@ -721,9 +729,7 @@ class TestProbeBatch:
             await asyncio.sleep(100)
             return {"icy": True, "bitrate": 128}  # pragma: no cover
 
-        entries = [
-            M3uEntry(name=f"S{i}", url=f"http://{i}", source="test") for i in range(3)
-        ]
+        entries = [M3uEntry(name=f"S{i}", url=f"http://{i}", source="test") for i in range(3)]
         with patch("radio_ripper.services.playlist_discovery._probe_icy", _staggered):
             sem = asyncio.Semaphore(50)
             results = await _probe_batch(entries, 2, sem)
@@ -906,8 +912,14 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             "#EXTINF:-1,Pop Hits\nhttp://pop.example.com\n"
         )
         mock_results = [
-            (M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u"), {"icy": True, "bitrate": 128}),
-            (M3uEntry(name="Pop Hits", url="http://pop.example.com", source="mega.m3u"), {"icy": True, "bitrate": 256}),
+            (
+                M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u"),
+                {"icy": True, "bitrate": 128},
+            ),
+            (
+                M3uEntry(name="Pop Hits", url="http://pop.example.com", source="mega.m3u"),
+                {"icy": True, "bitrate": 256},
+            ),
         ]
         with (
             patch(
@@ -932,7 +944,10 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         )
         m3u_text = "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
         mock_results = [
-            (M3uEntry(name="Classic Rock", url="not-a-valid-url", source="mega.m3u"), {"icy": True, "bitrate": 128}),
+            (
+                M3uEntry(name="Classic Rock", url="not-a-valid-url", source="mega.m3u"),
+                {"icy": True, "bitrate": 128},
+            ),
         ]
         with patch(
             "radio_ripper.services.playlist_discovery._probe_batch",

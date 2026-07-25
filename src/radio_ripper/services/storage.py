@@ -185,7 +185,7 @@ def trim_trailing(
         if dur_ms < tail_ms + 5000:  # at least 5 s of usable audio
             return
 
-        tail = audio[dur_ms - tail_ms:]
+        tail = audio[dur_ms - tail_ms :]
 
         ranges = detect_silence(
             tail,
