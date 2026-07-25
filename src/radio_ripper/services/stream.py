@@ -11,7 +11,7 @@ from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.playlist import PlaylistResolver
-from radio_ripper.services.storage import TrackWriter, get_mp3_duration, sanitize_filename
+from radio_ripper.services.storage import TrackWriter, get_mp3_duration, is_valid_mp3, sanitize_filename
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -356,6 +356,15 @@ class StreamRecorder:
                 "[%s] Discarded (bitrate %d kbps < 128): %s",
                 self.station_name,
                 self._station_bitrate,
+                final_path.name,
+            )
+            with contextlib.suppress(OSError):
+                final_path.unlink(missing_ok=True)
+            return
+        if not await is_valid_mp3(final_path):
+            self._log.info(
+                "[%s] Discarded (not a valid MP3): %s",
+                self.station_name,
                 final_path.name,
             )
             with contextlib.suppress(OSError):

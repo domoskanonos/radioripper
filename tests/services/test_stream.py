@@ -30,7 +30,7 @@ def _make_meta_block(stream_title: str) -> bytes:
 def _make_stream_bytes(titles: list[str], audio_per_song: int = METADATA_INTERVAL) -> bytes:
     data = bytearray()
     for title in titles:
-        data.extend(b"\x01" * audio_per_song)
+        data.extend(b"\xff\xfb\x01" + b"\x01" * (audio_per_song - 3))
         data.extend(_make_meta_block(title))
     return bytes(data)
 

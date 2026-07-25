@@ -13,3 +13,4 @@ recordings/
 *.pid
 .env
 node_modules/
+temp/

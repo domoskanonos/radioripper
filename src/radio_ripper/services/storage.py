@@ -131,8 +131,18 @@ async def get_mp3_duration(path: Path) -> float | None:
         return None
 
 
+async def is_valid_mp3(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            header = f.read(2)
+        return len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0
+    except OSError:
+        return False
+
+
 __all__ = [
     "TrackWriter",
     "get_mp3_duration",
+    "is_valid_mp3",
     "sanitize_filename",
 ]

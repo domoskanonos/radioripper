@@ -158,6 +158,10 @@ async def probe_icy(
             async for _ in http_client.stream_binary(url, headers=headers, timeout=timeout):
                 break
             resp_headers = http_client.response_headers()
+            ct = resp_headers.get("content-type", "").lower()
+            if ct and ct != "audio/mpeg":
+                result["error"] = f"not MP3 ({ct})"
+                return result
             metaint = resp_headers.get("icy-metaint") or resp_headers.get("Icy-Metaint")
             result["icy"] = metaint is not None
             br_raw = resp_headers.get("icy-br") or resp_headers.get("Icy-Br")
@@ -180,6 +184,10 @@ async def probe_icy(
                 result["error"] = f"HTTP {resp.status_code}"
                 return result
             resp_headers = dict(resp.headers)
+            ct = resp_headers.get("content-type", "").lower()
+            if ct and ct != "audio/mpeg":
+                result["error"] = f"not MP3 ({ct})"
+                return result
             metaint = resp_headers.get("icy-metaint") or resp_headers.get("Icy-Metaint")
             result["icy"] = metaint is not None
             br_raw = resp_headers.get("icy-br") or resp_headers.get("Icy-Br")
