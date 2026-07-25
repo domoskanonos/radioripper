@@ -105,6 +105,7 @@ class RadioRipperApp:
                 no_icy_disable_after=self.settings.no_icy_disable_after,
                 startup_grace_titles=self.settings.startup_grace_titles,
                 inbox_full=self._inbox_full,
+                station_bitrate=stream.bitrate,
             )
             rec.start()
             self._recorders.append(rec)

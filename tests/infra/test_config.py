@@ -20,6 +20,7 @@ def _write_config(tmp_path: Path, payload: dict | str) -> Path:
 
 GOOD_BASE = {
     "destination": "./recordings",
+    "work_dir": "./recordings",
     "database": "./recordings/ripper.db",
     "streams": [{"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"}],
 }
@@ -44,6 +45,7 @@ class TestLoadSettings:
         """Empty streams + empty keywords is valid; discovery handles the rest."""
         cfg = {
             "destination": "./recordings",
+            "work_dir": "./recordings",
             "database": "./recordings/ripper.db",
             "stream_keywords": [],
             "discovery_enabled": False,

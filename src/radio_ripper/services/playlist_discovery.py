@@ -264,15 +264,11 @@ async def _download_mega_m3u(github_pat: str = "") -> str:
 
 
 def _cache_path(settings: Settings) -> Path:
-    td = settings.temp_dir
-    assert td is not None
-    return td / "discovered_stations.m3u"
+    return settings.work_dir / "discovered_stations.m3u"
 
 
 def _raw_mega_path(settings: Settings) -> Path:
-    td = settings.temp_dir
-    assert td is not None
-    return td / "---everything-checked-repo.m3u"
+    return settings.work_dir / "---everything-checked-repo.m3u"
 
 
 def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:

@@ -22,6 +22,7 @@ def _make_settings(tmp_path, **overrides) -> Settings:
     base = {
         "destination": tmp_path / "recordings",
         "database": tmp_path / "ripper.db",
+        "work_dir": tmp_path / "work",
         "streams": [StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
     }
     base.update(overrides)
@@ -53,6 +54,7 @@ class TestRadioRipperApp:
         settings = Settings.model_validate(
             {
                 "destination": str(tmp_path / "recordings"),
+                "work_dir": str(tmp_path / "work"),
                 "database": str(tmp_path / "ripper.db"),
                 "streams": [
                     {"name": "Station1", "url": "http://example.com/1.m3u"},
@@ -77,6 +79,7 @@ class TestRadioRipperApp:
         settings = Settings.model_validate(
             {
                 "destination": str(tmp_path / "recordings"),
+                "work_dir": str(tmp_path / "work"),
                 "database": str(tmp_path / "ripper.db"),
                 "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
             }

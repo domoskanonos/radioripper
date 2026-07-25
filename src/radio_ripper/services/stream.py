@@ -48,6 +48,7 @@ class StreamRecorder:
         no_icy_disable_after: int = 10,
         startup_grace_titles: int = 2,
         inbox_full: asyncio.Event | None = None,
+        station_bitrate: int = 0,
     ) -> None:
         self.station_name = station_name
         self.playlist_url = playlist_url
@@ -63,6 +64,7 @@ class StreamRecorder:
         self._connect_failures = 0
         self._startup_grace_titles = startup_grace_titles
         self._inbox_full = inbox_full or asyncio.Event()
+        self._station_bitrate = station_bitrate
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -231,7 +233,9 @@ class StreamRecorder:
             if existing >= self.settings.max_files_inbox:
                 self._log.error(
                     "[%s] Inbox limit reached (%d >= %d), pausing all recorders.",
-                    self.station_name, existing, self.settings.max_files_inbox,
+                    self.station_name,
+                    existing,
+                    self.settings.max_files_inbox,
                 )
                 self._inbox_full.set()
                 return None
@@ -241,7 +245,11 @@ class StreamRecorder:
             return None
         file_path = stream_dir / (safe_name + ".mp3")
         try:
-            return TrackWriter(file_path, min_size=self.settings.min_file_size_bytes)
+            return TrackWriter(
+                file_path,
+                min_size=self.settings.min_file_size_bytes,
+                overwrite=self.settings.overwrite_existing_files,
+            )
         except OSError as exc:
             self._log.error("[%s] cannot open %s: %s", self.station_name, file_path, exc)
             return None
@@ -343,6 +351,16 @@ class StreamRecorder:
             )
             return
         final_path = writer.final_path
+        if 0 < self._station_bitrate < 128:
+            self._log.info(
+                "[%s] Discarded (bitrate %d kbps < 128): %s",
+                self.station_name,
+                self._station_bitrate,
+                final_path.name,
+            )
+            with contextlib.suppress(OSError):
+                final_path.unlink(missing_ok=True)
+            return
         ok = await self._check_min_duration(final_path)
         if ok:
             self._log.info(

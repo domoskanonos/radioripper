@@ -299,6 +299,7 @@ class TestPlaylistDiscoveryService:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir="./rec",
             discovery_enabled=False,
         )
         svc = PlaylistDiscoveryService(settings)
@@ -313,6 +314,7 @@ class TestPlaylistDiscoveryService:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             discovery_min_stations=1,
@@ -330,6 +332,7 @@ class TestPlaylistDiscoveryService:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -369,6 +372,7 @@ class TestDiscover:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -403,6 +407,7 @@ class TestDiscover:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -727,6 +732,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
         )
@@ -745,6 +751,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -774,6 +781,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -791,6 +799,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -814,6 +823,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -835,6 +845,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
         )
@@ -850,6 +861,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -885,6 +897,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
@@ -910,6 +923,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
+            work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["nonexistent"],

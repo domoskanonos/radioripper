@@ -34,9 +34,10 @@ class _WriterState:
 
 
 class TrackWriter:
-    def __init__(self, final_path: Path, *, min_size: int = 1024) -> None:
+    def __init__(self, final_path: Path, *, min_size: int = 1024, overwrite: bool = False) -> None:
         self.final_path = final_path
         self.min_size = min_size
+        self.overwrite = overwrite
         tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
             suffix=".mp3.tmp",
             prefix="radio-ripper-",
@@ -75,6 +76,9 @@ class TrackWriter:
             self._tmp_path.unlink(missing_ok=True)
             return False
         self.final_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.final_path.exists() and not self.overwrite:
+            self._tmp_path.unlink(missing_ok=True)
+            return False
         shutil.move(str(self._tmp_path), str(self.final_path))
         return True
 

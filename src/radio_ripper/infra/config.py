@@ -35,9 +35,9 @@ class StreamSettings(BaseModel):
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
     no_icy_disable_after: int = Field(default=10, ge=1)
-    startup_grace_titles: int = Field(default=2, ge=0)
+    startup_grace_titles: int = Field(default=0, ge=0)
     ad_title_patterns: list[str] = Field(default_factory=list)
-    min_file_size_bytes: int = Field(default=2097152, ge=0)
+    min_file_size_bytes: int = Field(default=1048576, ge=0)
     max_files_inbox: int = Field(default=100000, ge=1)
     overwrite_existing_files: bool = False
     min_duration_s: float = Field(default=45, ge=0)
@@ -61,7 +61,7 @@ class DiscoverySettings(BaseModel):
         ]
     )
     discovery_min_stations: int = Field(default=150, ge=1)
-    discovery_min_bitrate: int = Field(default=128, ge=0)
+    discovery_min_bitrate: int = Field(default=0, ge=0)
     disable_automatic_streams: bool = False
 
 
@@ -123,7 +123,7 @@ class Settings(BaseModel):
     discovery_enabled: bool = True
     temp_dir: Path | None = Field(default=None, alias="temp_directory")
     discovery_min_stations: int = Field(default=150, ge=1)
-    discovery_min_bitrate: int = Field(default=128, ge=0)
+    discovery_min_bitrate: int = Field(default=0, ge=0)
 
     streams: list[StreamConfig] = Field(default_factory=list, exclude=True)
 
@@ -131,12 +131,12 @@ class Settings(BaseModel):
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
     user_agent: str = "Radio-Ripper/2.0"
-    min_file_size_bytes: int = Field(default=2097152, ge=0)
+    min_file_size_bytes: int = Field(default=1048576, ge=0)
     max_files_inbox: int = Field(default=100000, ge=1)
     overwrite_existing_files: bool = False
     ad_title_patterns: list[str] = Field(default_factory=list)
     no_icy_disable_after: int = Field(default=10, ge=1)
-    startup_grace_titles: int = Field(default=2, ge=0)
+    startup_grace_titles: int = Field(default=0, ge=0)
 
     mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
     min_duration_s: float = Field(default=45, ge=0)
