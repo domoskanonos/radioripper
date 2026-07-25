@@ -115,7 +115,70 @@ async def enrich_song(
 
 
 # ---------------------------------------------------------------------------
-# Register + enrich + tag + file to album subfolder
+# Enrich + tag + file to album subfolder (no DB)
+# ---------------------------------------------------------------------------
+
+
+async def enrich_and_file(
+    file_path: Path,
+    track: TrackInfo,
+    station_name: str,
+    provenance: str,
+    settings: Settings,
+    tagger: TrackTagger,
+    metadata_provider: MetadataProvider | None = None,
+    enrich_semaphore: asyncio.Semaphore | None = None,
+    file_locks: dict[Path, asyncio.Lock] | None = None,
+    logger: logging.Logger = _LOGGER,
+) -> Path | None:
+    """Write basic ID3 tags, enrich via iTunes, move to album subfolder.
+
+    Like :func:`register_and_enrich` but without any database operations.
+    Returns the final (potentially album-moved) path, or ``None`` on error.
+    """
+    try:
+        tagger.write_basic(file_path, track, provenance)
+    except Exception as exc:
+        logger.warning("[%s] basic tag failed: %s", station_name, exc)
+
+    info: EnrichedInfo | None = None
+    if metadata_provider:
+        info = await enrich_song(
+            file_path,
+            track,
+            provenance,
+            settings,
+            metadata_provider,
+            tagger,
+            enrich_semaphore=enrich_semaphore,
+            file_locks=file_locks,
+            logger=logger,
+        )
+
+    if info and info.album:
+        artist_dir = sanitize_filename(info.artist or track.artist)
+        album_dir = sanitize_filename(info.album)
+        new_dir = settings.destination / artist_dir / album_dir
+        new_dir.mkdir(parents=True, exist_ok=True)
+        new_path = new_dir / file_path.name
+        try:
+            shutil.move(str(file_path), str(new_path))
+            remove_empty_parents(file_path, settings.destination)
+            file_path = new_path
+        except OSError as exc:
+            logger.warning("[%s] album dir move failed: %s", station_name, exc)
+
+    logger.info(
+        "[%s] Completed: %s (%d bytes)",
+        station_name,
+        file_path.name,
+        _safe_size(file_path),
+    )
+    return file_path
+
+
+# ---------------------------------------------------------------------------
+# Register + enrich + tag + file to album subfolder (with DB)
 # ---------------------------------------------------------------------------
 
 
@@ -697,6 +760,7 @@ async def apply_fingerprint_match(
 
 __all__ = [
     "apply_fingerprint_match",
+    "enrich_and_file",
     "enrich_song",
     "fingerprint_song",
     "register_and_enrich",

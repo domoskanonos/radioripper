@@ -454,10 +454,10 @@ class TestID3TaggerEmbedCover:
 
     def test_gif_cover_does_not_embed(self, tmp_path: Path):
         f = tmp_path / "song.mp3"
-        _write_blank_mp3(f)
+        data = b"\xff\xfb" + b"\x00" * 100
+        f.write_bytes(data)
         ID3Tagger().embed_cover(f, b"GIF89a" + b"\x00" * 20)
-        audio = ID3(f)
-        assert "APIC:Cover" not in audio
+        assert f.read_bytes() == data  # file untouched
 
     def test_load_error_raises_tagging_error(self):
         tagger = ID3Tagger()

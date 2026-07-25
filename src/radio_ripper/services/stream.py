@@ -3,16 +3,9 @@
 One :class:`StreamRecorder` coroutine per station. Connects via the
 :class:`~radio_ripper.infra.http.AsyncHttpClient` ABC, drives the pure
 :class:`~radio_ripper.services.icy.IcyParser` state machine, and delegates file
-IO to :class:`~radio_ripper.services.storage.TrackWriter`,tagging to a
-:class:`~radio_ripper.services.tagging.TrackTagger`, and dedup/registration to
-a :class:`~radio_ripper.services.repository.TrackRepository`.
-
-Behaviour preserved from v1.x:
-    * Only *complete* songs are saved. The first running song at join is
-      discarded and recording starts at the *next* title boundary.
-    * If interrupted mid-song the in-flight temp file is discarded.
-    * Exponential reconnect backoff (doubles, capped at ``max_delay``).
-    * Dupes are skipped via the repository ``exists`` check.
+IO to :class:`~radio_ripper.services.storage.TrackWriter`.
+The first running song at join is discarded; recording starts at the next
+title boundary. Exponential reconnect backoff.
 """
 
 from __future__ import annotations
@@ -21,33 +14,26 @@ import asyncio
 import contextlib
 import logging
 import re
-import time
 from pathlib import Path
 from typing import Any
 
-from radio_ripper.domain.models import EnrichedInfo, SavedTrack, TrackInfo
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
 from radio_ripper.services.fingerprint import FingerprintProvider
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.metadata import MetadataProvider
 from radio_ripper.services.playlist import PlaylistResolver
-from radio_ripper.services.repository import TrackRepository
-from radio_ripper.services.storage import (
-    TrackWriter,
-    compute_file_path,
-    get_mp3_duration,
-    remove_empty_parents,
-    remux_mp3,
-)
+from radio_ripper.services.storage import TrackWriter, get_mp3_duration, sanitize_filename
 from radio_ripper.services.tagging import TrackTagger
-from radio_ripper.services.track_processing import (
-    enrich_song,
-    fingerprint_song,
-    register_and_enrich,
-)
 
-_LOGGER = logging.getLogger("radio_ripper.stream")
+_LOGGER = logging.getLogger(__name__)
+
+
+def _safe_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
 
 
 class StreamRecorder:
@@ -61,7 +47,7 @@ class StreamRecorder:
         settings: Settings,
         http_client: Any,
         playlist_resolver: PlaylistResolver,
-        repository: TrackRepository,
+        repository: Any,
         tagger: TrackTagger,
         metadata_provider: MetadataProvider | None = None,
         fingerprint_provider: FingerprintProvider | None = None,
@@ -241,26 +227,20 @@ class StreamRecorder:
                     self._log.info(
                         "[%s] Discarded (too small): %s", self.station_name, writer.final_path.name
                     )
-                    remove_empty_parents(writer.final_path, self.settings.destination)
                     current_title = None
                     recording = False
                     writer = None
                     return
                 final_path = writer.final_path
                 saved_title = current_title or ""
-
-                # Reset state now — the recorder can start the next song immediately
                 writer = None
                 current_title = None
                 recording = False
 
-                # Quick post-processing in thread pool (non-blocking for event loop)
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, remux_mp3, final_path)
-
+                # Check min duration quickly before offloading
                 min_dur = self.settings.min_duration_s
                 if min_dur > 0:
-                    dur = await loop.run_in_executor(None, get_mp3_duration, final_path)
+                    dur = get_mp3_duration(final_path)
                     if dur is not None and dur < min_dur:
                         self._log.info(
                             "[%s] Discarded (too short: %.1fs < %.0fs): %s",
@@ -271,88 +251,16 @@ class StreamRecorder:
                         )
                         with contextlib.suppress(OSError):
                             final_path.unlink(missing_ok=True)
-                        remove_empty_parents(final_path, self.settings.destination)
                         return
 
-                track = TrackInfo.from_stream_title(saved_title)
-                provenance = f"{self.station_name}@{self.playlist_url}"
+                self._log.info(
+                    "[%s] Streaming result: %s (%d bytes)",
+                    self.station_name,
+                    final_path.name,
+                    _safe_size(final_path),
+                )
 
-                # Offload enrichment + fingerprinting to background task
-                async def _post_process(fp: Path, trk: TrackInfo, prov: str) -> None:
-                    # Step 1: register_and_enrich (iTunes enrichment + basic tags)
-                    enriched_path: Path | None = None
-                    try:
-                        enriched_path = await register_and_enrich(
-                            fp,
-                            trk,
-                            self.station_name,
-                            prov,
-                            self.settings,
-                            self._repo,
-                            self._tagger,
-                            metadata_provider=self._metadata,
-                            enrich_semaphore=self._enrich_sem,
-                            file_locks=self._file_locks,
-                            logger=self._log,
-                        )
-                    except Exception as exc:
-                        self._log.warning(
-                            "[%s] Enrichment failed for %s: %s",
-                            self.station_name,
-                            fp.name,
-                            exc,
-                        )
-
-                    # Step 2: fingerprint_song (AcoustID, CAA cover, MB metadata, artist image)
-                    target = enriched_path or fp
-                    if self._fingerprint is not None:
-                        try:
-                            await fingerprint_song(
-                                target,
-                                trk,
-                                self.station_name,
-                                prov,
-                                self.settings,
-                                self._fingerprint,
-                                self._repo,
-                                self._tagger,
-                                cover_provider=self._cover_provider,
-                                popularity_provider=self._popularity,
-                                file_locks=self._file_locks,
-                                logger=self._log,
-                            )
-                        except Exception as exc:
-                            self._log.warning(
-                                "[%s] Fingerprint processing failed for %s: %s",
-                                self.station_name,
-                                target.name,
-                                exc,
-                            )
-
-                    # Step 3: Lyrics
-                    try:
-                        from radio_ripper.services.lyrics import LyricsOvhProvider
-
-                        lyrics_provider = LyricsOvhProvider(self._http, timeout=5.0)
-                        lyrics = await lyrics_provider.fetch(trk.artist, trk.title)
-                        if lyrics:
-                            self._tagger.write_lyrics(target, lyrics)
-                            self._log.info(
-                                "[%s] Lyrics found for %s (%d chars)",
-                                self.station_name,
-                                target.name,
-                                len(lyrics),
-                            )
-                    except Exception:
-                        self._log.warning(
-                            "[%s] Lyrics fetch failed for %s",
-                            self.station_name,
-                            target.name,
-                        )
-
-                task = asyncio.create_task(_post_process(final_path, track, provenance))
-                self._enrichment_tasks.add(task)
-                task.add_done_callback(self._enrichment_tasks.discard)
+                current_title = saved_title  # restore so next title is tracked
             else:
                 writer.discard()
                 self._log.info(
@@ -361,7 +269,6 @@ class StreamRecorder:
                     writer.final_path.name,
                     writer.size,
                 )
-                remove_empty_parents(writer.final_path, self.settings.destination)
                 writer = None
                 current_title = None
                 recording = False
@@ -432,64 +339,10 @@ class StreamRecorder:
                                 self.station_name,
                                 clean,
                             )
-                        track = TrackInfo.from_stream_title(clean)
-                        file_path = compute_file_path(
-                            self.settings.destination,
-                            track.artist,
-                            track.title,
-                            clean,
-                            overwrite=self.settings.overwrite_existing_files,
-                        )
-                        # Write as .untested.mp3 until AcoustID confirms the match
-                        file_path = file_path.with_name(
-                            file_path.stem + ".untested" + file_path.suffix
-                        )
-                        if file_path.exists() and not self.settings.overwrite_existing_files:
-                            self._log.info(
-                                "[%s] File exists (no db record) - registering & skip: %s",
-                                self.station_name,
-                                file_path.name,
-                            )
-                            try:
-                                await self._repo.register(
-                                    SavedTrack(
-                                        stream_title=clean,
-                                        artist=track.artist,
-                                        title=track.title,
-                                        file_path=str(file_path),
-                                        file_size=file_path.stat().st_size,
-                                    ),
-                                    self.station_name,
-                                )
-                            except Exception as exc:
-                                self._log.warning(
-                                    "[%s] failed to register existing file: %s",
-                                    self.station_name,
-                                    exc,
-                                )
-
-                            recording = False
-                            continue
-                        # ---- max_recordings guard: no new songs at limit ----
-                        # Existing songs are still recorded for replace-if-better check.
-                        if self.settings.max_recordings is not None:
-                            all_records = await self._repo.list_all()
-                            if len(
-                                all_records
-                            ) >= self.settings.max_recordings and not await self._repo.exists(
-                                self.station_name, clean
-                            ):
-                                now = time.monotonic()
-                                if now - self._last_limit_log >= 60.0:
-                                    self._log.warning(
-                                        "[%s] Max recordings (%d) reached — not recording more.",
-                                        self.station_name,
-                                        self.settings.max_recordings,
-                                    )
-                                    self._last_limit_log = now
-
-                                recording = False
-                                continue
+                        stream_dir = self.settings.work_dir / "streaming_results"
+                        stream_dir.mkdir(parents=True, exist_ok=True)
+                        raw_name = sanitize_filename(clean) + ".untested.mp3"
+                        file_path = stream_dir / raw_name
                         try:
                             writer = TrackWriter(
                                 file_path,
@@ -521,49 +374,6 @@ class StreamRecorder:
         finally:
             with contextlib.suppress(Exception):
                 await agen.aclose()
-
-    # ------------------------------------------------------------------ enrichment
-
-    async def _enrich_song(
-        self,
-        file_path: Path,
-        track: TrackInfo,
-        provenance: str,
-    ) -> EnrichedInfo | None:
-        return await enrich_song(
-            file_path,
-            track,
-            provenance,
-            self.settings,
-            self._metadata,
-            self._tagger,
-            enrich_semaphore=self._enrich_sem,
-            file_locks=self._file_locks,
-            logger=self._log,
-        )
-
-    # ------------------------------------------------------------- fingerprinting
-
-    async def _fingerprint_song(
-        self,
-        file_path: Path,
-        track: TrackInfo,
-        provenance: str,
-    ) -> None:
-        await fingerprint_song(
-            file_path,
-            track,
-            self.station_name,
-            provenance,
-            self.settings,
-            self._fingerprint,
-            self._repo,
-            self._tagger,
-            cover_provider=self._cover_provider,
-            popularity_provider=self._popularity,
-            file_locks=self._file_locks,
-            logger=self._log,
-        )
 
 
 def _parse_metaint(headers: dict[str, str]) -> int | None:

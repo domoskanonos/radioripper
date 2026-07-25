@@ -314,19 +314,19 @@ class ID3Tagger(TrackTagger):
 
     def embed_cover(self, file_path: Path, cover_bytes: bytes) -> None:
         """Replace any existing APIC frame with the supplied cover bytes."""
-        try:
-            audio = _load_or_create(file_path)
-        except Exception as exc:
-            raise TaggingError(f"failed to load {file_path} for cover embed: {exc}") from exc
-        audio.delall("APIC")
         scaled = _scale_cover(cover_bytes)
         if scaled is not None:
             scaled_data, mime = scaled
+            try:
+                audio = _load_or_create(file_path)
+            except Exception as exc:
+                raise TaggingError(f"failed to load {file_path} for cover embed: {exc}") from exc
+            audio.delall("APIC:Cover")
             audio.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=scaled_data))
-        try:
-            audio.save(file_path, v2_version=3, v1=2)
-        except Exception as exc:
-            raise TaggingError(f"failed to save cover to {file_path}: {exc}") from exc
+            try:
+                audio.save(file_path, v2_version=3, v1=2)
+            except Exception as exc:
+                raise TaggingError(f"failed to save cover to {file_path}: {exc}") from exc
 
     def write_artist_image(self, file_path: Path, image_bytes: bytes) -> None:
         """Embed artist portrait into APIC type=8 (Cover stays type=3)."""
