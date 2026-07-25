@@ -528,6 +528,9 @@ class _RecordingTagger(TrackTagger):
     def write_lyrics(self, file_path: Path, lyrics: str) -> None:
         pass
 
+    def write_artist_image(self, file_path: Path, image_bytes: bytes) -> None:
+        pass
+
 
 class _FingerprintRepo(TrackRepository):
     """Repo stub recording remove / update_file_path / update_fingerprint."""

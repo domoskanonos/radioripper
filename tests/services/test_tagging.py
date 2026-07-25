@@ -381,6 +381,11 @@ class TestNullTagger:
         tagger.write_lyrics(Path("/nonexistent"), "lyrics")
         # should not raise
 
+    def test_write_artist_image_noop(self):
+        tagger = NullTagger()
+        tagger.write_artist_image(Path("/nonexistent"), b"img")
+        # should not raise
+
 
 class TestID3TaggerUpdateAcoustid:
     def test_adds_recording_id(self, tmp_path: Path):
@@ -500,6 +505,33 @@ class TestID3TaggerWriteLyrics:
         with patch.object(ID3, "save", side_effect=OSError("disk full")):
             with pytest.raises(TaggingError, match="failed to save lyrics"):
                 tagger.write_lyrics(f, "x")
+
+
+class TestID3TaggerWriteArtistImage:
+    def test_embeds_artist_image(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        img = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        tagger.write_artist_image(f, img)
+        audio = ID3(f)
+        apic = audio.get("APIC:Performer")
+        assert apic is not None
+        assert apic.type == 8
+        assert apic.desc == "Performer"
+
+    def test_load_error_raises_tagging_error(self):
+        tagger = ID3Tagger()
+        with pytest.raises(TaggingError, match="failed to load .* for artist image"):
+            tagger.write_artist_image(Path("/nonexistent/song.mp3"), b"x")
+
+    def test_save_error_raises_tagging_error(self, tmp_path: Path):
+        f = tmp_path / "song.mp3"
+        _write_blank_mp3(f)
+        tagger = ID3Tagger()
+        with patch.object(ID3, "save", side_effect=OSError("disk full")):
+            with pytest.raises(TaggingError, match="failed to save artist image"):
+                tagger.write_artist_image(f, b"\xff\xd8\xff\xe0" + b"\x00" * 20)
 
 
 class TestWriteFullEdgeCases:

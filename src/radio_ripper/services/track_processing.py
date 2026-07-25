@@ -652,6 +652,24 @@ async def apply_fingerprint_match(
                     exc,
                 )
 
+        # Fetch & embed artist portrait from Deezer
+        if popularity_provider is not None and artist:
+            try:
+                img = await popularity_provider.fetch_artist_image(artist)
+                if img is not None:
+                    tagger.write_artist_image(new_path, img)
+                    logger.info(
+                        "[%s] Artist image embedded: %s",
+                        station_name,
+                        artist,
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "[%s] artist image fetch failed: %s",
+                    station_name,
+                    exc,
+                )
+
     if min_popularity_rank > 0 and popularity_provider is not None and (artist or title):
         deleted = await maybe_delete_obscure(
             file_path=new_path,

@@ -143,6 +143,10 @@ class TrackTagger(ABC):
     def write_lyrics(self, file_path: Path, lyrics: str) -> None:
         """Write lyrics text into the USLT frame."""
 
+    @abstractmethod
+    def write_artist_image(self, file_path: Path, image_bytes: bytes) -> None:
+        """Embed artist portrait into APIC type=8 (Cover (front) stays type=3)."""
+
 
 def _load_or_create(file_path: Path) -> ID3:
     """Load an existing ID3 tag or create a fresh one.
@@ -324,6 +328,22 @@ class ID3Tagger(TrackTagger):
         except Exception as exc:
             raise TaggingError(f"failed to save cover to {file_path}: {exc}") from exc
 
+    def write_artist_image(self, file_path: Path, image_bytes: bytes) -> None:
+        """Embed artist portrait into APIC type=8 (Cover stays type=3)."""
+        try:
+            audio = _load_or_create(file_path)
+        except Exception as exc:
+            raise TaggingError(f"failed to load {file_path} for artist image: {exc}") from exc
+        audio.delall("APIC:Performer")
+        scaled = _scale_cover(image_bytes)
+        if scaled is not None:
+            scaled_data, mime = scaled
+            audio.add(APIC(encoding=3, mime=mime, type=8, desc="Performer", data=scaled_data))
+        try:
+            audio.save(file_path, v2_version=3, v1=2)
+        except Exception as exc:
+            raise TaggingError(f"failed to save artist image to {file_path}: {exc}") from exc
+
     def update_musicbrainz_metadata(
         self,
         file_path: Path,
@@ -413,6 +433,9 @@ class NullTagger(TrackTagger):
         return None
 
     def write_lyrics(self, file_path: Path, lyrics: str) -> None:
+        return None
+
+    def write_artist_image(self, file_path: Path, image_bytes: bytes) -> None:
         return None
 
 

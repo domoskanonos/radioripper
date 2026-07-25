@@ -18,13 +18,13 @@ _DELAY = 0.2
 
 
 class DeezerPopularityChecker:
-    """Check track popularity via the public Deezer search API.
+    """Check track popularity and fetch artist images via the public Deezer API.
 
-    Returns a ``rank`` (0 — ~1M) per track. Higher = more popular.
-    ``None`` when no match or the API is unreachable.
+    No API key required — Deezer's search endpoint is public.
     """
 
     _SEARCH_URL = "https://api.deezer.com/search"
+    _ARTIST_SEARCH_URL = "https://api.deezer.com/search/artist"
 
     def __init__(self, client: AsyncHttpClient, *, timeout: float = 5.0) -> None:
         self._client = client
@@ -43,6 +43,29 @@ class DeezerPopularityChecker:
             return None
         rank = data[0].get("rank")
         return int(rank) if rank is not None else None
+
+    async def fetch_artist_image(self, artist: str) -> bytes | None:
+        """Search Deezer for *artist* and return the artist picture bytes."""
+        if not artist:
+            return None
+        try:
+            payload = await self._client.get_json(
+                self._ARTIST_SEARCH_URL,
+                params={"q": artist, "limit": 1},
+                timeout=self._timeout,
+            )
+        except Exception:
+            return None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not data:
+            return None
+        picture_url = data[0].get("picture_medium") or data[0].get("picture")
+        if not picture_url:
+            return None
+        try:
+            return await self._client.get_bytes(picture_url, timeout=self._timeout)
+        except Exception:
+            return None
 
 
 async def maybe_delete_obscure(
