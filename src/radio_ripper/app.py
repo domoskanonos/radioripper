@@ -27,9 +27,7 @@ from radio_ripper.infra.errors import ConfigurationError
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.fingerprint import (
     AcoustidFingerprintProvider,
-    FingerprintError,
     FingerprintProvider,
-    NonRetriableFingerprintError,
 )
 from radio_ripper.services.metadata import (
     CoverArtArchiveProvider,
@@ -173,7 +171,7 @@ class RadioRipperApp:
         min_interval = self.settings.acoustid_min_interval_s
         last_fp_call = 0.0
         for mp3 in sorted(self.settings.destination.rglob("*.mp3")):
-            if mp3.suffix != ".mp3" or mp3.name.endswith(".untested.mp3"):
+            if mp3.suffix != ".mp3":
                 continue
             record = await self.repository.find_by_file_path(str(mp3))
             if record is None:
@@ -339,92 +337,7 @@ class RadioRipperApp:
             except Exception as exc:
                 self.logger.warning("Failed to reset reprocess_all flag: %s", exc)
 
-    async def reprocess_untested(self) -> None:
-        """Re-fingerprint ``.untested.mp3`` files left from a previous run."""
-        if self.fingerprint is None:
-            self.logger.debug("No AcoustID provider — skipping untested reprocess.")
-            return
-        records = await self.repository.list_untested()
-        if not records:
-            return
-        self.logger.info("Re-fingerprinting %d untested files from previous run…", len(records))
-        min_interval = self.settings.acoustid_min_interval_s
-        last_fp_call = 0.0
-        for rec in records:
-            p = Path(rec.track.file_path)
-            if not p.is_file():
-                self.logger.warning("Untested file missing, removing DB record: %s", p)
-                with contextlib.suppress(Exception):
-                    await self.repository.remove(rec.station_name, rec.track.stream_title)
-                continue
-            if min_interval > 0:
-                now = time.monotonic()
-                wait = min_interval - (now - last_fp_call)
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                last_fp_call = time.monotonic()
-            try:
-                result = await self.fingerprint.fingerprint(p)
-            except NonRetriableFingerprintError as exc:
-                self.logger.warning(
-                    "Permanently skipping broken file %s: %s",
-                    p.name,
-                    exc,
-                )
-                with contextlib.suppress(OSError):
-                    p.unlink(missing_ok=True)
-                    remove_empty_parents(p, self.settings.destination)
-                with contextlib.suppress(Exception):
-                    await self.repository.remove(rec.station_name, rec.track.stream_title)
-                continue
-            except FingerprintError as exc:
-                self.logger.warning(
-                    "Fingerprint infrastructure error for %s: %s "
-                    "(file kept as .untested.mp3 for next retry)",
-                    p.name,
-                    exc,
-                    exc_info=True,
-                )
-                continue
-            except Exception:
-                self.logger.debug(
-                    "unexpected fingerprint error for %s",
-                    p.name,
-                    exc_info=True,
-                )
-                continue
-            if result is None:
-                self.logger.info("Still no AcoustID match for %s", p.name)
-                if self.settings.discard_unmatched:
-                    with contextlib.suppress(OSError):
-                        p.unlink(missing_ok=True)
-                        remove_empty_parents(p, self.settings.destination)
-                    try:
-                        await self.repository.remove(rec.station_name, rec.track.stream_title)
-                    except Exception as exc:
-                        self.logger.debug("db remove after no-match: %s", exc)
-                    self.logger.info("Discarded (still no match): %s", p.name)
-                continue
-            new_path = p.with_name(p.stem.replace(".untested", "") + ".mp3")
-            applied = await apply_fingerprint_match(
-                recording_id=result.recording_id,
-                score=result.score,
-                file_path=p,
-                new_path=new_path,
-                tagger=self.tagger,
-                cover_provider=self.cover_provider,
-                repository=self.repository,
-                station_name=rec.station_name,
-                stream_title=rec.track.stream_title,
-                logger=self.logger,
-                artist=result.artist,
-                title=result.title,
-                popularity_provider=self.popularity_provider,
-                min_popularity_rank=self.settings.min_popularity_rank,
-            )
-            if applied is None:
-                continue
-        self.logger.info("Untested reprocess complete (%d files).", len(records))
+    # reprocess_untested removed — _reprocess_all now also processes .untested.mp3
 
     async def _cleanup_orphans(self) -> None:
         """Remove DB records whose ``file_path`` no longer exists on disk.
@@ -512,9 +425,8 @@ class RadioRipperApp:
 
     async def start(self) -> None:
         """Create and launch one :class:`StreamRecorder` task per stream."""
-        await self._reprocess_all()
-        await self.reprocess_untested()
         await self._cleanup_orphans()
+        await self._reprocess_all()
         if self.fingerprint is not None:
             await self._validate_acoustid_key()
         # Use pre-populated streams when set (API layer or tests); otherwise
