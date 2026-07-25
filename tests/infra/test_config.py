@@ -54,23 +54,9 @@ class TestLoadSettings:
         assert s.stream_keywords == []
         assert s.discovery_enabled is False
 
-    def test_timeout_must_be_positive(self, tmp_path: Path):
-        cfg = dict(GOOD_BASE)
-        cfg["read_chunk"] = -1
-        path = _write_config(tmp_path, cfg)
-        with pytest.raises(ConfigurationError):
-            load_settings(path)
-
     def test_invalid_log_level(self, tmp_path: Path):
         cfg = dict(GOOD_BASE)
         cfg["log_level"] = "BOGUS"
-        path = _write_config(tmp_path, cfg)
-        with pytest.raises(ConfigurationError):
-            load_settings(path)
-
-    def test_read_chunk_upper_bound(self, tmp_path: Path):
-        cfg = dict(GOOD_BASE)
-        cfg["read_chunk"] = 70000
         path = _write_config(tmp_path, cfg)
         with pytest.raises(ConfigurationError):
             load_settings(path)
@@ -90,7 +76,6 @@ class TestDefaults:
         s = Settings.model_validate(GOOD_BASE)
         assert s.enrich_metadata is True
         assert s.enrichment_workers == 4
-        assert s.read_chunk == 4096
         assert s.request_timeout == 30.0
         assert s.log_level == "INFO"
 

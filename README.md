@@ -91,7 +91,6 @@ Alle Einstellungen in `config.json`:
     { "name": "Rock",    "url": "http://rock.radiomonster.fm/listen.m3u" }
   ],
   "request_timeout":         30,
-  "read_chunk":              4096,
   "reconnect_base_delay":    1.0,
   "reconnect_max_delay":     60.0,
   "user_agent":              "Radio-Ripper/1.0",

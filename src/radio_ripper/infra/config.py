@@ -38,6 +38,8 @@ class StreamConfig(BaseModel):
 class Settings(BaseModel):
     """Validated radio_ripper configuration."""
 
+    model_config = {"populate_by_name": True}
+
     destination: Path = Field(default=Path("./recordings"))
 
     # Runtime data directory — logs, database, cache all live here by default.
@@ -60,18 +62,14 @@ class Settings(BaseModel):
         ]
     )
     discovery_enabled: bool = True
-    # User-facing config key. If set, it overrides the internal temp_dir.
-    temp_directory: Path | None = None
-    temp_dir: Path | None = None
+    temp_dir: Path | None = Field(default=None, alias="temp_directory")
     discovery_max_stations: int = Field(default=150, ge=1, le=500)
     discovery_min_bitrate: int = Field(default=0, ge=0)
-    discovery_update_interval_days: int = Field(default=7, ge=1)
 
     # Internal — set after discovery, not in config.json
     streams: list[StreamConfig] = Field(default_factory=list, exclude=True)
 
     request_timeout: float = Field(default=30.0, ge=1.0)
-    read_chunk: int = Field(default=4096, ge=64, le=65536)
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
     user_agent: str = "Radio-Ripper/2.0"
@@ -91,7 +89,6 @@ class Settings(BaseModel):
     metadata_timeout: float = Field(default=8.0, ge=0.5)
     cover_timeout: float = Field(default=15.0, ge=0.5)
 
-    reprobe_on_start: bool = True
     reprocess_all: bool = False
     min_duration_s: float = Field(default=30, ge=0)
     github_pat: str = ""
@@ -120,21 +117,10 @@ class Settings(BaseModel):
         "log_file",
         "fallback_cover_path",
         "temp_dir",
-        "temp_directory",
     )
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
         return v.expanduser() if v is not None else None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _map_temp_directory(cls, values: dict[str, object]) -> dict[str, object]:
-        try:
-            if isinstance(values, dict) and values.get("temp_directory"):
-                values["temp_dir"] = values.get("temp_directory")
-        except Exception:
-            pass
-        return values
 
     @model_validator(mode="after")
     def _resolve_work_paths(self) -> Settings:
