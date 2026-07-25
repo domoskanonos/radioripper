@@ -92,9 +92,7 @@ class Settings(BaseModel):
     mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
     min_duration_s: float = Field(default=30, ge=0)
     github_pat: str = ""
-    acoustid_api_key: str = ""
     acoustid_min_score: float = Field(default=0.85, ge=0.0, le=1.0)
-    acoustid_min_interval_s: float = Field(default=0.40, ge=0.0)
     discard_unmatched: bool = True
     min_popularity_rank: int = Field(default=100000, ge=0)
     enable_coverartarchive: bool = True

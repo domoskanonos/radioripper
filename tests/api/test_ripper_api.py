@@ -23,7 +23,6 @@ def tmp_config(tmp_path: Path) -> Path:
             {
                 "destination": str(tmp_path / "recordings"),
                 "database": str(tmp_path / "songs.db"),
-                "acoustid_api_key": "test-key",
                 "streams": [
                     {"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"},
                 ],

@@ -85,7 +85,9 @@ class _TrackingRepo(TrackRepository):
         self.registered.append((station_name, str(track)))
 
     async def update_enrichment(self, station_name: str, stream_title: str, **kwargs: object) -> None:
-        self.enrichment_calls.append((station_name, stream_title, EnrichedInfo(**{k: v for k, v in kwargs.items() if v is not None})))
+        import dataclasses
+        valid = {f.name for f in dataclasses.fields(EnrichedInfo)}
+        self.enrichment_calls.append((station_name, stream_title, EnrichedInfo(**{k: v for k, v in kwargs.items() if k in valid and v is not None})))
 
     async def update_fingerprint(
         self, station_name: str, stream_title: str, *, recording_id: str, score: float
@@ -352,7 +354,7 @@ class TestProcessOneMatch:
         assert stream_title == "E - F"
         assert ei.album == "Great Album"
         assert ei.year == "2024"
-        assert ei.genre == "Rock"
+        # genre is embedded in ID3 tags but not persisted to the DB
 
     async def test_match_with_album_uses_album_subdir(self, tmp_path: Path) -> None:
         s = _settings(tmp_path)
@@ -390,8 +392,10 @@ class TestProcessOneMatch:
         await u._process_one(mp3)
         dest = s.destination / "U" / "U - V.mp3"
         assert dest.is_file()
-        # No enrich => no album subdir, no update_enrichment call
-        assert len(repo.enrichment_calls) == 0
+        # No enrich => no album subdir; update_enrichment is still called to update DB state
+        assert len(repo.enrichment_calls) == 1
+        _, _, ei = repo.enrichment_calls[0]
+        assert ei.album is None  # no enrichment data
 
     async def test_match_destination_collision_appends_suffix(self, tmp_path: Path) -> None:
         s = _settings(tmp_path)
@@ -549,7 +553,9 @@ class TestProcessOneNoMatch:
         await u._process_one(mp3)
         dest = s.destination / "P" / "P - Partial.mp3"
         assert dest.is_file()
-        assert len(repo.enrichment_calls) == 0  # enrichment was called but returned None
+        assert len(repo.enrichment_calls) == 1  # pipeline always updates DB state
+        _, _, ei = repo.enrichment_calls[0]
+        assert ei.album is None  # metadata returned None, no enrichment data
 
     async def test_rename_failure_skips_gracefully(self, tmp_path: Path) -> None:
         s = _settings(tmp_path)
@@ -602,8 +608,12 @@ class TestTempDir:
 
 
 class TestEnrichmentErrors:
-    async def test_enrich_metadata_raises_moves_to_temp(self, tmp_path: Path) -> None:
-        """If enrich_and_tag raises (e.g. metadata fetch fails), file moves to temp."""
+    async def test_enrich_metadata_raises_still_files_to_dest(self, tmp_path: Path) -> None:
+        """Enrichment errors are swallowed (consistent with stream recorder).
+
+        The file still goes to destination — enrichment failure must never lose a recording.
+        No enrichment call is recorded and no album subdir is created.
+        """
         s = _settings(tmp_path)
         _touch(s.mp3_inbox / "bad_meta.mp3")
         repo = _TrackingRepo()
@@ -619,7 +629,11 @@ class TestEnrichmentErrors:
             tagger=_stub_tagger(),
         )
         await u._process_inbox()
-        assert (tmp_path / "temp" / "bad_meta.processing").is_file()
+        dest = s.destination / "Meta" / "Meta - Fail.mp3"
+        assert dest.is_file(), "File must reach destination even when enrichment fails"
+        assert len(repo.enrichment_calls) == 1  # pipeline always updates DB state
+        _, _, ei = repo.enrichment_calls[0]
+        assert ei.album is None  # enrichment failed, no album data
 
 
 # ---------------------------------------------------------------------------

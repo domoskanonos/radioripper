@@ -83,7 +83,6 @@ class SavedTrack:
     label: str | None = None
     track_number: int | None = None
     disc_number: int | None = None
-    extras: dict[str, str] = field(default_factory=dict)
 
 
 __all__ = ["EnrichedInfo", "FingerprintResult", "SavedTrack", "TrackInfo"]

@@ -151,6 +151,8 @@ class RadioRipperApp:
             repository=repository,
             tagger=tagger,
             name="inbox",
+            cover_provider=cover_provider,
+            popularity_provider=popularity_provider,
             logger=log,
         )
         return app

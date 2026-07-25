@@ -56,7 +56,6 @@ class TestSavedTrack:
         assert s.album is None
         assert s.has_cover is False
         assert s.enrichment is None
-        assert s.extras == {}
 
     def test_with_enrichment(self):
         s = SavedTrack(
