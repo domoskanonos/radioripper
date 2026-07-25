@@ -37,10 +37,10 @@ class StreamSettings(BaseModel):
     no_icy_disable_after: int = Field(default=10, ge=1)
     startup_grace_titles: int = Field(default=0, ge=0)
     ad_title_patterns: list[str] = Field(default_factory=list)
-    min_file_size_bytes: int = Field(default=1048576, ge=0)
+    min_file_size_bytes: int = Field(default=1572864, ge=0)
     max_files_inbox: int = Field(default=100000, ge=1)
     overwrite_existing_files: bool = False
-    min_duration_s: float = Field(default=45, ge=0)
+    min_duration_s: float = Field(default=90, ge=0)
 
 
 class DiscoverySettings(BaseModel):
@@ -131,7 +131,7 @@ class Settings(BaseModel):
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
     user_agent: str = "Radio-Ripper/2.0"
-    min_file_size_bytes: int = Field(default=1048576, ge=0)
+    min_file_size_bytes: int = Field(default=1572864, ge=0)
     max_files_inbox: int = Field(default=100000, ge=1)
     overwrite_existing_files: bool = False
     ad_title_patterns: list[str] = Field(default_factory=list)
@@ -139,7 +139,7 @@ class Settings(BaseModel):
     startup_grace_titles: int = Field(default=0, ge=0)
 
     mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
-    min_duration_s: float = Field(default=45, ge=0)
+    min_duration_s: float = Field(default=90, ge=0)
 
     max_concurrent_streams: int = Field(default=400, ge=1, le=500)
     disable_automatic_streams: bool = False
