@@ -27,6 +27,10 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix={{date 'YYYYMMDD'}}-,format=short
 
+      - name: Extract pyproject version
+        id: pkg
+        run: echo "version=$(grep ^version pyproject.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -41,7 +45,16 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags }},${{ env.REGISTRY_IMAGE }}:${{ steps.pkg.outputs.version }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update Docker Hub README
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          repository: ${{ env.REGISTRY_IMAGE }}
+          short-description: Webradio-Stream-Recorder mit ICY-Metadaten
+          readme-filepath: ./README.md

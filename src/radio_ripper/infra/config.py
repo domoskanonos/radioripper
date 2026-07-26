@@ -171,7 +171,6 @@ class Settings(BaseModel):
         )
 
 
-
 def load_settings(path: str | Path) -> Settings:
     cfg_path = Path(path).expanduser()
     if not cfg_path.is_file():

@@ -1,8 +1,106 @@
 # Radio-Ripper – Stream
 
-Dauerhafte parallele Aufnahme von Webradio-Streams mit ICY-Metadaten.
+Dauerhafte parallele Aufnahme von Webradio-Streams mit ICY-Metadaten (Songtitel).  
+Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen (optional), verwaltet parallele Streams und unterstützt die automatische Sendersuche via Community-Playlists.
+
+## Schnellstart (Docker)
 
 ```bash
+docker run --rm \
+  -v "$PWD/config:/app/config:ro" \
+  -v "$PWD/recordings:/app/recordings" \
+  -v "$PWD/work:/app/work" \
+  domoskanonos/radio-ripper-stream:latest
+```
+
+Das Image erwartet eine Konfiguration unter `/app/config/config.json`.  
+Ein minimales Beispiel erzeugst du so:
+
+```bash
+mkdir -p config recordings work
+cat > config/config.json <<'EOF'
+{
+  "destination": "/app/recordings",
+  "work_dir": "/app/work",
+  "stream_keywords": ["rock", "pop", "jazz"],
+  "max_concurrent_streams": 5
+}
+EOF
+```
+
+## Konfiguration (`config.json`)
+
+Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind optional – es gelten die gezeigten Defaults.
+
+| Feld | Typ | Standard | Beschreibung |
+|---|---|---|---|
+| `destination` | string | `/app/recordings` | Zielverzeichnis für Aufnahmen |
+| `work_dir` | string | `/app/work` | Arbeitsverzeichnis (Cache, DB, custom.m3u) |
+| `log_level` | string | `"INFO"` | Einer von `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `max_concurrent_streams` | integer | `10` | Maximale parallele Streams |
+| `request_timeout` | number | `30` | Timeout für HTTP-Requests (Sekunden) |
+| `reconnect_base_delay` | number | `1.0` | Basisverzögerung vor Wiederverbindung (Sekunden) |
+| `reconnect_max_delay` | number | `60.0` | Maximale Wiederverbindungsverzögerung |
+| `min_file_size_bytes` | integer | `4096` | Aufnahmen kleiner als dieser Wert werden verworfen |
+| `min_file_duration_s` | float | `90` | Mindestlaufzeit einer Aufnahme (Sekunden); erfordert `ffprobe` |
+| `user_agent` | string | `"Radio-Ripper-Stream/2.0"` | User-Agent für HTTP-Requests |
+| `no_icy_disable_after` | integer | `15` | Nach wie vielen ICY-freien Verbindungen ein Stream deaktiviert wird |
+| `discovery_enabled` | boolean | `true` | Automatische Sendersuche aktivieren |
+| `stream_keywords` | string[] | `["rock","pop","top hits",…]` | Suchbegriffe für die Sendersuche |
+| `discovery_min_bitrate` | integer | `0` | Minimale Bitrate für entdeckte Sender |
+| `ignore_title_patterns` | string[] | `[]` | Regex-Muster für zu ignorierende Songtitel (z. B. `["^Werbung", "News \d"]`) |
+| `streams` | array | `[]` | Liste fester Sender (überspringt Discovery). Format: `[{"name":"Mein Sender","url":"http://…"}]` |
+
+### Beispiel: Feste Sender + Discovery
+
+```json
+{
+  "destination": "/app/recordings",
+  "work_dir": "/app/work",
+  "streams": [
+    {"name": "Mein Radio", "url": "http://example.com/stream.mp3", "enabled": true, "bitrate": 128}
+  ],
+  "stream_keywords": ["indie", "alternative"],
+  "max_concurrent_streams": 8
+}
+```
+
+## Aufbau der Aufnahmen
+
+- Jeder Stream bekommt einen eigenen Unterordner im Zielverzeichnis.
+- Dateiname: `{Künstler} - {Titel}.mp3` (bei ICY-Metadaten) oder `{timestamp}.mp3`.
+- Temporäre Dateien landen im Arbeitsverzeichnis und werden beim Commit der Aufnahme ins Ziel verschoben.
+- Zu kurze oder zu kleine Dateien werden automatisch verworfen.
+
+## Image-Tags
+
+| Tag | Beschreibung |
+|---|---|
+| `latest` | Neuester Stand des `main`-Branches |
+| `2.x` | Semantische Versions-Tags |
+| `YYYYMMDD-<sha>` | Tägliche SHA-basierte Tags |
+
+Alle Images laufen unter einem unprivilegierten Benutzer (`ripper`, uid 1001).  
+Der Container-Entrypoint ist `radio-ripper` – du kannst Argumente wie `--config /pfad/config.json` oder `--log-level DEBUG` anhängen.
+
+## Entwicklung
+
+```bash
+# Abhängigkeiten installieren
 uv sync
+
+# Linting & Typ-Prüfung
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run mypy src/radio_ripper/
+
+# Tests
+uv run pytest
+
+# Manueller Start
 uv run radio-ripper --config config.json
 ```
+
+## Lizenz
+
+MIT

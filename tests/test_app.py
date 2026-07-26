@@ -108,7 +108,6 @@ class TestRadioRipperApp:
         client.aclose.assert_called_once()
 
 
-
 class TestRadioRipperAppSelectStations:
     def test_returns_explicit_streams(self, tmp_path):
         cfg = StreamConfig(name="S1", url="http://example.com/1.m3u")
@@ -159,10 +158,12 @@ class TestRadioRipperAppStreamLimit:
         custom_m3u = custom_dir / "custom.m3u"
         custom_m3u.write_text("#EXTM3U\n#EXTINF:-1,MyFav\nhttp://fav.example.com")
         # _select_stations returns custom stations first, then discovered ones
-        stations = [StreamConfig(name="MyFav", url="http://fav.example.com"),
-                     StreamConfig(name="A", url="http://a"),
-                     StreamConfig(name="B", url="http://b"),
-                     StreamConfig(name="C", url="http://c")]
+        stations = [
+            StreamConfig(name="MyFav", url="http://fav.example.com"),
+            StreamConfig(name="A", url="http://a"),
+            StreamConfig(name="B", url="http://b"),
+            StreamConfig(name="C", url="http://c"),
+        ]
         settings = _make_settings(tmp_path, max_concurrent_streams=2, streams=[])
         app = _make_app(settings)
         result = app._apply_stream_limit(stations)
@@ -179,8 +180,9 @@ class TestRadioRipperAppPreflight:
                 streams=[StreamConfig(name="S1", url="http://x"), StreamConfig(name="S2", url="http://y")],
             )
             app = _make_app(settings)
-            result = await app._preflight_check([StreamConfig(name="S1", url="http://x"),
-                                                  StreamConfig(name="S2", url="http://y")])
+            result = await app._preflight_check(
+                [StreamConfig(name="S1", url="http://x"), StreamConfig(name="S2", url="http://y")]
+            )
             assert len(result) == 2
 
     async def test_unreachable_stations_removed(self, tmp_path):
