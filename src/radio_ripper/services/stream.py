@@ -44,9 +44,8 @@ class StreamRecorder:
         http_client: Any,
         playlist_resolver: PlaylistResolver,
         logger: logging.Logger | None = None,
-        ad_title_patterns: list[str] | None = None,
+        ignore_title_patterns: list[str] | None = None,
         no_icy_disable_after: int = 10,
-        startup_grace_titles: int = 2,
         inbox_full: asyncio.Event | None = None,
         station_bitrate: int = 0,
     ) -> None:
@@ -58,11 +57,11 @@ class StreamRecorder:
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        self._ad_patterns: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in (ad_title_patterns or [])]
+        pats = ignore_title_patterns or []
+        self._ignore_patterns: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in pats]
         self._no_icy_disable_after = no_icy_disable_after
         self._no_icy_failures = 0
         self._connect_failures = 0
-        self._startup_grace_titles = startup_grace_titles
         self._inbox_full = inbox_full or asyncio.Event()
         self._station_bitrate = station_bitrate
 
@@ -71,11 +70,11 @@ class StreamRecorder:
     def _is_inbox_full(self) -> bool:
         stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
         if stream_dir.is_dir():
-            return len(list(stream_dir.glob("*.mp3"))) >= self.settings.max_files_inbox
+            return sum(1 for _ in stream_dir.glob("*.mp3")) >= self.settings.max_files_inbox
         return False
 
-    def _is_ad_title(self, title: str) -> bool:
-        return bool(self._ad_patterns and any(p.search(title) for p in self._ad_patterns))
+    def _is_ignored_title(self, title: str) -> bool:
+        return bool(self._ignore_patterns and any(p.search(title) for p in self._ignore_patterns))
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -206,7 +205,7 @@ class StreamRecorder:
         return agen, parser
 
     async def _check_min_duration(self, path: Path) -> bool:
-        min_dur = self.settings.min_duration_s
+        min_dur = self.settings.min_file_duration_s
         if min_dur <= 0:
             return True
         dur = await get_mp3_duration(path)
@@ -229,7 +228,7 @@ class StreamRecorder:
         stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
         stream_dir.mkdir(parents=True, exist_ok=True)
         if stream_dir.is_dir():
-            existing = len(list(stream_dir.glob("*.mp3")))
+            existing = sum(1 for _ in stream_dir.glob("*.mp3"))
             if existing >= self.settings.max_files_inbox:
                 self._log.error(
                     "[%s] Inbox limit reached (%d >= %d), pausing all recorders.",
@@ -248,7 +247,6 @@ class StreamRecorder:
             return TrackWriter(
                 file_path,
                 min_size=self.settings.min_file_size_bytes,
-                overwrite=self.settings.overwrite_existing_files,
             )
         except OSError as exc:
             self._log.error("[%s] cannot open %s: %s", self.station_name, file_path, exc)
@@ -259,7 +257,7 @@ class StreamRecorder:
         if not clean:
             self._log.info("[%s] Blank title, skipping", self.station_name)
             return False
-        if self._is_ad_title(clean):
+        if self._is_ignored_title(clean):
             self._log.info("[%s] Ad title detected, skipping: %s", self.station_name, clean)
             return False
         return True
@@ -276,7 +274,6 @@ class StreamRecorder:
         current_title: str | None = None
         writer: TrackWriter | None = None
         recording = False
-        grace_remaining = self._startup_grace_titles
 
         try:
             async for chunk in agen:
@@ -312,15 +309,6 @@ class StreamRecorder:
                             recording = False
                         current_title = new_title
                         if not self._should_record_title(new_title):
-                            continue
-                        if grace_remaining > 0:
-                            grace_remaining -= 1
-                            self._log.info(
-                                "[%s] Grace period: skipping '%s' (%d remaining)",
-                                self.station_name,
-                                new_title.strip(),
-                                grace_remaining,
-                            )
                             continue
                         writer = self._make_writer(new_title.strip())
                         if writer is not None:

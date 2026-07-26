@@ -2,7 +2,6 @@
   "destination": "/home/laptop/Musik",
   "work_dir": "./work",
   "log_level": "INFO",
-  "log_file": null,
   "temp_directory": "./temp",
   "mp3_inbox": null,
   "stream_keywords": [
@@ -86,20 +85,15 @@
     "Roadtrip"
   ],
   "discovery_enabled": true,
-  "discovery_min_stations": 150,
-  "discovery_min_bitrate": 0,
+  "discovery_min_bitrate": 128,
   "max_concurrent_streams": 400,
-  "disable_automatic_streams": false,
   "user_agent": "Radio-Ripper-Stream/2.0",
   "request_timeout": 30,
   "reconnect_base_delay": 1.0,
   "reconnect_max_delay": 60.0,
   "no_icy_disable_after": 10,
-  "startup_grace_titles": 0,
-  "ad_title_patterns": [],
-  "overwrite_existing_files": false,
+  "ignore_title_patterns": [],
   "min_file_size_bytes": 1572864,
-  "min_duration_s": 90,
-  "max_files_inbox": 100000,
-  "github_pat": ""
+  "min_file_duration_s": 90,
+  "max_files_inbox": 100000
 }

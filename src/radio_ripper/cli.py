@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import shutil
 import signal
 import sys
 from collections.abc import Sequence
@@ -25,6 +26,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(settings: Settings, logger: logging.Logger) -> int:
+    if shutil.which("ffprobe") is None:
+        logger.critical("ffprobe not found. Install ffmpeg: sudo apt install ffmpeg")
+        return 1
+
     from radio_ripper.app import RadioRipperApp
 
     loop = asyncio.get_running_loop()
@@ -65,7 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.log_level:
         settings = settings.model_copy(update={"log_level": args.log_level})
 
-    logger = configure_logging(settings.log_level, settings.log_file)
+    logger = configure_logging(settings.log_level, settings.work_dir / "radio_ripper.log")
     logger.info("=== Radio-Ripper %s (stream mode) ===", __version__)
 
     try:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field, HttpUrl, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator, model_validator
 
 from radio_ripper.infra.errors import ConfigurationError
 
@@ -14,7 +14,7 @@ class StreamConfig(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     url: HttpUrl
     enabled: bool = True
-    ad_title_patterns: list[str] | None = None
+    ignore_title_patterns: list[str] | None = None
     bitrate: int = 0
     icy: bool = True
     source: str = ""
@@ -35,12 +35,10 @@ class StreamSettings(BaseModel):
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
     no_icy_disable_after: int = Field(default=10, ge=1)
-    startup_grace_titles: int = Field(default=0, ge=0)
-    ad_title_patterns: list[str] = Field(default_factory=list)
+    ignore_title_patterns: list[str] = Field(default_factory=list)
     min_file_size_bytes: int = Field(default=1572864, ge=0)
     max_files_inbox: int = Field(default=100000, ge=1)
-    overwrite_existing_files: bool = False
-    min_duration_s: float = Field(default=90, ge=0)
+    min_file_duration_s: float = Field(default=90, ge=0)
 
 
 class DiscoverySettings(BaseModel):
@@ -60,9 +58,7 @@ class DiscoverySettings(BaseModel):
             "charts",
         ]
     )
-    discovery_min_stations: int = Field(default=150, ge=1)
     discovery_min_bitrate: int = Field(default=0, ge=0)
-    disable_automatic_streams: bool = False
 
 
 class StorageSettings(BaseModel):
@@ -81,7 +77,6 @@ class StorageSettings(BaseModel):
 
 class LoggingSettings(BaseModel):
     log_level: str = "INFO"
-    log_file: Path | None = None
 
     @field_validator("log_level")
     @classmethod
@@ -91,11 +86,6 @@ class LoggingSettings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("log_file")
-    @classmethod
-    def _expand_log(cls, v: Path | None) -> Path | None:
-        return v.expanduser() if v is not None else None
-
 
 class Settings(BaseModel):
     model_config = {"populate_by_name": True, "extra": "ignore"}
@@ -103,7 +93,6 @@ class Settings(BaseModel):
     destination: Path = Field(default=Path("./recordings"))
     work_dir: Path = Field(default=Path("./work"))
     log_level: str = "INFO"
-    log_file: Path | None = None
 
     stream_keywords: list[str] = Field(
         default_factory=lambda: [
@@ -122,7 +111,6 @@ class Settings(BaseModel):
     )
     discovery_enabled: bool = True
     temp_dir: Path | None = Field(default=None, alias="temp_directory")
-    discovery_min_stations: int = Field(default=150, ge=1)
     discovery_min_bitrate: int = Field(default=0, ge=0)
 
     streams: list[StreamConfig] = Field(default_factory=list, exclude=True)
@@ -133,18 +121,13 @@ class Settings(BaseModel):
     user_agent: str = "Radio-Ripper/2.0"
     min_file_size_bytes: int = Field(default=1572864, ge=0)
     max_files_inbox: int = Field(default=100000, ge=1)
-    overwrite_existing_files: bool = False
-    ad_title_patterns: list[str] = Field(default_factory=list)
+    ignore_title_patterns: list[str] = Field(default_factory=list)
     no_icy_disable_after: int = Field(default=10, ge=1)
-    startup_grace_titles: int = Field(default=0, ge=0)
 
     mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
-    min_duration_s: float = Field(default=90, ge=0)
+    min_file_duration_s: float = Field(default=90, ge=0)
 
     max_concurrent_streams: int = Field(default=400, ge=1, le=500)
-    disable_automatic_streams: bool = False
-
-    github_pat: SecretStr = Field(default=SecretStr(""))
 
     @field_validator("log_level")
     @classmethod
@@ -154,15 +137,13 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("work_dir", "destination", "temp_dir", "mp3_inbox", "log_file")
+    @field_validator("work_dir", "destination", "temp_dir", "mp3_inbox")
     @classmethod
     def _expand(cls, v: Path | None) -> Path | None:
         return v.expanduser() if v is not None else None
 
     @model_validator(mode="after")
     def _resolve_work_paths(self) -> Settings:
-        if self.log_file is None:
-            self.log_file = self.work_dir / "radio_ripper.log"
         if self.temp_dir is None:
             self.temp_dir = self.work_dir / "temp"
         if self.mp3_inbox is None:
@@ -178,12 +159,10 @@ class Settings(BaseModel):
             reconnect_base_delay=self.reconnect_base_delay,
             reconnect_max_delay=self.reconnect_max_delay,
             no_icy_disable_after=self.no_icy_disable_after,
-            startup_grace_titles=self.startup_grace_titles,
-            ad_title_patterns=self.ad_title_patterns,
+            ignore_title_patterns=self.ignore_title_patterns,
             min_file_size_bytes=self.min_file_size_bytes,
             max_files_inbox=self.max_files_inbox,
-            overwrite_existing_files=self.overwrite_existing_files,
-            min_duration_s=self.min_duration_s,
+            min_file_duration_s=self.min_file_duration_s,
         )
 
     @property
@@ -191,9 +170,7 @@ class Settings(BaseModel):
         return DiscoverySettings(
             discovery_enabled=self.discovery_enabled,
             stream_keywords=self.stream_keywords,
-            discovery_min_stations=self.discovery_min_stations,
             discovery_min_bitrate=self.discovery_min_bitrate,
-            disable_automatic_streams=self.disable_automatic_streams,
         )
 
     @property
@@ -207,10 +184,7 @@ class Settings(BaseModel):
 
     @property
     def logging(self) -> LoggingSettings:
-        return LoggingSettings(
-            log_level=self.log_level,
-            log_file=self.log_file,
-        )
+        return LoggingSettings(log_level=self.log_level)
 
 
 def load_settings(path: str | Path) -> Settings:

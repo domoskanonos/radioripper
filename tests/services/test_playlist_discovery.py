@@ -253,20 +253,6 @@ class TestDownloadMegaM3u:
             text = await _download_mega_m3u()
         assert text == content
 
-    @pytest.mark.asyncio
-    async def test_passes_auth_header(self) -> None:
-        resp = MagicMock(spec=httpx.Response)
-        resp.text = ""
-        mock_client = MagicMock(spec=httpx.AsyncClient)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client.get = AsyncMock(return_value=resp)
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            await _download_mega_m3u(github_pat="ghp_xyz")
-            _, kwargs = mock_client.get.call_args
-            actual_headers = kwargs.get("headers", {})
-            assert actual_headers.get("Authorization") == "Bearer ghp_xyz"
 
     @pytest.mark.asyncio
     async def test_http_error(self) -> None:
@@ -317,7 +303,7 @@ class TestPlaylistDiscoveryService:
             work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
-            discovery_min_stations=1,
+            max_concurrent_streams=1,
         )
         cf = tmp_path / "discovered_stations.m3u"
         _save_cache(cf, stations)
@@ -376,7 +362,7 @@ class TestDiscover:
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
-            discovery_min_stations=5,
+            max_concurrent_streams=5,
         )
 
         mock_entry = M3uEntry(name="Classic Rock", url="http://rock.example.com", source="mega.m3u")
@@ -866,7 +852,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             temp_dir=tmp_path,
             stream_keywords=["rock"],
             discovery_min_bitrate=200,
-            discovery_min_stations=10,
+            max_concurrent_streams=10,
         )
         m3u_text = (
             "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n#EXTINF:-1,Pop Hits\nhttp://pop.example.com\n"
@@ -901,7 +887,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             discovery_enabled=True,
             temp_dir=tmp_path,
             stream_keywords=["rock"],
-            discovery_min_stations=10,
+            max_concurrent_streams=10,
         )
         m3u_text = "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
         mock_results = [

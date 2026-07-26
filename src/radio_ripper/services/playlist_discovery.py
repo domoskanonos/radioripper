@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -250,17 +249,14 @@ async def _probe_batch(
 # ---------------------------------------------------------------- download
 
 
-async def _download_mega_m3u(github_pat: str = "") -> str:
-    headers: dict[str, str] = {"User-Agent": "Radio-Ripper/2.0"}
-    if github_pat:
-        headers["Authorization"] = f"Bearer {github_pat}"
+async def _download_mega_m3u() -> str:
     _LOGGER.info("Downloading ---everything-checked-repo.m3u…")
     t0 = time.monotonic()
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(30.0),
         follow_redirects=True,
     ) as client:
-        resp = await client.get(_MEGA_URL, headers=headers)
+        resp = await client.get(_MEGA_URL, headers={"User-Agent": "Radio-Ripper/2.0"})
         resp.raise_for_status()
         text = resp.text
     elapsed = time.monotonic() - t0
@@ -345,7 +341,7 @@ class PlaylistDiscoveryService:
 
         if cache_file.is_file():
             cached_stations, _ = _load_cache(cache_file)
-            min_needed = self._settings.discovery_min_stations
+            min_needed = self._settings.max_concurrent_streams
             if cached_stations and len(cached_stations) >= min_needed:
                 self._log.info("Using %d cached stations from %s", len(cached_stations), cache_file.name)
                 return cached_stations
@@ -370,12 +366,7 @@ class PlaylistDiscoveryService:
                 return raw_mega.read_text("utf-8")
             except Exception:
                 pass
-        pat = (
-            self._settings.github_pat.get_secret_value()
-            if self._settings.github_pat
-            else os.environ.get("GITHUB_PAT", "")
-        )
-        text = await _download_mega_m3u(pat)
+        text = await _download_mega_m3u()
         try:
             raw_mega.parent.mkdir(parents=True, exist_ok=True)
             raw_mega.write_text(text, "utf-8")
@@ -399,7 +390,7 @@ class PlaylistDiscoveryService:
             self._log.warning("No stations matched the configured keywords.")
             return []
 
-        min_needed = self._settings.discovery_min_stations
+        min_needed = self._settings.max_concurrent_streams
         probe_pool = _distribute_probe_pool(matched, keywords, len(unique))
         all_good: list[tuple[M3uEntry, dict[str, Any]]] = []
         remaining = probe_pool

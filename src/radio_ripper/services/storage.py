@@ -34,10 +34,9 @@ class _WriterState:
 
 
 class TrackWriter:
-    def __init__(self, final_path: Path, *, min_size: int = 1024, overwrite: bool = False) -> None:
+    def __init__(self, final_path: Path, *, min_size: int = 1024) -> None:
         self.final_path = final_path
         self.min_size = min_size
-        self.overwrite = overwrite
         tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
             suffix=".mp3.tmp",
             prefix="radio-ripper-",
@@ -76,9 +75,6 @@ class TrackWriter:
             self._tmp_path.unlink(missing_ok=True)
             return False
         self.final_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.final_path.exists() and not self.overwrite:
-            self._tmp_path.unlink(missing_ok=True)
-            return False
         shutil.move(str(self._tmp_path), str(self.final_path))
         return True
 
@@ -135,12 +131,7 @@ async def is_valid_mp3(path: Path) -> bool:
     try:
         with path.open("rb") as f:
             head = f.read(4096)
-        # Suche MPEG-Frame-Sync (0xFF + 0xE0) in den ersten 4096 Bytes
-        # Überspringt ID3v2-Tags, APE-Tags etc., die vor den Audiodaten stehen
-        for i in range(len(head) - 1):
-            if head[i] == 0xFF and (head[i + 1] & 0xE0) == 0xE0:
-                return True
-        return False
+        return any(head[i] == 0xFF and (head[i + 1] & 0xE0) == 0xE0 for i in range(len(head) - 1))
     except OSError:
         return False
 

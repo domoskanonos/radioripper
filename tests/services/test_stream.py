@@ -93,9 +93,8 @@ def _make_recorder(
     settings: Settings,
     http_client: Any,
     logger: Any = None,
-    ad_title_patterns: Any = None,
+    ignore_title_patterns: Any = None,
     no_icy_disable_after: int = 10,
-    startup_grace_titles: int = 0,
 ) -> StreamRecorder:
     return StreamRecorder(
         station_name="TestStation",
@@ -104,9 +103,8 @@ def _make_recorder(
         http_client=http_client,
         playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
         logger=logger,
-        ad_title_patterns=ad_title_patterns,
+        ignore_title_patterns=ignore_title_patterns,
         no_icy_disable_after=no_icy_disable_after,
-        startup_grace_titles=startup_grace_titles,
     )
 
 
@@ -224,9 +222,9 @@ class TestStreamRecorder:
         assert any("Adele" in f.name for f in files)
 
 
-class TestAdTitlePatterns:
-    async def test_ad_title_is_not_recorded(self, tmp_path):
-        """Titles matching ad_title_patterns are skipped entirely."""
+class TestIgnorePatterns:
+    async def test_ignored_title_is_not_recorded(self, tmp_path):
+        """Titles matching ignore_title_patterns are skipped entirely."""
         stream = _make_stream_bytes(
             ["Joining", "Werbung - Spot", "Artist - Real Song", "Next - Song"],
             audio_per_song=METADATA_INTERVAL,
@@ -244,8 +242,7 @@ class TestAdTitlePatterns:
             settings=settings,
             http_client=client,
             playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
-            ad_title_patterns=["^Werbung"],
-            startup_grace_titles=0,
+            ignore_title_patterns=["^Werbung"],
         )
         task = rec.start()
         await asyncio.sleep(0.5)
@@ -256,8 +253,8 @@ class TestAdTitlePatterns:
         assert not any("Werbung" in f for f in files)
         assert any("Artist" in f for f in files)
 
-    async def test_ad_pattern_case_insensitive(self, tmp_path):
-        """Ad pattern matching is case-insensitive."""
+    async def test_ignore_pattern_case_insensitive(self, tmp_path):
+        """Ignore pattern matching is case-insensitive."""
         stream = _make_stream_bytes(
             ["Joining", "ADVERTISEMENT", "Artist - Song", "Next - Song"],
             audio_per_song=METADATA_INTERVAL,
@@ -270,8 +267,7 @@ class TestAdTitlePatterns:
             settings=settings,
             http_client=client,
             playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
-            ad_title_patterns=["advertisement"],
-            startup_grace_titles=0,
+            ignore_title_patterns=["advertisement"],
         )
         task = rec.start()
         await asyncio.sleep(0.5)
@@ -415,41 +411,3 @@ class TestDiscardSmallFile:
             pass
         files = list(stream_dir.glob("*.mp3")) if stream_dir.is_dir() else []
         assert not any("Too Small" in f.name for f in files)
-
-
-class TestGracePeriod:
-    async def test_grace_skips_initial_songs(self, tmp_path):
-        """With startup_grace_titles=2, the first 2 songs after mid-song join are skipped."""
-        stream = _make_stream_bytes(
-            ["Joining Mid", "Skip A", "Skip B", "First - Recording", "Next - Song"],
-            audio_per_song=METADATA_INTERVAL,
-        )
-        client = FakeHttpClient(stream)
-        settings = _make_settings(tmp_path, min_file_size_bytes=1)
-        rec = _make_recorder(settings=settings, http_client=client, startup_grace_titles=2)
-        stream_dir = settings.work_dir / "mp3_inbox"
-        task = rec.start()
-        await asyncio.sleep(0.5)
-        rec.stop()
-        await asyncio.wait_for(task, timeout=5)
-        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
-        assert not any("Joining" in f for f in files)
-        assert not any("Skip" in f for f in files)
-        assert any("Recording" in f for f in files)
-
-    async def test_grace_zero_records_immediately(self, tmp_path):
-        """With startup_grace_titles=0, recording starts at the first song change."""
-        stream = _make_stream_bytes(
-            ["Joining Mid", "First - Real Song", "Next - Song"],
-            audio_per_song=METADATA_INTERVAL,
-        )
-        client = FakeHttpClient(stream)
-        settings = _make_settings(tmp_path, min_file_size_bytes=1)
-        rec = _make_recorder(settings=settings, http_client=client, startup_grace_titles=0)
-        stream_dir = settings.work_dir / "mp3_inbox"
-        task = rec.start()
-        await asyncio.sleep(0.5)
-        rec.stop()
-        await asyncio.wait_for(task, timeout=5)
-        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
-        assert any("First" in f for f in files)

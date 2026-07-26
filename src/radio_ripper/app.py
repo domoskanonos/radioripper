@@ -71,7 +71,7 @@ class RadioRipperApp:
         stations = self._select_stations()
         has_explicit = bool(self.settings.streams)
 
-        if not has_explicit and not self.settings.disable_automatic_streams:
+        if not has_explicit:
             discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
             self.logger.info("Loaded %d stations via discovery.", len(discovered))
             stations.extend(discovered)
@@ -91,9 +91,8 @@ class RadioRipperApp:
             if not stream.enabled:
                 self.logger.info("Skipping disabled stream: %s", stream.name)
                 continue
-            patterns = (
-                stream.ad_title_patterns if stream.ad_title_patterns is not None else self.settings.ad_title_patterns
-            )
+            p = stream.ignore_title_patterns
+            patterns = p if p is not None else self.settings.ignore_title_patterns
             rec = StreamRecorder(
                 station_name=stream.name,
                 playlist_url=str(stream.url),
@@ -101,9 +100,8 @@ class RadioRipperApp:
                 http_client=self.client,
                 playlist_resolver=self.resolver,
                 logger=self.logger,
-                ad_title_patterns=patterns,
+                ignore_title_patterns=patterns,
                 no_icy_disable_after=self.settings.no_icy_disable_after,
-                startup_grace_titles=self.settings.startup_grace_titles,
                 inbox_full=self._inbox_full,
                 station_bitrate=stream.bitrate,
             )
