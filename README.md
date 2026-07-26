@@ -35,6 +35,20 @@ chown -R 1001:1001 recordings work config
 
 Das Image erwartet eine Konfiguration unter `/app/config/config.json`.
 
+### docker compose
+
+```yaml
+services:
+  radioripper:
+    image: domoskanonos/radio-ripper-stream:latest
+    container_name: radio-ripper
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - ./recordings:/app/recordings
+      - ./work:/app/work
+```
+
 ## Konfiguration (`config.json`)
 
 Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind optional – es gelten die gezeigten Defaults.
