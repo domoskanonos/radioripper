@@ -6,17 +6,7 @@ Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen (optiona
 ## Schnellstart (Docker)
 
 ```bash
-docker run --rm \
-  -v "$PWD/config:/app/config:ro" \
-  -v "$PWD/recordings:/app/recordings" \
-  -v "$PWD/work:/app/work" \
-  domoskanonos/radio-ripper-stream:latest
-```
-
-Das Image erwartet eine Konfiguration unter `/app/config/config.json`.  
-Ein minimales Beispiel erzeugst du so:
-
-```bash
+# Konfiguration vorbereiten
 mkdir -p config recordings work
 cat > config/config.json <<'EOF'
 {
@@ -26,7 +16,24 @@ cat > config/config.json <<'EOF'
   "max_concurrent_streams": 5
 }
 EOF
+
+# Container starten
+docker run --rm \
+  -v "$PWD/config:/app/config:ro" \
+  -v "$PWD/recordings:/app/recordings" \
+  -v "$PWD/work:/app/work" \
+  domoskanonos/radio-ripper-stream:latest
 ```
+
+**Volume-Berechtigungen**: Der Container läuft als unprivilegierter User (`ripper`, uid 1001).  
+Der Entrypoint korrigiert automatisch die Besitzer der gemounteten Verzeichnisse.  
+Sollten dennoch Permission-Fehler auftreten, einmalig ausführen:
+
+```bash
+chown -R 1001:1001 recordings work config
+```
+
+Das Image erwartet eine Konfiguration unter `/app/config/config.json`.
 
 ## Konfiguration (`config.json`)
 

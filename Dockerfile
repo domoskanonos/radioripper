@@ -1,4 +1,4 @@
-# Dockerfile — radio-ripper-stream (recording only)
+# Dockerfile — radio-ripper-stream
 # Build:   docker build -t radio-ripper-stream:latest .
 # Run:     docker run --rm --name ripper-stream \
 #            -v "$PWD/config:/app/config:ro" \
@@ -36,6 +36,10 @@ LABEL org.opencontainers.image.title="radio-ripper-stream" \
 RUN groupadd --system --gid 1001 ripper \
  && useradd --system --uid 1001 --gid ripper --home-dir /app --shell /usr/sbin/nologin ripper
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
@@ -47,11 +51,13 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1
 
 COPY config.docker.json /app/config/config.json
+COPY docker-entrypoint.sh /usr/local/bin/
 
 RUN mkdir -p /app/recordings /app/work /app/config \
- && chown -R ripper:ripper /app
+ && chown -R ripper:ripper /app \
+ && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER ripper
 
-ENTRYPOINT ["radio-ripper"]
-CMD ["--config", "/app/config/config.json"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["radio-ripper", "--config", "/app/config/config.json"]
