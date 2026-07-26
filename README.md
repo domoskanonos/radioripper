@@ -44,9 +44,9 @@ services:
     container_name: radio-ripper
     restart: unless-stopped
     volumes:
-      - ./config:/app/config:ro
-      - ./recordings:/app/recordings
+      - ./mp3_inbox:/app/mp3_inbox
       - ./work:/app/work
+      - ./temp:/app/temp
 ```
 
 ## Konfiguration (`config.json`)
@@ -54,11 +54,12 @@ services:
 Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind optional – es gelten die gezeigten Defaults.
 
 | Feld | Typ | Standard | Beschreibung |
-|---|---|---|---|
-| `destination` | string | `/app/recordings` | Zielverzeichnis für Aufnahmen |
-| `work_dir` | string | `/app/work` | Arbeitsverzeichnis (Cache, DB, custom.m3u) |
+|---|---|---|---|---|
+| `mp3_inbox` | string | `/app/mp3_inbox` | Zielverzeichnis für fertige MP3-Aufnahmen |
+| `work_dir` | string | `/app/work` | Arbeitsverzeichnis (Cache, DB, Logs) |
+| `temp_dir` | string | `/app/temp` | Temporäres Verzeichnis |
 | `log_level` | string | `"INFO"` | Einer von `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `max_concurrent_streams` | integer | `10` | Maximale parallele Streams |
+| `max_concurrent_streams` | integer | `400` | Maximale parallele Streams |
 | `request_timeout` | number | `30` | Timeout für HTTP-Requests (Sekunden) |
 | `reconnect_base_delay` | number | `1.0` | Basisverzögerung vor Wiederverbindung (Sekunden) |
 | `reconnect_max_delay` | number | `60.0` | Maximale Wiederverbindungsverzögerung |
@@ -76,8 +77,6 @@ Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind op
 
 ```json
 {
-  "destination": "/app/recordings",
-  "work_dir": "/app/work",
   "streams": [
     {"name": "Mein Radio", "url": "http://example.com/stream.mp3", "enabled": true, "bitrate": 128}
   ],

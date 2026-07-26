@@ -72,7 +72,7 @@ class StreamRecorder:
     # ------------------------------------------------------------------ lifecycle
 
     def _is_inbox_full(self) -> bool:
-        stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
+        stream_dir = self.settings.mp3_inbox
         if stream_dir.is_dir():
             return sum(1 for _ in stream_dir.glob("*.mp3")) >= self.settings.max_files_inbox
         return False

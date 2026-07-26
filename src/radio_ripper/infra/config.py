@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
 
 from radio_ripper.infra.errors import ConfigurationError
 
@@ -61,25 +61,12 @@ class DiscoverySettings(BaseModel):
     discovery_min_bitrate: int = Field(default=0, ge=0)
 
 
-class StorageSettings(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    destination: Path = Field(default=Path("./recordings"))
-    work_dir: Path = Field(default=Path("./work"))
-    temp_dir: Path | None = Field(default=None, alias="temp_directory")
-    mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
-
-    @field_validator("work_dir", "destination", "temp_dir", "mp3_inbox")
-    @classmethod
-    def _expand(cls, v: Path | None) -> Path | None:
-        return v.expanduser() if v is not None else None
-
-
 class Settings(BaseModel):
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
-    destination: Path = Field(default=Path("./recordings"))
-    work_dir: Path = Field(default=Path("./work"))
+    work_dir: Path = Field(default=Path("/app/work"))
+    mp3_inbox: Path = Field(default=Path("/app/mp3_inbox"))
+    temp_dir: Path = Field(default=Path("/app/temp"))
     log_level: str = "INFO"
 
     stream_keywords: list[str] = Field(
@@ -98,7 +85,6 @@ class Settings(BaseModel):
         ]
     )
     discovery_enabled: bool = True
-    temp_dir: Path | None = Field(default=None, alias="temp_directory")
     discovery_min_bitrate: int = Field(default=0, ge=0)
 
     streams: list[StreamConfig] = Field(default_factory=list, exclude=True)
@@ -111,8 +97,6 @@ class Settings(BaseModel):
     max_files_inbox: int = Field(default=100000, ge=1)
     ignore_title_patterns: list[str] = Field(default_factory=list)
     no_icy_disable_after: int = Field(default=10, ge=1)
-
-    mp3_inbox: Path | None = Field(default=None, alias="mp3_inbox")
     min_file_duration_s: float = Field(default=90, ge=0)
 
     max_concurrent_streams: int = Field(default=400, ge=1, le=500)
@@ -125,18 +109,10 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("work_dir", "destination", "temp_dir", "mp3_inbox")
+    @field_validator("work_dir", "mp3_inbox", "temp_dir")
     @classmethod
-    def _expand(cls, v: Path | None) -> Path | None:
-        return v.expanduser() if v is not None else None
-
-    @model_validator(mode="after")
-    def _resolve_work_paths(self) -> Settings:
-        if self.temp_dir is None:
-            self.temp_dir = self.work_dir / "temp"
-        if self.mp3_inbox is None:
-            self.mp3_inbox = self.work_dir / "mp3_inbox"
-        return self
+    def _expand(cls, v: Path) -> Path:
+        return v.expanduser()
 
     @property
     def stream(self) -> StreamSettings:
@@ -161,15 +137,6 @@ class Settings(BaseModel):
             discovery_min_bitrate=self.discovery_min_bitrate,
         )
 
-    @property
-    def storage(self) -> StorageSettings:
-        return StorageSettings(
-            destination=self.destination,
-            work_dir=self.work_dir,
-            temp_directory=self.temp_dir,
-            mp3_inbox=self.mp3_inbox,
-        )
-
 
 def load_settings(path: str | Path) -> Settings:
     cfg_path = Path(path).expanduser()
@@ -188,7 +155,6 @@ def load_settings(path: str | Path) -> Settings:
 __all__ = [
     "DiscoverySettings",
     "Settings",
-    "StorageSettings",
     "StreamConfig",
     "StreamSettings",
     "load_settings",
