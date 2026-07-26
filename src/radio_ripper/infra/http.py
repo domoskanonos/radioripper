@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -25,7 +25,7 @@ class AsyncHttpClient(ABC):
         *,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
-    ) -> AsyncIterator[bytes]: ...
+    ) -> AsyncGenerator[bytes, None]: ...
 
     @abstractmethod
     def response_headers(self) -> dict[str, str]: ...
@@ -77,7 +77,7 @@ class HttpxAsyncClient(AsyncHttpClient):
         *,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
-    ) -> AsyncIterator[bytes]:
+    ) -> AsyncGenerator[bytes, None]:
         async with self._client.stream(
             "GET",
             url,

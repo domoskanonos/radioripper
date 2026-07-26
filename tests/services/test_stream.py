@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,7 @@ class FakeHttpClient:
         *,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
-    ) -> AsyncIterator[bytes]:
+    ) -> AsyncGenerator[bytes, None]:
         self._last_headers = dict(self._headers)
         chunk_size = 64
         for i in range(0, len(self._stream_bytes), chunk_size):
@@ -305,7 +305,7 @@ class _HttpClientStreamingError:
     def __init__(self, stream_bytes: bytes) -> None:
         self._stream_bytes = stream_bytes
 
-    async def stream_binary(self, url: str, **kwargs: Any) -> AsyncIterator[bytes]:
+    async def stream_binary(self, url: str, **kwargs: Any) -> AsyncGenerator[bytes, None]:
         raise OSError("connection refused")
 
     def response_headers(self) -> dict[str, str]:
