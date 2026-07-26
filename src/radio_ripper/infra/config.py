@@ -140,15 +140,16 @@ class Settings(BaseModel):
 def load_settings(path: str | Path | None = None) -> Settings:
     if path is not None:
         cfg_path = Path(path).expanduser()
-        if cfg_path.is_file():
-            try:
-                raw = json.loads(cfg_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ConfigurationError(f"cannot read config {cfg_path}: {exc}") from exc
-            try:
-                return Settings.model_validate(raw)
-            except ValidationError as exc:
-                raise ConfigurationError(f"invalid config: {exc}") from exc
+        if not cfg_path.is_file():
+            raise ConfigurationError(f"config file not found: {cfg_path}")
+        try:
+            raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigurationError(f"cannot read config {cfg_path}: {exc}") from exc
+        try:
+            return Settings.model_validate(raw)
+        except ValidationError as exc:
+            raise ConfigurationError(f"invalid config: {exc}") from exc
     return Settings()
 
 

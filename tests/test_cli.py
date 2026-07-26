@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +19,14 @@ class TestCli:
 
     def test_minimal_config_path(self, tmp_path: Path):
         cfg = tmp_path / "cfg.json"
-        cfg.write_text('{"destination":"' + str(tmp_path / "rec") + '"}')
+        cfg.write_text(
+            json.dumps(
+                {
+                    "work_dir": str(tmp_path),
+                    "mp3_inbox": str(tmp_path / "mp3_inbox"),
+                }
+            )
+        )
         with patch("radio_ripper.cli._run") as mock:
             main(["--config", str(cfg)])
         mock.assert_called_once()

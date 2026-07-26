@@ -79,8 +79,8 @@ class FakeHttpClientNoMeta(FakeHttpClient):
 
 def _make_settings(tmp_path, **overrides) -> Settings:
     base = {
-        "destination": str(tmp_path / "recordings"),
         "work_dir": str(tmp_path / "work"),
+        "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
         "database": str(tmp_path / "ripper.db"),
         "min_file_size_bytes": 1,
     }

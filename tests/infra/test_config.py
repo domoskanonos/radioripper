@@ -68,9 +68,17 @@ class TestLoadSettings:
         with pytest.raises(ConfigurationError):
             load_settings(path)
 
-    def test_missing_file(self, tmp_path: Path):
+    def test_missing_file_with_path(self, tmp_path: Path):
+        """Explicit --config for a non-existent file raises."""
         with pytest.raises(ConfigurationError):
             load_settings(tmp_path / "nonexistent.json")
+
+    def test_no_path_uses_defaults(self):
+        """load_settings() without path returns default Settings."""
+        s = load_settings()
+        assert isinstance(s, Settings)
+        assert s.work_dir == Path("/app/work")
+        assert s.mp3_inbox == Path("/app/mp3_inbox")
 
 
 class TestDefaults:
