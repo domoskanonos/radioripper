@@ -6,12 +6,10 @@ Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen (optiona
 ## Schnellstart (Docker)
 
 ```bash
-# Konfiguration vorbereiten
-mkdir -p config recordings work
-cat > config/config.json <<'EOF'
+# Konfiguration vorbereiten (optional – ohne Config gelten Defaults)
+mkdir -p radio-ripper-config radio-ripper-mp3 radio-ripper-work
+cat > radio-ripper-config/config.json <<'EOF'
 {
-  "destination": "/app/recordings",
-  "work_dir": "/app/work",
   "stream_keywords": ["rock", "pop", "jazz"],
   "max_concurrent_streams": 5
 }
@@ -19,9 +17,9 @@ EOF
 
 # Container starten
 docker run --rm \
-  -v "$PWD/config:/app/config:ro" \
-  -v "$PWD/recordings:/app/recordings" \
-  -v "$PWD/work:/app/work" \
+  -v "$PWD/radio-ripper-config:/app/config:ro" \
+  -v "$PWD/radio-ripper-mp3:/app/mp3_inbox" \
+  -v "$PWD/radio-ripper-work:/app/work" \
   domoskanonos/radio-ripper-stream:latest
 ```
 
@@ -30,10 +28,11 @@ Der Entrypoint korrigiert automatisch die Besitzer der gemounteten Verzeichnisse
 Sollten dennoch Permission-Fehler auftreten, einmalig ausführen:
 
 ```bash
-chown -R 1001:1001 recordings work config
+chown -R 1001:1001 radio-ripper-mp3 radio-ripper-work radio-ripper-config
 ```
 
-Das Image erwartet eine Konfiguration unter `/app/config/config.json`.
+Wird kein `--config` angegeben, startet die App mit den Code-Defaults.  
+Ein eigenes Config-JSON kann bei Bedarf unter `/app/config/config.json` ins Image gemountet werden.
 
 ### docker compose
 
@@ -44,9 +43,9 @@ services:
     container_name: radio-ripper
     restart: unless-stopped
     volumes:
-      - ./mp3_inbox:/app/mp3_inbox
-      - ./work:/app/work
-      - ./temp:/app/temp
+      - ./radio-ripper-config:/app/config:ro
+      - ./radio-ripper-mp3:/app/mp3_inbox
+      - ./radio-ripper-work:/app/work
 ```
 
 ## Konfiguration (`config.json`)
@@ -57,7 +56,6 @@ Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind op
 |---|---|---|---|---|
 | `mp3_inbox` | string | `/app/mp3_inbox` | Zielverzeichnis für fertige MP3-Aufnahmen |
 | `work_dir` | string | `/app/work` | Arbeitsverzeichnis (Cache, DB, Logs) |
-| `temp_dir` | string | `/app/temp` | Temporäres Verzeichnis |
 | `log_level` | string | `"INFO"` | Einer von `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `max_concurrent_streams` | integer | `400` | Maximale parallele Streams |
 | `request_timeout` | number | `30` | Timeout für HTTP-Requests (Sekunden) |

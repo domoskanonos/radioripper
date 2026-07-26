@@ -66,7 +66,6 @@ class Settings(BaseModel):
 
     work_dir: Path = Field(default=Path("/app/work"))
     mp3_inbox: Path = Field(default=Path("/app/mp3_inbox"))
-    temp_dir: Path = Field(default=Path("/app/temp"))
     log_level: str = "INFO"
 
     stream_keywords: list[str] = Field(
@@ -109,7 +108,7 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("work_dir", "mp3_inbox", "temp_dir")
+    @field_validator("work_dir", "mp3_inbox")
     @classmethod
     def _expand(cls, v: Path) -> Path:
         return v.expanduser()
@@ -138,18 +137,19 @@ class Settings(BaseModel):
         )
 
 
-def load_settings(path: str | Path) -> Settings:
-    cfg_path = Path(path).expanduser()
-    if not cfg_path.is_file():
-        raise ConfigurationError(f"config file not found: {cfg_path}")
-    try:
-        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigurationError(f"cannot read config {cfg_path}: {exc}") from exc
-    try:
-        return Settings.model_validate(raw)
-    except ValidationError as exc:
-        raise ConfigurationError(f"invalid config: {exc}") from exc
+def load_settings(path: str | Path | None = None) -> Settings:
+    if path is not None:
+        cfg_path = Path(path).expanduser()
+        if cfg_path.is_file():
+            try:
+                raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ConfigurationError(f"cannot read config {cfg_path}: {exc}") from exc
+            try:
+                return Settings.model_validate(raw)
+            except ValidationError as exc:
+                raise ConfigurationError(f"invalid config: {exc}") from exc
+    return Settings()
 
 
 __all__ = [

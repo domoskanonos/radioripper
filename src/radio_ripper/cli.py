@@ -7,7 +7,6 @@ import shutil
 import signal
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 
 from radio_ripper import __version__
 from radio_ripper.infra.config import Settings, load_settings
@@ -56,13 +55,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
-    cfg_path: str | None = args.config
-    if cfg_path is None or not Path(cfg_path).expanduser().is_file():
-        print("No config found. Use --config PATH.", file=sys.stderr)
-        return 2
-
     try:
-        settings = load_settings(cfg_path)
+        settings = load_settings(args.config)
     except ConfigurationError as exc:
         print(f"Failed to load config: {exc}", file=sys.stderr)
         return 2
