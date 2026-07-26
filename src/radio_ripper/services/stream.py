@@ -230,7 +230,7 @@ class StreamRecorder:
         return False
 
     def _make_writer(self, title: str) -> TrackWriter | None:
-        stream_dir = self.settings.mp3_inbox or self.settings.work_dir / "mp3_inbox"
+        stream_dir = self.settings.mp3_inbox
         stream_dir.mkdir(parents=True, exist_ok=True)
         if stream_dir.is_dir():
             existing = sum(1 for _ in stream_dir.glob("*.mp3"))

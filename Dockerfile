@@ -33,8 +33,8 @@ LABEL org.opencontainers.image.title="radio-ripper-stream" \
       org.opencontainers.image.description="Webradio stream recorder — ICY metadata, parallel recording, auto-discovery" \
       org.opencontainers.image.source="https://github.com/domoskanonos/radioripper"
 
-RUN groupadd --system --gid 1001 ripper \
- && useradd --system --uid 1001 --gid ripper --home-dir /app --shell /usr/sbin/nologin ripper
+RUN groupadd --system --gid 1000 ripper \
+ && useradd --system --uid 1000 --gid ripper --home-dir /app --shell /usr/sbin/nologin ripper
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
