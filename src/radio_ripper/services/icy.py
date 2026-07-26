@@ -5,7 +5,6 @@ from collections import deque
 from collections.abc import Iterator
 from enum import Enum, auto
 
-from radio_ripper.domain.models import TrackInfo
 from radio_ripper.infra.errors import StreamProtocolError
 
 _STREAMTITLE_RE = re.compile(r"StreamTitle='(.*?)';", re.DOTALL)
@@ -127,14 +126,9 @@ def _parse_stream_title(meta_bytes: bytes) -> str | None:
     return title if title else ""
 
 
-def split_track_info(stream_title: str) -> TrackInfo:
-    return TrackInfo.from_stream_title(stream_title)
-
-
 __all__ = [
     "AudioChunk",
     "IcyEvent",
     "IcyParser",
     "TitleChanged",
-    "split_track_info",
 ]

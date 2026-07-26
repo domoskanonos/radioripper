@@ -75,18 +75,6 @@ class StorageSettings(BaseModel):
         return v.expanduser() if v is not None else None
 
 
-class LoggingSettings(BaseModel):
-    log_level: str = "INFO"
-
-    @field_validator("log_level")
-    @classmethod
-    def _valid_level(cls, v: str) -> str:
-        v = v.upper()
-        if v not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-            raise ValueError(f"invalid log_level: {v}")
-        return v
-
-
 class Settings(BaseModel):
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
@@ -182,9 +170,6 @@ class Settings(BaseModel):
             mp3_inbox=self.mp3_inbox,
         )
 
-    @property
-    def logging(self) -> LoggingSettings:
-        return LoggingSettings(log_level=self.log_level)
 
 
 def load_settings(path: str | Path) -> Settings:
@@ -203,7 +188,6 @@ def load_settings(path: str | Path) -> Settings:
 
 __all__ = [
     "DiscoverySettings",
-    "LoggingSettings",
     "Settings",
     "StorageSettings",
     "StreamConfig",

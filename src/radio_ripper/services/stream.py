@@ -3,15 +3,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.playlist import PlaylistResolver
 from radio_ripper.services.storage import TrackWriter, get_mp3_duration, is_valid_mp3, sanitize_filename
+
+if TYPE_CHECKING:
+    from radio_ripper.infra.http import AsyncHttpClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +45,7 @@ class StreamRecorder:
         station_name: str,
         playlist_url: str,
         settings: Settings,
-        http_client: Any,
+        http_client: AsyncHttpClient,
         playlist_resolver: PlaylistResolver,
         logger: logging.Logger | None = None,
         ignore_title_patterns: list[str] | None = None,
@@ -147,6 +151,7 @@ class StreamRecorder:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
                 delay = min(delay * 2.0, self.settings.reconnect_max_delay)
+                delay *= 1.0 + random.random() * 0.1  # noqa: S311  -- jitter, not cryptographic
         self._log.info("Recorder '%s' stopped.", self.station_name)
 
     async def _run_once(self) -> bool:

@@ -253,7 +253,6 @@ class TestDownloadMegaM3u:
             text = await _download_mega_m3u()
         assert text == content
 
-
     @pytest.mark.asyncio
     async def test_http_error(self) -> None:
         mock_client = MagicMock(spec=httpx.AsyncClient)

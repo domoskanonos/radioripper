@@ -7,7 +7,6 @@ from radio_ripper.infra.errors import (
     RadioRipperError,
     StreamConnectionError,
     StreamError,
-    StreamInterruptedError,
     StreamProtocolError,
 )
 
@@ -19,7 +18,6 @@ class TestHierarchy:
     def test_stream_errors_inherit_stream_error(self):
         assert issubclass(StreamConnectionError, StreamError)
         assert issubclass(StreamProtocolError, StreamError)
-        assert issubclass(StreamInterruptedError, StreamError)
 
     def test_stream_error_inherits_radio_ripper_error(self):
         assert issubclass(StreamError, RadioRipperError)

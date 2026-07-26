@@ -20,14 +20,6 @@ class TrackInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class Station:
-    name: str
-    url: str
-    bitrate: int = 0
-    source: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class StreamMetadata:
     stream_title: str
     artist: str
@@ -36,4 +28,4 @@ class StreamMetadata:
     bitrate: int = 0
 
 
-__all__ = ["Station", "StreamMetadata", "TrackInfo"]
+__all__ = ["StreamMetadata", "TrackInfo"]

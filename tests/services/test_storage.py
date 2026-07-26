@@ -101,3 +101,31 @@ class TestGetMp3Duration:
 
         result = await get_mp3_duration(tmp_path / "nonexistent.mp3")
         assert result is None
+
+
+class TestIsValidMp3:
+    async def test_valid_mp3_header(self, tmp_path):
+        path = tmp_path / "test.mp3"
+        path.write_bytes(b"\xFF\xFB\x90\x00" + b"\x00" * 100)
+        from radio_ripper.services.storage import is_valid_mp3
+
+        assert await is_valid_mp3(path) is True
+
+    async def test_random_data_not_mp3(self, tmp_path):
+        path = tmp_path / "test.bin"
+        path.write_bytes(b"\x00\x01\x02\x03" + b"\xAB" * 100)
+        from radio_ripper.services.storage import is_valid_mp3
+
+        assert await is_valid_mp3(path) is False
+
+    async def test_empty_file_not_mp3(self, tmp_path):
+        path = tmp_path / "empty.mp3"
+        path.write_bytes(b"")
+        from radio_ripper.services.storage import is_valid_mp3
+
+        assert await is_valid_mp3(path) is False
+
+    async def test_nonexistent_file_returns_false(self, tmp_path):
+        from radio_ripper.services.storage import is_valid_mp3
+
+        assert await is_valid_mp3(tmp_path / "nope.mp3") is False

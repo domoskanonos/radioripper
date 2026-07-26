@@ -23,15 +23,10 @@ class StreamProtocolError(StreamError):
     """The stream violated the expected ICY protocol (bad metaint, oversized metadata)."""
 
 
-class StreamInterruptedError(StreamError):
-    """The stream connection was interrupted mid-read (timeout, reset, EOF)."""
-
-
 __all__ = [
     "ConfigurationError",
     "RadioRipperError",
     "StreamConnectionError",
     "StreamError",
-    "StreamInterruptedError",
     "StreamProtocolError",
 ]

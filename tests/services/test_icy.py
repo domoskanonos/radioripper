@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+from radio_ripper.domain.models import TrackInfo
 from radio_ripper.infra.errors import StreamProtocolError
 from radio_ripper.services.icy import (
     AudioChunk,
     IcyParser,
     TitleChanged,
-    split_track_info,
 )
 
 
@@ -145,11 +145,31 @@ class TestParseStreamTitle:
 
 class TestSplitTrackInfo:
     def test_split_dash(self):
-        info = split_track_info("Adele - Hello")
+        info = TrackInfo.from_stream_title("Adele - Hello")
         assert info.artist == "Adele"
         assert info.title == "Hello"
 
     def test_no_dash_full_title(self):
-        info = split_track_info("Station Jingle")
+        info = TrackInfo.from_stream_title("Station Jingle")
         assert info.artist == ""
         assert info.title == "Station Jingle"
+
+    def test_empty_string(self):
+        info = TrackInfo.from_stream_title("")
+        assert info.artist == ""
+        assert info.title == ""
+
+    def test_whitespace_only(self):
+        info = TrackInfo.from_stream_title("   ")
+        assert info.artist == ""
+        assert info.title == ""
+
+    def test_artist_with_spaces(self):
+        info = TrackInfo.from_stream_title("Pink Floyd - Comfortably Numb")
+        assert info.artist == "Pink Floyd"
+        assert info.title == "Comfortably Numb"
+
+    def test_title_with_dash(self):
+        info = TrackInfo.from_stream_title("Artist - A - B - C")
+        assert info.artist == "Artist"
+        assert info.title == "A - B - C"

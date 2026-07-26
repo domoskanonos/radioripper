@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import re
 import shutil
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 
 _ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE_RE = re.compile(r"\s+")
+_LOGGER = logging.getLogger(__name__)
 
 
 def sanitize_filename(name: str) -> str:
@@ -69,8 +71,8 @@ class TrackWriter:
         try:
             self._fh.flush()
             self._fh.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOGGER.warning("Failed to flush/close temp file %s: %s", self._tmp_path, exc)
         if self._size < self.min_size:
             self._tmp_path.unlink(missing_ok=True)
             return False
