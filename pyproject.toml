@@ -64,6 +64,9 @@ disallow_untyped_calls = true
 [tool.semantic_release]
 branch = "main"
 tag_format = "v{version}"
+version_toml = [
+    "pyproject.toml:project.version",
+]
 version_variables = [
     "src/radio_ripper/__init__.py:__version__",
 ]
