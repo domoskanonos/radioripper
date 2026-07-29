@@ -6,4 +6,8 @@ if [ "$(id -u)" = "0" ]; then
     exec su -s /bin/sh -c 'exec "$@"' ripper -- "$@"
 fi
 
+if [ -f /app/config/config.json ]; then
+    set -- radio-ripper --config /app/config/config.json "$@"
+fi
+
 exec "$@"

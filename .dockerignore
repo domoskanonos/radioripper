@@ -9,6 +9,7 @@ __pycache__
 .ruff_cache
 .mypy_cache
 htmlcov
+config/
 recordings/
 *.log
 *.pid

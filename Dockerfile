@@ -1,9 +1,10 @@
 # Dockerfile — radio-ripper-stream
 # Build:   docker build -t radio-ripper-stream:latest .
-# Run:     docker run --rm --name ripper-stream \
-#            -v "$PWD/config:/app/config:ro" \
-#            -v "$PWD/work:/app/work" \
-#            -v "$PWD/recordings:/app/recordings" \
+# Run:     mkdir -p radio-ripper-config radio-ripper-mp3 radio-ripper-work
+#          docker run --rm --name ripper-stream \
+#            -v "$PWD/radio-ripper-config:/app/config:ro" \
+#            -v "$PWD/radio-ripper-mp3:/app/mp3_inbox" \
+#            -v "$PWD/radio-ripper-work:/app/work" \
 #            radio-ripper-stream:latest
 
 FROM python:3.12-slim AS builder
@@ -29,7 +30,7 @@ RUN uv sync --quiet
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="radio-ripper-stream" \
-      org.opencontainers.image.version="2.1.0" \
+      org.opencontainers.image.version="2.2.0" \
       org.opencontainers.image.description="Webradio stream recorder — ICY metadata, parallel recording, auto-discovery" \
       org.opencontainers.image.source="https://github.com/domoskanonos/radioripper"
 
@@ -50,7 +51,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-COPY config.docker.json /app/config/config.json
 COPY docker-entrypoint.sh /usr/local/bin/
 
 RUN mkdir -p /app/recordings /app/work /app/config \
@@ -60,4 +60,4 @@ RUN mkdir -p /app/recordings /app/work /app/config \
 USER ripper
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["radio-ripper", "--config", "/app/config/config.json"]
+CMD ["radio-ripper"]

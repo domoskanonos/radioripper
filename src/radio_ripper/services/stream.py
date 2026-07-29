@@ -50,7 +50,6 @@ class StreamRecorder:
         logger: logging.Logger | None = None,
         ignore_title_patterns: list[str] | None = None,
         no_icy_disable_after: int = 10,
-        inbox_full: asyncio.Event | None = None,
         station_bitrate: int = 0,
     ) -> None:
         self.station_name = station_name
@@ -66,16 +65,16 @@ class StreamRecorder:
         self._no_icy_disable_after = no_icy_disable_after
         self._no_icy_failures = 0
         self._connect_failures = 0
-        self._inbox_full = inbox_full or asyncio.Event()
+        self._paused = asyncio.Event()
         self._station_bitrate = station_bitrate
 
     # ------------------------------------------------------------------ lifecycle
 
-    def _is_inbox_full(self) -> bool:
-        stream_dir = self.settings.mp3_inbox
-        if stream_dir.is_dir():
-            return sum(1 for _ in stream_dir.glob("*.mp3")) >= self.settings.max_files_inbox
-        return False
+    def pause(self) -> None:
+        self._paused.set()
+
+    def resume(self) -> None:
+        self._paused.clear()
 
     def _is_ignored_title(self, title: str) -> bool:
         return bool(self._ignore_patterns and any(p.search(title) for p in self._ignore_patterns))
@@ -101,21 +100,19 @@ class StreamRecorder:
         )
         delay = self.settings.reconnect_base_delay
         while not self._stop_event.is_set():
-            if self._inbox_full.is_set():
-                self._log.info(
-                    "[%s] Inbox full — pausing, check again in 30 min.",
-                    self.station_name,
-                )
+            if self._paused.is_set():
+                self._log.info("[%s] Paused — waiting for resume.", self.station_name)
                 while not self._stop_event.is_set():
                     with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(self._stop_event.wait(), timeout=1800)
-                    if self._is_inbox_full():
-                        continue
-                    self._inbox_full.clear()
-                    self._log.info("[%s] Inbox has space — resuming.", self.station_name)
-                    break
+                        await asyncio.wait_for(
+                            asyncio.gather(self._paused.wait(), self._stop_event.wait()),
+                            timeout=5,
+                        )
+                    if not self._paused.is_set():
+                        break
                 if self._stop_event.is_set():
                     break
+                self._log.info("[%s] Resumed.", self.station_name)
                 delay = self.settings.reconnect_base_delay
             try:
                 ok = await self._run_once()
@@ -232,17 +229,6 @@ class StreamRecorder:
     def _make_writer(self, title: str) -> TrackWriter | None:
         stream_dir = self.settings.mp3_inbox
         stream_dir.mkdir(parents=True, exist_ok=True)
-        if stream_dir.is_dir():
-            existing = sum(1 for _ in stream_dir.glob("*.mp3"))
-            if existing >= self.settings.max_files_inbox:
-                self._log.error(
-                    "[%s] Inbox limit reached (%d >= %d), pausing all recorders.",
-                    self.station_name,
-                    existing,
-                    self.settings.max_files_inbox,
-                )
-                self._inbox_full.set()
-                return None
         safe_name = sanitize_filename(title)
         if not safe_name:
             self._log.error("[%s] Cannot create file for title=%r", self.station_name, title)

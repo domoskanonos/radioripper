@@ -24,7 +24,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run(settings: Settings, logger: logging.Logger) -> int:
+async def _run(settings: Settings, config_path: str | None, logger: logging.Logger) -> int:
     if shutil.which("ffprobe") is None:
         logger.critical("ffprobe not found. Install ffmpeg: sudo apt install ffmpeg")
         return 1
@@ -33,7 +33,10 @@ async def _run(settings: Settings, logger: logging.Logger) -> int:
 
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
-    app = RadioRipperApp.from_settings(settings, logger=logger)
+    if config_path:
+        app = RadioRipperApp.from_settings_with_live_config(settings, config_path, logger=logger)
+    else:
+        app = RadioRipperApp.from_settings(settings, logger=logger)
 
     def _signal_handler(signum: int, _frame: object | None) -> None:
         logger.info("Signal %s received - shutting down...", signum)
@@ -68,7 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     logger.info("=== Radio-Ripper %s (stream mode) ===", __version__)
 
     try:
-        return asyncio.run(_run(settings, logger))
+        return asyncio.run(_run(settings, args.config, logger))
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt — shut down.")
         return 0

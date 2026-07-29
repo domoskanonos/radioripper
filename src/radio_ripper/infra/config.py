@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
 
@@ -153,8 +154,57 @@ def load_settings(path: str | Path | None = None) -> Settings:
     return Settings()
 
 
+class LiveConfig:
+    """Watches a config file for mtime changes and hot-reloads Settings.
+
+    Mutates the *same* Settings object in-place so that all existing references
+    (e.g. in StreamRecorder) see the new values.
+    """
+
+    def __init__(self, path: str | Path, initial: Settings) -> None:
+        self._path = Path(path).expanduser()
+        self._mtime = self._path.stat().st_mtime
+        self._current = initial
+
+    @property
+    def settings(self) -> Settings:
+        return self._current
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    async def check_reload(self) -> dict[str, tuple[Any, Any]]:
+        """Check mtime; if changed, reload & mutate settings in-place.
+
+        Returns a dict of {field_name: (old_value, new_value)} for changed
+        fields, or an empty dict when nothing changed.
+        """
+        try:
+            mtime = self._path.stat().st_mtime
+        except OSError:
+            return {}
+        if mtime <= self._mtime:
+            return {}
+        try:
+            new = load_settings(self._path)
+        except ConfigurationError:
+            return {}
+
+        self._mtime = mtime
+        diff: dict[str, tuple[Any, Any]] = {}
+        for field in Settings.model_fields:
+            old_val = getattr(self._current, field)
+            new_val = getattr(new, field)
+            if old_val != new_val:
+                diff[field] = (old_val, new_val)
+                setattr(self._current, field, new_val)
+        return diff
+
+
 __all__ = [
     "DiscoverySettings",
+    "LiveConfig",
     "Settings",
     "StreamConfig",
     "StreamSettings",

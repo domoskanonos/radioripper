@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-CONFIG="${CONFIG:-config.json}"
+CONFIG="${CONFIG:-config/config.json}"
 PID_FILE="./radio_ripper_stream.pid"
 
 log()  { printf '\033[1;34m[stream]\033[0m %s\n' "$*"; }

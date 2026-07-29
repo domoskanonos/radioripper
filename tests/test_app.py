@@ -20,9 +20,8 @@ def _mock_probe_icy():
 
 def _make_settings(tmp_path, **overrides) -> Settings:
     base = {
-        "destination": tmp_path / "recordings",
-        "database": tmp_path / "ripper.db",
-        "work_dir": tmp_path / "work",
+        "work_dir": str(tmp_path / "work"),
+        "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
         "streams": [StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
     }
     base.update(overrides)
@@ -53,9 +52,8 @@ class TestRadioRipperApp:
     async def test_multiple_streams(self, tmp_path) -> None:
         settings = Settings.model_validate(
             {
-                "destination": str(tmp_path / "recordings"),
                 "work_dir": str(tmp_path / "work"),
-                "database": str(tmp_path / "ripper.db"),
+                "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
                 "streams": [
                     {"name": "Station1", "url": "http://example.com/1.m3u"},
                     {"name": "Station2", "url": "http://example.com/2.m3u"},
@@ -78,9 +76,8 @@ class TestRadioRipperApp:
         settings = _make_settings(tmp_path)
         settings = Settings.model_validate(
             {
-                "destination": str(tmp_path / "recordings"),
                 "work_dir": str(tmp_path / "work"),
-                "database": str(tmp_path / "ripper.db"),
+                "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
                 "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
             }
         )
