@@ -20,15 +20,15 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
 ]
 dependencies = [
-    "httpx>=0.27.0",
-    "pydantic>=2.7.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.0",
 ]
 
 [project.scripts]
 radio-ripper = "radio_ripper.cli:main"
 
 [build-system]
-requires = ["setuptools>=75.0"]
+requires = ["setuptools>=83.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -67,7 +67,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "respx>=0.23.1",
-    "ruff>=0.15.0",
-    "mypy>=1.14.0",
-    "pre-commit>=4.1.0",
+    "ruff>=0.16.0",
+    "mypy>=2.3.0",
+    "pre-commit>=4.6.0",
 ]

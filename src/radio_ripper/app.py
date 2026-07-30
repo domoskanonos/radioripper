@@ -183,7 +183,7 @@ class RadioRipperApp:
             rec.resume()
 
     def _count_inbox_files(self) -> int:
-        inbox = self.settings.mp3_inbox
+        inbox = self.settings.destination
         if not inbox.is_dir():
             return 0
         return sum(1 for _ in inbox.glob("*.mp3"))

@@ -227,7 +227,7 @@ class StreamRecorder:
         return False
 
     def _make_writer(self, title: str) -> TrackWriter | None:
-        stream_dir = self.settings.mp3_inbox
+        stream_dir = self.settings.destination
         stream_dir.mkdir(parents=True, exist_ok=True)
         safe_name = sanitize_filename(title)
         if not safe_name:

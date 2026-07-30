@@ -4,6 +4,8 @@ import asyncio
 import contextlib
 import json
 import logging
+import random
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -304,6 +306,46 @@ def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
     tmp.replace(cache_file)
 
 
+# ---------------------------------------------------------------- prefiltered
+
+
+PREFILTERED_FILENAME = "prefiltered.m3u"
+
+
+def _prefiltered_path(settings: Settings) -> Path:
+    return settings.work_dir / PREFILTERED_FILENAME
+
+
+def _save_prefiltered(path: Path, good: list[tuple[M3uEntry, dict[str, Any]]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = ["#EXTM3U"]
+    for entry, probe in good:
+        br = probe.get("bitrate", 0) or 0
+        lines.append(f"#EXTINF:-1 bitrate={br},{entry.name}")
+        lines.append(entry.url)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n", "utf-8")
+    tmp.replace(path)
+
+
+def _load_prefiltered(path: Path) -> list[tuple[M3uEntry, dict[str, Any]]]:
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text("utf-8")
+    except Exception:
+        return []
+    entries = _parse_m3u_text(text, path.name)
+    result: list[tuple[M3uEntry, dict[str, Any]]] = []
+    for e in entries:
+        br = 0
+        m = re.search(r"bitrate=(\d+)", e.extinf)
+        if m:
+            br = int(m.group(1))
+        result.append((e, {"icy": True, "bitrate": br, "error": None}))
+    return result
+
+
 # ---------------------------------------------------------------- service
 
 
@@ -316,27 +358,23 @@ class PlaylistDiscoveryService:
         if not self._settings.discovery_enabled:
             return []
 
-        cache_file = _cache_path(self._settings)
+        prefiltered_file = _prefiltered_path(self._settings)
 
-        if cache_file.is_file():
-            cached_stations, _ = _load_cache(cache_file)
-            min_needed = self._settings.max_concurrent_streams
-            if cached_stations and len(cached_stations) >= min_needed:
-                self._log.info("Using %d cached stations from %s", len(cached_stations), cache_file.name)
-                return cached_stations
-            self._log.info(
-                "Cache has %d stations (need %d), re-discovering…",
-                len(cached_stations),
-                min_needed,
-            )
+        if prefiltered_file.is_file():
+            prefiltered = _load_prefiltered(prefiltered_file)
+            if prefiltered:
+                self._log.info("Loaded %d stations from %s", len(prefiltered), prefiltered_file.name)
+                return self._select_from_prefiltered(prefiltered)
 
-        self._log.info("Starting discovery…")
+        self._log.info("No prefilter found. Starting full discovery…")
         text = await self._load_or_download_mega()
-        stations = await self._discover_from_text(text)
-        if stations:
-            _save_cache(cache_file, stations)
-        self._log.info("Discovery complete: %d stations", len(stations))
-        return stations
+        prefiltered = await self._discover_prefiltered(text)
+
+        if prefiltered:
+            _save_prefiltered(prefiltered_file, prefiltered)
+            self._log.info("Saved %d stations to %s", len(prefiltered), prefiltered_file.name)
+
+        return self._select_from_prefiltered(prefiltered)
 
     async def _load_or_download_mega(self) -> str:
         raw_mega = _raw_mega_path(self._settings)
@@ -353,60 +391,62 @@ class PlaylistDiscoveryService:
             pass
         return text
 
-    async def _discover_from_text(self, text: str) -> list[StreamConfig]:
+    async def _discover_prefiltered(self, text: str) -> list[tuple[M3uEntry, dict[str, Any]]]:
         all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
         self._log.info("Parsed %d total M3U entries", len(all_entries))
 
-        keywords = self._settings.stream_keywords
-        matched = _match_keywords(all_entries, keywords)
-        filtered = [e for e, _ in matched]
-        self._log.info("After keyword filter: %d entries", len(filtered))
-
-        unique = _deduplicate_by_name(filtered)
+        unique = _deduplicate_by_name(all_entries)
         self._log.info("After dedup: %d unique stations", len(unique))
 
         if not unique:
-            self._log.warning("No stations matched the configured keywords.")
             return []
 
-        min_needed = self._settings.max_concurrent_streams
-        probe_pool = _distribute_probe_pool(matched, keywords, len(unique))
-        all_good: list[tuple[M3uEntry, dict[str, Any]]] = []
-        remaining = probe_pool
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
-        batch_size = min(200, min_needed)
-
-        while remaining and len(all_good) < min_needed:
-            batch = remaining[:batch_size]
-            remaining = remaining[batch_size:]
-            self._log.info(
-                "Probing batch of %d (have %d / need %d)…",
-                len(batch),
-                len(all_good),
-                min_needed,
-            )
-            good = await _probe_batch(batch, min_needed - len(all_good), semaphore)
-            all_good.extend(good)
-
-        self._log.info("Probing done: %d ICY-capable streams found", len(all_good))
-
-        _keyword_coverage(all_good, keywords)
+        self._log.info("Probing all %d stations for prefilter…", len(unique))
+        good = await _probe_batch(unique, max_ok=len(unique), semaphore=semaphore)
+        self._log.info("Probing done: %d ICY-capable streams found", len(good))
 
         min_bps = self._settings.discovery_min_bitrate
         if min_bps > 0:
-            before = len(all_good)
-            all_good = [(e, p) for e, p in all_good if p.get("bitrate", 0) >= min_bps]
-            if len(all_good) < before:
+            before = len(good)
+            good = [(e, p) for e, p in good if p.get("bitrate", 0) >= min_bps]
+            if len(good) < before:
                 self._log.info(
-                    "Filtered %d stations below %d kbps bitrate",
-                    before - len(all_good),
+                    "Filtered %d stations below %d kbps",
+                    before - len(good),
                     min_bps,
                 )
 
-        all_good.sort(key=lambda x: x[1].get("bitrate", 0), reverse=True)
+        good.sort(key=lambda x: x[1].get("bitrate", 0), reverse=True)
+        return good
 
+    def _select_from_prefiltered(
+        self,
+        good: list[tuple[M3uEntry, dict[str, Any]]],
+    ) -> list[StreamConfig]:
+        if not good:
+            return []
+
+        settings = self._settings
+        keywords = settings.stream_keywords
+        max_streams = settings.max_concurrent_streams
+
+        if keywords:
+            entries = [e for e, _ in good]
+            matched = _match_keywords(entries, keywords)
+            selected = [e for e, _ in matched]
+            _keyword_coverage(good, keywords)
+            self._log.info("Keyword filter: %d of %d stations", len(selected), len(good))
+        else:
+            pool = list(good)
+            random.shuffle(pool)
+            selected = [e for e, _ in pool]
+            self._log.info("No keywords — random selection from %d prefiltered stations", len(selected))
+
+        probe_by_url = {p[0].url: p[1] for p in good}
         stations: list[StreamConfig] = []
-        for entry, probe in all_good:
+        for entry in selected[:max_streams]:
+            probe = probe_by_url.get(entry.url, {"icy": True, "bitrate": 0, "error": None})
             try:
                 stations.append(
                     StreamConfig(

@@ -73,8 +73,8 @@ class TestLoadSettings:
         """load_settings() without path returns default Settings."""
         s = load_settings()
         assert isinstance(s, Settings)
-        assert s.work_dir == Path("/app/work")
-        assert s.mp3_inbox == Path("/app/mp3_inbox")
+        assert s.work_dir == Path("./work")
+        assert s.destination == Path("./destination")
 
 
 class TestDefaults:
@@ -97,3 +97,90 @@ class TestStreamConfig:
     def test_accepts_spaces_and_dashes(self):
         c = StreamConfig(name="Top-Hits FM", url="http://x/listen.m3u")
         assert c.name == "Top-Hits FM"
+
+
+class TestSettingsProperties:
+    def test_stream_property(self):
+        s = Settings.model_validate(GOOD_BASE)
+        ss = s.stream
+        assert ss.max_concurrent_streams == 400
+        assert ss.user_agent == "Radio-Ripper/2.0"
+
+    def test_discovery_property(self):
+        s = Settings.model_validate(GOOD_BASE)
+        ds = s.discovery
+        assert ds.discovery_enabled is True
+        assert ds.stream_keywords != []
+
+    def test_log_level_critical_valid(self):
+        s = Settings.model_validate({**GOOD_BASE, "log_level": "CRITICAL"})
+        assert s.log_level == "CRITICAL"
+
+
+class TestLiveConfig:
+    async def test_check_reload_no_change(self, tmp_path):
+        from radio_ripper.infra.config import LiveConfig
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps(GOOD_BASE))
+        initial = load_settings(cfg_file)
+        lc = LiveConfig(cfg_file, initial)
+        diff = await lc.check_reload()
+        assert diff == {}
+
+    async def test_check_reload_detects_change(self, tmp_path):
+        from radio_ripper.infra.config import LiveConfig
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps({**GOOD_BASE, "log_level": "INFO"}))
+        initial = load_settings(cfg_file)
+        lc = LiveConfig(cfg_file, initial)
+        cfg_file.write_text(json.dumps({**GOOD_BASE, "log_level": "DEBUG"}))
+        diff = await lc.check_reload()
+        assert "log_level" in diff
+        assert diff["log_level"] == ("INFO", "DEBUG")
+
+    async def test_check_reload_file_deleted(self, tmp_path):
+        from radio_ripper.infra.config import LiveConfig
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps(GOOD_BASE))
+        initial = load_settings(cfg_file)
+        lc = LiveConfig(cfg_file, initial)
+        cfg_file.unlink()
+        diff = await lc.check_reload()
+        assert diff == {}
+
+    async def test_check_reload_invalid_json(self, tmp_path):
+        from radio_ripper.infra.config import LiveConfig
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps(GOOD_BASE))
+        initial = load_settings(cfg_file)
+        lc = LiveConfig(cfg_file, initial)
+        cfg_file.write_text("not valid json")
+        diff = await lc.check_reload()
+        assert diff == {}
+
+    def test_settings_property(self, tmp_path):
+        from radio_ripper.infra.config import LiveConfig
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps(GOOD_BASE))
+        initial = load_settings(cfg_file)
+        lc = LiveConfig(cfg_file, initial)
+        assert lc.settings is initial
+        assert lc.path == cfg_file
+
+    async def test_check_reload_preserves_unchanged(self, tmp_path):
+        from radio_ripper.infra.config import LiveConfig
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps({**GOOD_BASE, "max_concurrent_streams": 100}))
+        initial = load_settings(cfg_file)
+        lc = LiveConfig(cfg_file, initial)
+        cfg_file.write_text(json.dumps({**GOOD_BASE, "max_concurrent_streams": 200}))
+        diff = await lc.check_reload()
+        assert "max_concurrent_streams" in diff
+        assert diff["max_concurrent_streams"] == (100, 200)
+        assert "log_level" not in diff

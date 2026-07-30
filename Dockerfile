@@ -3,7 +3,7 @@
 # Run:     mkdir -p radio-ripper-config radio-ripper-mp3 radio-ripper-work
 #          docker run --rm --name ripper-stream \
 #            -v "$PWD/radio-ripper-config:/app/config:ro" \
-#            -v "$PWD/radio-ripper-mp3:/app/mp3_inbox" \
+#          -v "$PWD/radio-ripper-mp3:/app/destination" \
 #            -v "$PWD/radio-ripper-work:/app/work" \
 #            radio-ripper-stream:latest
 

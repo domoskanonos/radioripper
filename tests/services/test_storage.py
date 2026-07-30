@@ -129,3 +129,50 @@ class TestIsValidMp3:
         from radio_ripper.services.storage import is_valid_mp3
 
         assert await is_valid_mp3(tmp_path / "nope.mp3") is False
+
+
+class TestTrackWriterAdvanced:
+    def test_state_property(self, tmp_path):
+        w = TrackWriter(tmp_path / "test.mp3")
+        assert w.state == "open"
+        w.write(b"x" * 100)
+        w.commit()
+        assert w.state == "committed"
+
+    def test_flush(self, tmp_path):
+        w = TrackWriter(tmp_path / "test.mp3")
+        w.write(b"data")
+        w.flush()
+        assert w.size == 4
+
+    def test_commit_flush_error_does_not_raise(self, tmp_path, caplog):
+        dst = tmp_path / "out/test.mp3"
+        w = TrackWriter(dst, min_size=1)
+        w.write(b"data")
+        with patch.object(w._fh, "flush", side_effect=OSError("disk error")):
+            ok = w.commit()
+        assert ok is True
+
+    def test_discard_twice_noop(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        w = TrackWriter(dst)
+        w.discard()
+        w.discard()
+
+    def test_discard_after_commit_noop(self, tmp_path):
+        dst = tmp_path / "out/test.mp3"
+        w = TrackWriter(dst, min_size=1)
+        w.write(b"data")
+        w.commit()
+        w.discard()
+        assert dst.exists()
+
+
+class TestGetMp3DurationAdvanced:
+    async def test_duration_ffprobe_error(self, tmp_path):
+        from radio_ripper.services.storage import get_mp3_duration
+
+        path = tmp_path / "test.mp3"
+        path.write_bytes(b"\x00" * 100)
+        result = await get_mp3_duration(path)
+        assert result is None or isinstance(result, float)

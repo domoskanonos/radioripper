@@ -21,7 +21,7 @@ def _mock_probe_icy():
 def _make_settings(tmp_path, **overrides) -> Settings:
     base = {
         "work_dir": str(tmp_path / "work"),
-        "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
+        "destination": str(tmp_path / "work" / "destination"),
         "streams": [StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
     }
     base.update(overrides)
@@ -53,7 +53,7 @@ class TestRadioRipperApp:
         settings = Settings.model_validate(
             {
                 "work_dir": str(tmp_path / "work"),
-                "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
+                "destination": str(tmp_path / "work" / "destination"),
                 "streams": [
                     {"name": "Station1", "url": "http://example.com/1.m3u"},
                     {"name": "Station2", "url": "http://example.com/2.m3u"},
@@ -77,7 +77,7 @@ class TestRadioRipperApp:
         settings = Settings.model_validate(
             {
                 "work_dir": str(tmp_path / "work"),
-                "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
+                "destination": str(tmp_path / "work" / "destination"),
                 "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
             }
         )
@@ -218,6 +218,150 @@ class TestRadioRipperAppLifecycle:
         assert not app._cancel_requested
         app.cancel()
         assert app._cancel_requested is True
+
+
+class TestRadioRipperAppFactoryMethods:
+    def test_from_settings_with_live_config(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"work_dir": "./work", "destination": "./destination"}')
+        app = RadioRipperApp.from_settings_with_live_config(settings, config_path)
+        assert app.settings is settings
+        assert app._live_config is not None
+
+    async def test_start_cancelled_returns_early(self, tmp_path, caplog):
+        import logging
+
+        caplog.set_level(logging.INFO, logger="radio_ripper.app")
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        app.cancel()
+        await app.start()
+        assert "Startup cancelled." in caplog.text
+
+    async def test_no_streams_available_returns_early(self, tmp_path, caplog):
+        import logging
+
+        caplog.set_level(logging.INFO, logger="radio_ripper.app")
+        settings = _make_settings(tmp_path, streams=[], discovery_enabled=False)
+        app = _make_app(settings)
+        await app.start()
+        assert "No streams available" in caplog.text
+
+    async def test_start_with_discovery(self, tmp_path):
+        settings = Settings.model_validate(
+            {
+                "work_dir": str(tmp_path / "work"),
+                "destination": str(tmp_path / "destination"),
+                "stream_keywords": ["rock"],
+                "discovery_enabled": True,
+            }
+        )
+        (tmp_path / "work" / "stations").mkdir(parents=True)
+        (tmp_path / "work" / "stations" / "custom.m3u").write_text("#EXTM3U\n")
+        client = AsyncMock()
+        client.aclose = AsyncMock()
+        app = RadioRipperApp(
+            settings=settings,
+            client=client,
+            playlist_resolver=StaticPlaylistResolver(["http://x"]),
+        )
+        with patch("radio_ripper.app.PlaylistDiscoveryService.load_or_discover", return_value=[]):
+            await app.start()
+        await app.stop()
+
+    async def test_start_skips_disabled_stream(self, tmp_path):
+        settings = _make_settings(
+            tmp_path,
+            streams=[
+                StreamConfig(name="Disabled", url="http://x", enabled=False),
+                StreamConfig(name="Enabled", url="http://y"),
+            ],
+        )
+        client = AsyncMock()
+        client.aclose = AsyncMock()
+        app = RadioRipperApp(
+            settings=settings,
+            client=client,
+            playlist_resolver=StaticPlaylistResolver(["http://x"]),
+        )
+        await app.start()
+        assert len(app.recorders()) == 1
+        assert app.recorders()[0].station_name == "Enabled"
+        await app.stop()
+
+
+class TestRadioRipperAppLifecycleMethods:
+    def test_pause_and_resume(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        app._pause_all()
+        app._resume_all()
+
+    def test_count_inbox_files(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        count = app._count_inbox_files()
+        assert count == 0
+
+    def test_count_inbox_with_files(self, tmp_path):
+        inbox = tmp_path / "work" / "destination"
+        inbox.mkdir(parents=True)
+        (inbox / "song1.mp3").write_text("data")
+        (inbox / "song2.mp3").write_text("data")
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        count = app._count_inbox_files()
+        assert count == 2
+
+    def test_apply_config_diff_log_level(self, tmp_path, caplog):
+        import logging
+
+        caplog.set_level(logging.INFO, logger="radio_ripper.app")
+        from radio_ripper.infra.config import LiveConfig
+
+        settings = _make_settings(tmp_path)
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"log_level": "INFO"}')
+        live_config = LiveConfig(config_path, settings)
+        app = _make_app(settings)
+        app._live_config = live_config
+        app._apply_config_diff({"log_level": ("INFO", "DEBUG")})
+        assert "Config changed: log_level" in caplog.text
+
+    def test_apply_config_diff_max_files(self, tmp_path, caplog):
+        from radio_ripper.infra.config import LiveConfig
+
+        settings = _make_settings(tmp_path)
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"log_level": "INFO"}')
+        live_config = LiveConfig(config_path, settings)
+        app = _make_app(settings)
+        app._live_config = live_config
+        app._apply_config_diff({"max_files_inbox": (1000, 2000)})
+        assert "Inbox limit changed" in caplog.text
+
+    async def test_housekeeping_config_reload(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"log_level": "DEBUG"}')
+        app = RadioRipperApp.from_settings_with_live_config(settings, config_path)
+        app.cancel()
+        diff = await app._live_config.check_reload()
+        assert diff == {}
+
+    async def test_sleep_until_cancelled(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        app.cancel()
+        await app._sleep_until(999999.0)
+
+    async def test_stop_with_running_housekeeping(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        await app.start()
+        await app.stop()
+        assert app._housekeeping_task is None
 
 
 __all__ = []

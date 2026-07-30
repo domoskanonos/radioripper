@@ -25,6 +25,7 @@ from radio_ripper.services.playlist_discovery import (
     _parse_m3u_text,
     _probe_batch,
     _save_cache,
+    _save_prefiltered,
     probe_icy,
 )
 
@@ -293,9 +294,6 @@ class TestPlaylistDiscoveryService:
 
     @pytest.mark.asyncio
     async def test_uses_cache_when_present(self, tmp_path: Path) -> None:
-        stations = [
-            StreamConfig(name="Rock FM", url="http://a", icy=True),
-        ]
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
@@ -303,9 +301,11 @@ class TestPlaylistDiscoveryService:
             discovery_enabled=True,
             temp_dir=tmp_path,
             max_concurrent_streams=1,
+            stream_keywords=["rock"],
         )
-        cf = tmp_path / "discovered_stations.m3u"
-        _save_cache(cf, stations)
+        pf = tmp_path / "prefiltered.m3u"
+        entry = M3uEntry(name="Rock FM", url="http://a", source="prefiltered.m3u")
+        _save_prefiltered(pf, [(entry, {"icy": True, "bitrate": 128})])
 
         svc = PlaylistDiscoveryService(settings)
         result = await svc.load_or_discover()
@@ -337,7 +337,7 @@ class TestPlaylistDiscoveryService:
 
         assert len(result) == 1
         assert result[0].name == "Classic Rock"
-        assert (tmp_path / "discovered_stations.m3u").is_file()
+        assert (tmp_path / "prefiltered.m3u").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -721,8 +721,8 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             discovery_enabled=True,
             temp_dir=tmp_path,
         )
-        cf = tmp_path / "discovered_stations.m3u"
-        cf.write_text("#EXTM3U\n")
+        pf = tmp_path / "prefiltered.m3u"
+        pf.write_text("#EXTM3U\n")
         with patch(
             "radio_ripper.services.playlist_discovery._download_mega_m3u",
             return_value="#EXTM3U\n",
@@ -754,7 +754,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             ),
             patch.object(Path, "write_text", side_effect=OSError("read-only")),
             patch(
-                "radio_ripper.services.playlist_discovery._save_cache",
+                "radio_ripper.services.playlist_discovery._save_prefiltered",
             ),
         ):
             svc = PlaylistDiscoveryService(settings)
@@ -799,7 +799,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
                 "radio_ripper.services.playlist_discovery._download_mega_m3u",
                 return_value=m3u_text,
             ),
-            patch.object(svc, "_discover_from_text", return_value=[]),
+            patch.object(svc, "_discover_prefiltered", return_value=[]),
         ):
             await svc.load_or_discover()
 
@@ -821,7 +821,7 @@ class TestPlaylistDiscoveryServiceEdgeCases:
                 return_value=m3u_text,
             ),
             patch("pathlib.Path.write_text", side_effect=OSError("read-only")),
-            patch.object(svc, "_discover_from_text", return_value=[]),
+            patch.object(svc, "_discover_prefiltered", return_value=[]),
         ):
             await svc.load_or_discover()
 
@@ -838,20 +838,18 @@ class TestPlaylistDiscoveryServiceEdgeCases:
         m3u_text = "#EXTM3U\n"
         raw_mega.write_text(m3u_text)
         svc = PlaylistDiscoveryService(settings)
-        with patch.object(svc, "_discover_from_text", return_value=[]):
+        with patch.object(svc, "_discover_prefiltered", return_value=[]):
             await svc.load_or_discover()
 
     @pytest.mark.asyncio
-    async def test_discover_from_text_bitrate_filter(self, tmp_path: Path) -> None:
+    async def test_discover_prefiltered_bitrate_filter(self, tmp_path: Path) -> None:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
             work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
-            stream_keywords=["rock"],
             discovery_min_bitrate=200,
-            max_concurrent_streams=10,
         )
         m3u_text = (
             "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n#EXTINF:-1,Pop Hits\nhttp://pop.example.com\n"
@@ -866,19 +864,16 @@ class TestPlaylistDiscoveryServiceEdgeCases:
                 {"icy": True, "bitrate": 256},
             ),
         ]
-        with (
-            patch(
-                "radio_ripper.services.playlist_discovery._probe_batch",
-                return_value=mock_results,
-            ),
+        with patch(
+            "radio_ripper.services.playlist_discovery._probe_batch",
+            return_value=mock_results,
         ):
             svc = PlaylistDiscoveryService(settings)
-            stations = await svc._discover_from_text(m3u_text)
-        assert len(stations) == 1
-        assert stations[0].name == "Pop Hits"
+            result = await svc._discover_prefiltered(m3u_text)
+        assert len(result) == 1
+        assert result[0][0].name == "Pop Hits"
 
-    @pytest.mark.asyncio
-    async def test_discover_from_text_skips_invalid_entry(self, tmp_path: Path) -> None:
+    def test_select_from_prefiltered_skips_invalid_entry(self, tmp_path: Path) -> None:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
@@ -888,31 +883,25 @@ class TestPlaylistDiscoveryServiceEdgeCases:
             stream_keywords=["rock"],
             max_concurrent_streams=10,
         )
-        m3u_text = "#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://rock.example.com\n"
-        mock_results = [
+        good = [
             (
                 M3uEntry(name="Classic Rock", url="not-a-valid-url", source="mega.m3u"),
                 {"icy": True, "bitrate": 128},
             ),
         ]
-        with patch(
-            "radio_ripper.services.playlist_discovery._probe_batch",
-            return_value=mock_results,
-        ):
-            svc = PlaylistDiscoveryService(settings)
-            stations = await svc._discover_from_text(m3u_text)
+        svc = PlaylistDiscoveryService(settings)
+        stations = svc._select_from_prefiltered(good)
         assert stations == []
 
     @pytest.mark.asyncio
-    async def test_discover_from_text_no_unique_stations(self, tmp_path: Path) -> None:
+    async def test_discover_prefiltered_empty_entries(self, tmp_path: Path) -> None:
         settings = Settings(
             destination="./rec",
             database="./rec/ripper.db",
             work_dir=tmp_path,
             discovery_enabled=True,
             temp_dir=tmp_path,
-            stream_keywords=["nonexistent"],
         )
         svc = PlaylistDiscoveryService(settings)
-        stations = await svc._discover_from_text("#EXTM3U\n#EXTINF:-1,Classic Rock\nhttp://a\n")
-        assert stations == []
+        result = await svc._discover_prefiltered("#EXTM3U\n")
+        assert result == []

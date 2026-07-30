@@ -65,8 +65,8 @@ class DiscoverySettings(BaseModel):
 class Settings(BaseModel):
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
-    work_dir: Path = Field(default=Path("/app/work"))
-    mp3_inbox: Path = Field(default=Path("/app/mp3_inbox"))
+    work_dir: Path = Field(default=Path("./work"))
+    destination: Path = Field(default=Path("./destination"))
     log_level: str = "INFO"
 
     stream_keywords: list[str] = Field(
@@ -109,7 +109,7 @@ class Settings(BaseModel):
             raise ValueError(f"invalid log_level: {v}")
         return v
 
-    @field_validator("work_dir", "mp3_inbox")
+    @field_validator("work_dir", "destination")
     @classmethod
     def _expand(cls, v: Path) -> Path:
         return v.expanduser()

@@ -18,7 +18,7 @@ EOF
 # Container starten
 docker run --rm \
   -v "$PWD/radio-ripper-config:/app/config:ro" \
-  -v "$PWD/radio-ripper-mp3:/app/mp3_inbox" \
+  -v "$PWD/radio-ripper-mp3:/app/destination" \
   -v "$PWD/radio-ripper-work:/app/work" \
   domoskanonos/radio-ripper-stream:latest
 ```
@@ -53,7 +53,7 @@ services:
     stop_grace_period: 30s
     volumes:
       - ./radio-ripper-config:/app/config:ro
-      - ./radio-ripper-mp3:/app/mp3_inbox
+      - ./radio-ripper-mp3:/app/destination
       - ./radio-ripper-work:/app/work
 ```
 
@@ -63,8 +63,8 @@ Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind op
 
 | Feld | Typ | Standard | Beschreibung |
 |---|---|---|---|
-| `work_dir` | string | `/app/work` | Arbeitsverzeichnis (Cache, Logs) |
-| `mp3_inbox` | string | `/app/mp3_inbox` | Zielverzeichnis für fertige MP3-Aufnahmen |
+| `work_dir` | string | `./work` | Arbeitsverzeichnis (Cache, Logs) |
+| `destination` | string | `./destination` | Zielverzeichnis für fertige MP3-Aufnahmen |
 | `log_level` | string | `"INFO"` | Einer von `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `max_concurrent_streams` | integer | `400` | Maximale parallele Streams (1–500) |
 | `stream_keywords` | string[] | `["rock","pop","top hits",…]` | Suchbegriffe für die Sendersuche |
@@ -94,7 +94,7 @@ Erkannte Änderungen werden **live übernommen** – kein Neustart nötig.
 - `min_file_size_bytes`, `min_file_duration_s` – gelten für die nächste Datei-Validierung
 - `max_files_inbox` – neuer Schwellwert für den Inbox-Monitor
 
-**Nicht hot-reloadbar** (erfordern Neustart): `work_dir`, `mp3_inbox`, `streams`-Liste, `user_agent`.
+**Nicht hot-reloadbar** (erfordern Neustart): `work_dir`, `destination`, `streams`-Liste, `user_agent`.
 
 ### Beispiel: Feste Sender + Discovery
 

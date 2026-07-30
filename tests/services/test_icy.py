@@ -173,3 +173,44 @@ class TestSplitTrackInfo:
         info = TrackInfo.from_stream_title("Artist - A - B - C")
         assert info.artist == "Artist"
         assert info.title == "A - B - C"
+
+
+class TestIcyParserEdgeCases:
+    def test_audio_chunk_repr(self):
+        chunk = AudioChunk(b"\x00" * 10)
+        assert "AudioChunk" in repr(chunk)
+
+    def test_title_changed_repr(self):
+        tc = TitleChanged("Adele - Hello")
+        assert "TitleChanged" in repr(tc)
+        assert "Adele - Hello" in repr(tc)
+
+    def test_events_drain_returns_nothing_after_empty(self):
+        p = IcyParser(64)
+        events = list(p.events())
+        assert events == []
+
+    def test_feed_empty_chunk_no_events(self):
+        p = IcyParser(64)
+        p.feed(b"")
+        assert list(p.events()) == []
+
+
+class TestParseStreamTitleDirect:
+    def test_empty_bytes_returns_none(self):
+        from radio_ripper.services.icy import _parse_stream_title
+
+        assert _parse_stream_title(b"") is None
+
+    def test_no_streamtitle_in_bytes(self):
+        from radio_ripper.services.icy import _parse_stream_title
+
+        result = _parse_stream_title(b"\x00\x00\x00")
+        assert result is None
+
+    def test_with_escaped_backslash(self):
+        from radio_ripper.services.icy import _parse_stream_title
+
+        meta = b"StreamTitle='Test\\\\Backslash';"
+        result = _parse_stream_title(meta)
+        assert result == "Test\\Backslash"

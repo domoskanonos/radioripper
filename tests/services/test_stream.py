@@ -80,7 +80,7 @@ class FakeHttpClientNoMeta(FakeHttpClient):
 def _make_settings(tmp_path, **overrides) -> Settings:
     base = {
         "work_dir": str(tmp_path / "work"),
-        "mp3_inbox": str(tmp_path / "work" / "mp3_inbox"),
+        "destination": str(tmp_path / "work" / "destination"),
         "min_file_size_bytes": 1,
     }
     base.update(overrides)
@@ -137,7 +137,7 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
         rec = _make_recorder(settings=settings, http_client=client)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -154,7 +154,7 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path)
         rec = _make_recorder(settings=settings, http_client=client)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -172,7 +172,7 @@ class TestStreamRecorder:
         await asyncio.sleep(0.3)
         rec.stop()
         await asyncio.wait_for(task, timeout=3)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("A - B" in f for f in files)
 
@@ -203,7 +203,7 @@ class TestStreamRecorder:
         assert ok is False
 
     async def test_file_written_to_disk(self, tmp_path):
-        """A recorded song ends up as an .mp3 file in mp3_inbox."""
+        """A recorded song ends up as an .mp3 file in destination."""
         stream = _make_stream_bytes(
             ["Mid", "Adele - Hello", "Next - Song"],
             audio_per_song=METADATA_INTERVAL,
@@ -211,7 +211,7 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
         rec = _make_recorder(settings=settings, http_client=client)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -232,7 +232,7 @@ class TestIgnorePatterns:
         settings = _make_settings(tmp_path)
         import shutil
 
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         if stream_dir.is_dir():
             shutil.rmtree(stream_dir)
         rec = StreamRecorder(
@@ -247,7 +247,7 @@ class TestIgnorePatterns:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("Werbung" in f for f in files)
         assert any("Artist" in f for f in files)
@@ -272,7 +272,7 @@ class TestIgnorePatterns:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("ADVERTISEMENT" in f for f in files)
         assert any("Artist" in f for f in files)
@@ -290,7 +290,7 @@ class TestIgnorePatterns:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert any("Werbung" in f for f in files)
 
@@ -383,7 +383,7 @@ class TestBlankOrAdTitles:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.work_dir / "mp3_inbox"
+        stream_dir = settings.destination
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert all("   " not in f for f in files)
         assert any("Artist" in f for f in files)
@@ -394,12 +394,12 @@ class TestDiscardSmallFile:
         """A song with less audio than min_file_size_bytes is discarded."""
         import shutil
 
-        stream_dir = tmp_path / "work" / "mp3_inbox"
+        settings = _make_settings(tmp_path, min_file_size_bytes=250)
+        stream_dir = settings.destination
         if stream_dir.is_dir():
             shutil.rmtree(stream_dir)
         stream = _make_stream_bytes(["Joining", "Artist - Too Small", "Next - Song"])
         client = FakeHttpClient(stream)
-        settings = _make_settings(tmp_path, min_file_size_bytes=250)
         rec = _make_recorder(settings=settings, http_client=client)
         task = rec.start()
         await asyncio.sleep(0.5)
@@ -410,3 +410,106 @@ class TestDiscardSmallFile:
             pass
         files = list(stream_dir.glob("*.mp3")) if stream_dir.is_dir() else []
         assert not any("Too Small" in f.name for f in files)
+
+
+class TestStreamPauseResume:
+    async def test_pause_and_resume(self, tmp_path):
+        stream = _make_stream_bytes(["A - B", "C - D", "E - F"])
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, reconnect_base_delay=0.1)
+        rec = _make_recorder(settings=settings, http_client=client)
+        rec.pause()
+        rec.resume()
+        rec.start()
+        await asyncio.sleep(0.2)
+        rec.stop()
+        await asyncio.wait_for(rec.join(), timeout=3)
+
+
+class TestStreamEdgeCases:
+    async def test_protocol_error_does_not_increment_connect_failures(self, tmp_path):
+        class _FakeProtoClient:
+            def __init__(self):
+                self._headers = {}
+
+            async def stream_binary(self, url, **kwargs):
+                raise OSError("protocol error")
+
+            def response_headers(self):
+                return {}
+
+            async def aclose(self):
+                pass
+
+            async def get_text(self, url, *, timeout=None):
+                return ""
+
+            async def get_json(self, url, *, params=None, timeout=None):
+                return {}
+
+            async def get_bytes(self, url, *, timeout=None):
+                return b""
+
+        settings = _make_settings(tmp_path)
+        rec = StreamRecorder(
+            station_name="TestStation",
+            playlist_url="http://fake.example.com/listen.m3u",
+            settings=settings,
+            http_client=_FakeProtoClient(),
+            playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+        )
+        ok = await rec._run_once()
+        assert ok is False
+
+    async def test_connect_stream_sets_no_icy_failures(self, tmp_path):
+        stream = _make_stream_bytes(["A - B"])
+        client = FakeHttpClientNoMeta(stream)
+        settings = _make_settings(tmp_path)
+        rec = _make_recorder(settings=settings, http_client=client)
+        result = await rec._connect_stream("http://x")
+        assert result is None
+
+    async def test_make_writer_creates_file(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""))
+        writer = rec._make_writer("Artist - Song")
+        assert writer is not None
+        assert "Artist - Song" in str(writer.final_path)
+        writer.discard()
+
+    def test_is_ignored_title(self, tmp_path):
+        rec = _make_recorder(
+            settings=_make_settings(tmp_path),
+            http_client=FakeHttpClient(b""),
+            ignore_title_patterns=["^Werbung", "Ad"],
+        )
+        assert rec._is_ignored_title("Werbung - Spot") is True
+        assert rec._is_ignored_title("Great Song") is False
+        assert rec._is_ignored_title("Super Ad") is True
+
+    async def test_check_min_duration_disabled(self, tmp_path):
+        settings = _make_settings(tmp_path, min_file_duration_s=0)
+        rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""))
+        path = tmp_path / "test.mp3"
+        path.write_bytes(b"\x00" * 100)
+        result = await rec._check_min_duration(path)
+        assert result is True
+
+    async def test_should_record_title(self, tmp_path):
+        rec = _make_recorder(settings=_make_settings(tmp_path), http_client=FakeHttpClient(b""))
+        assert rec._should_record_title("  Artist - Song  ") is True
+        assert rec._should_record_title("   ") is False
+        rec2 = _make_recorder(
+            settings=_make_settings(tmp_path),
+            http_client=FakeHttpClient(b""),
+            ignore_title_patterns=["^Ad$"],
+        )
+        assert rec2._should_record_title("Advertisement") is True
+
+    async def test_connect_stream_returns_none_when_no_metaint(self, tmp_path):
+        stream = b"\xff\xfb\x01" + b"\x01" * 97
+        client = FakeHttpClientNoMeta(stream)
+        settings = _make_settings(tmp_path)
+        rec = _make_recorder(settings=settings, http_client=client)
+        result = await rec._connect_stream("http://example.com/stream")
+        assert result is None
