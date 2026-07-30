@@ -1,7 +1,6 @@
 {
   "work_dir": "./work",
   "destination": "/home/laptop/trash/mp3",
-  "destination_dir": "./downloads",
   "log_level": "INFO",
   "stream_keywords": [],
   "discovery_enabled": true,

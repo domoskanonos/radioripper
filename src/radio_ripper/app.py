@@ -150,9 +150,16 @@ class RadioRipperApp:
         enabled = [s for s in stations if s.enabled]
         self.logger.info("Verifying reachability of %d station(s)...", len(enabled))
         sem = asyncio.Semaphore(_PROBE_CONCURRENT)
+        probe_count = 0
 
         async def _check(s: StreamConfig) -> StreamConfig | None:
+            nonlocal probe_count
             async with sem:
+                probe_count += 1
+                pct = probe_count * 100 // len(enabled)
+                prev_pct = (probe_count - 1) * 100 // len(enabled)
+                if pct != prev_pct and pct % 10 == 0:
+                    self.logger.info("Probe progress: %d%% (%d/%d)", pct, probe_count, len(enabled))
                 result = await probe_icy(str(s.url), timeout=_PROBE_TIMEOUT)
                 if result.get("icy") and not result.get("error"):
                     return s
@@ -276,12 +283,16 @@ class RadioRipperApp:
         self.logger.info("Stopping all recorders...")
         for rec in self._recorders:
             rec.stop()
-        for rec in self._recorders:
-            try:
-                await asyncio.wait_for(rec.join(), timeout=10.0)
-            except TimeoutError:
-                self.logger.warning("Recorder %s did not stop in time.", rec.station_name)
+        # Close HTTP client first — interrupts all in-flight stream connections
         await self.client.aclose()
+        if self._recorders:
+            tasks = [rec.join() for rec in self._recorders]
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
+            except TimeoutError:
+                self.logger.warning(
+                    "Not all recorders stopped within 15s — continuing shutdown."
+                )
         self.logger.info("All recorders stopped.")
 
 

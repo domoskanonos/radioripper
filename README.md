@@ -1,7 +1,22 @@
 # Radio-Ripper – Stream
 
-Dauerhafte parallele Aufnahme von Webradio-Streams mit ICY-Metadaten (Songtitel).  
-Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwaltet parallele Streams und unterstützt die automatische Sendersuche via Community-Playlists.
+Dauerhafte parallele Aufnahme von Webradio-Streams mit ICY-Metadaten (Songtitel).
+Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwaltet hunderte parallele Streams und unterstützt die automatische Sendersuche via Community-Playlists.
+
+## Features
+
+- **Parallel-Recording** – zeichnet bis zu 500 Streams gleichzeitig auf
+- **ICY-Metadaten** – erkennt Songtitel in Echtzeit, trennt Aufnahmen sauber an Songgrenzen
+- **Auto-Healing** – bei Verbindungsabbruch automatische Wiederverbindung mit exponentiellem Backoff
+- **Song-Titelerkennung** – benennt jede Aufnahme als `{Künstler} - {Titel}.mp3`
+- **Werbefilter** – überspringt Titel per Regex-Muster (z. B. `["^Werbung", "^Advertisement$"]`)
+- **Datei-Validierung** – verwirft zu kurze (< 90 s), zu kleine (< 1,5 MB) oder ungültige MP3-Dateien
+- **Inbox-Überwachung** – pausiert alle Streams bei vollem Zielverzeichnis, setzt automatisch fort
+- **Hot-Reload** – Konfigurationsänderungen werden live übernommen (alle 60 s), kein Neustart nötig
+- **Auto-Discovery** – findet Sender automatisch aus Community-Playlists, filtert nach Keywords und Bitrate
+- **Preflight-Check** – prüft alle Stationen vor dem Start auf Erreichbarkeit, deaktiviert tote Stationen
+- **Pre-filtered Cache** – einmal geprüfte Stationen werden gecached für schnelle Neustarts
+- **Graceful Shutdown** – schließt HTTP-Client sofort, beendet alle recorder parallel (< 15 s)
 
 ## Schnellstart (Docker)
 
@@ -23,17 +38,13 @@ docker run --rm \
   domoskanonos/radio-ripper-stream:latest
 ```
 
-**Volume-Berechtigungen**: Der Container läuft als unprivilegierter User (`ripper`, uid 1000).  
-Der Entrypoint korrigiert automatisch die Besitzer der gemounteten Verzeichnisse.  
+**Volume-Berechtigungen**: Der Container läuft als unprivilegierter User (`ripper`, uid 1000).
+Der Entrypoint korrigiert automatisch die Besitzer der gemounteten Verzeichnisse.
 Sollten dennoch Permission-Fehler auftreten, einmalig ausführen:
 
 ```bash
 chown -R 1000:1000 radio-ripper-mp3 radio-ripper-work radio-ripper-config
 ```
-
-Wird kein `--config` übergeben, startet die App mit den Code-Defaults.  
-Der Entrypoint prüft automatisch, ob `/app/config/config.json` existiert, und übergibt es.
-Ein eigenes Config-JSON kann unter `config/config.json` (bzw. `/app/config/config.json` im Container) bereitgestellt werden.
 
 ### docker compose
 
@@ -43,33 +54,36 @@ services:
     image: domoskanonos/radio-ripper-stream:latest
     container_name: radio-ripper
     restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'radio-ripper' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
-    stop_signal: SIGTERM
-    stop_grace_period: 30s
     volumes:
+      # Konfiguration (read-only)
       - ./radio-ripper-config:/app/config:ro
+      # Zielverzeichnis für MP3-Aufnahmen
       - ./radio-ripper-mp3:/app/destination
+      # Arbeitsverzeichnis (Cache, Logs)
       - ./radio-ripper-work:/app/work
 ```
 
 ## Konfiguration (`config/config.json`)
 
-Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind optional – es gelten die gezeigten Defaults.
+Alle Felder sind optional – es gelten die gezeigten Defaults.
 
 | Feld | Typ | Standard | Beschreibung |
 |---|---|---|---|
-| `work_dir` | string | `./work` | Arbeitsverzeichnis (Cache, Logs) |
+| `work_dir` | string | `./work` | Arbeitsverzeichnis für Logs, Caches und Playlists |
 | `destination` | string | `./destination` | Zielverzeichnis für fertige MP3-Aufnahmen |
-| `log_level` | string | `"INFO"` | Einer von `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `log_level` | string | `"INFO"` | Log-Level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `max_concurrent_streams` | integer | `400` | Maximale parallele Streams (1–500) |
-| `stream_keywords` | string[] | `["rock","pop","top hits",…]` | Suchbegriffe für die Sendersuche |
+| `stream_keywords` | string[] | `["rock","pop","top hits",…]` | Suchbegriffe für die automatische Sendersuche |
 | `discovery_enabled` | boolean | `true` | Automatische Sendersuche aktivieren |
-| `discovery_min_bitrate` | integer | `0` | Minimale Bitrate für entdeckte Sender |
+| `discovery_min_bitrate` | integer | `0` | Minimale Bitrate (kbps) für entdeckte Sender |
 | `streams` | array | `[]` | Liste fester Sender (überspringt Discovery). Format: `[{"name":"…","url":"http://…"}]` |
 | `request_timeout` | number | `30.0` | Timeout für HTTP-Requests (Sekunden) |
 | `reconnect_base_delay` | number | `1.0` | Basisverzögerung vor Wiederverbindung (Sekunden) |
@@ -79,11 +93,11 @@ Die Konfigurationsdatei steuert alle Aspekte des Recordings. Alle Felder sind op
 | `ignore_title_patterns` | string[] | `[]` | Regex-Muster für zu ignorierende Songtitel (z. B. `["^Werbung"]`) |
 | `min_file_size_bytes` | integer | `1572864` | Aufnahmen kleiner als dieser Wert (1,5 MB) werden verworfen |
 | `min_file_duration_s` | float | `90` | Mindestlaufzeit einer Aufnahme (Sekunden); erfordert `ffprobe` |
-| `max_files_inbox` | integer | `100000` | Max. Dateien im Inbox-Verzeichnis; bei Erreichen pausieren alle Streams |
+| `max_files_inbox` | integer | `100000` | Max. Dateien im Zielverzeichnis; bei Erreichen pausieren alle Streams |
 
 ### Live-Config (Hot-Reload)
 
-Die App prüft **alle 60 Sekunden**, ob `config.json` geändert wurde.  
+Die App prüft **alle 60 Sekunden**, ob `config.json` geändert wurde.
 Erkannte Änderungen werden **live übernommen** – kein Neustart nötig.
 
 **Hot-reloadbare Felder:**
@@ -108,9 +122,77 @@ Erkannte Änderungen werden **live übernommen** – kein Neustart nötig.
 }
 ```
 
-## Verhalten bei vollem Inbox-Verzeichnis
+### Stream-Konfiguration (pro Eintrag in `streams[]`)
 
-Wenn die Anzahl der `.mp3`-Dateien im Inbox-Verzeichnis `max_files_inbox` erreicht:
+| Feld | Typ | Standard | Beschreibung |
+|---|---|---|---|
+| `name` | string | – | Name des Senders (Pflichtfeld, max. 64 Zeichen) |
+| `url` | string | – | Playlist-URL (M3U/PLS) oder direkte Stream-URL |
+| `enabled` | boolean | `true` | Sender aktivieren/deaktivieren |
+| `ignore_title_patterns` | string[] | `null` | Sendereigene Regex-Muster (überschreibt globale) |
+| `bitrate` | integer | `0` | Bekannte Bitrate in kbps (0 = unbekannt) |
+| `icy` | boolean | `true` | ICY-Metadaten erwartet |
+| `source` | string | `""` | Quelle (z. B. `"discovery"`, `"custom"`) |
+
+## Architektur (arc42)
+
+### Aufbau der Aufnahmen
+
+Jede Aufnahme durchläuft folgenden Lebenszyklus:
+
+1. **TCP-Verbindung** zum Stream-Server (mit `Icy-MetaData: 1` Header)
+2. **Metadaten-Parsing**: Der `IcyParser` extrahiert `StreamTitle` aus dem Datenstrom
+3. **Song-Erkennung**: Bei Titelwechsel wird die vorherige Datei abgeschlossen und eine neue gestartet
+4. **Temporäre Datei**: Die Aufnahme wird zuerst in eine `.tmp`-Datei im System-Temp geschrieben
+5. **Commit**: Bei Titelwechsel wird die `.tmp`-Datei als `{Künstler} - {Titel}.mp3` ins Zielverzeichnis verschoben
+6. **Validierung**: Die fertige MP3 wird auf Größe, Dauer und Gültigkeit geprüft – zu kurze oder ungültige Dateien werden automatisch gelöscht
+
+### Stream-Recorder Lebenszyklus
+
+Jeder Stream wird von einem eigenen `StreamRecorder` verwaltet:
+
+```
+_start_forever()
+  ├─ pause() / resume()           # Bei vollem Zielverzeichnis
+  ├─ _run_once()
+  │   ├─ Playlist auflösen (M3U/PLS → Stream-URL)
+  │   ├─ _connect_stream()
+  │   │   ├─ HTTP-GET mit Icy-MetaData: 1
+  │   │   └─ ICY-Metaint parsen
+  │   └─ _stream_with_meta()
+  │       ├─ async for chunk: Parser füttern
+  │       ├─ TitleChanged → alte Datei committen, neue starten
+  │       └─ Verbindungsabbruch → _run_once returned False
+  └─ Reconnect mit exponentiellem Backoff + Jitter
+```
+
+**Fehlertoleranz**:
+- Bei Verbindungsabbruch bis zu `no_icy_disable_after`× wiederholen
+- Nach `no_icy_disable_after` ICY-freien Streams wird der Sender deaktiviert
+- Bei generischen Fehlern wird der Reconnect-Backoff verdoppelt (max. `reconnect_max_delay`)
+
+### Auto-Discovery Pipeline
+
+```
+start()
+  ├─ _select_stations()
+  │   ├─ Explizite streams[] → direkt verwenden
+  │   └─ custom.m3u laden → falls leer: leere Datei anlegen
+  ├─ PlaylistDiscoveryService.load_or_discover()
+  │   ├─ prefiltered.m3u existiert? → laden + filtern
+  │   ├─ Sonst: Community-M3U von github.com/radiosure laden
+  │   ├─ Alle Einträge mit ICY-Probe testen
+  │   ├─ Ergebnisse in prefiltered.m3u cachen
+  │   └─ Nach Keywords filtern oder zufällig auswählen
+  ├─ _apply_stream_limit()
+  │   └─ custom.m3u-Stationen priorisieren
+  └─ _preflight_check()
+      └─ Alle Stationen vor Start auf ICY-Erreichbarkeit prüfen (mit Fortschritts-Log alle 10 %)
+```
+
+### Verhalten bei vollem Zielverzeichnis
+
+Wenn die Anzahl der `.mp3`-Dateien im Zielverzeichnis `max_files_inbox` erreicht:
 
 1. **Alle Streams pausieren** – der aktuell laufende Song wird noch fertig geschrieben
 2. **Alle 5 Minuten prüfen**, ob der Platz wieder reicht
@@ -118,12 +200,12 @@ Wenn die Anzahl der `.mp3`-Dateien im Inbox-Verzeichnis `max_files_inbox` erreic
 
 So wird verhindert, dass bei einem vollen Verzeichnis sinnlos Daten geschrieben werden.
 
-## Aufbau der Aufnahmen
+### Signal- und Shutdown-Verhalten
 
-- Jede Aufnahme landet als `{Künstler} - {Titel}.mp3` im Inbox-Verzeichnis
-- Temporäre Dateien werden im System-Temp (`/tmp`) angelegt und beim Commit verschoben
-- Zu kurze, zu kleine oder ungültige MP3-Dateien werden automatisch verworfen
-- Die Discovery-Cache-Datei wird im Arbeitsverzeichnis (`work_dir`) gespeichert
+| Signal | Verhalten |
+|---|---|
+| `SIGINT` / `SIGTERM` | Alle Recorder stoppen, HTTP-Client schließen, parallel joinen (< 15 s) |
+| `KeyboardInterrupt` | Graceful Shutdown via `asyncio.run()` |
 
 ## Image-Tags
 
@@ -133,7 +215,7 @@ So wird verhindert, dass bei einem vollen Verzeichnis sinnlos Daten geschrieben 
 | `2.x` | Semantische Versions-Tags |
 | `YYYYMMDD-<sha>` | Tägliche SHA-basierte Tags |
 
-Alle Images laufen unter einem unprivilegierten Benutzer (`ripper`, uid 1000).  
+Alle Images laufen unter einem unprivilegierten Benutzer (`ripper`, uid 1000).
 Der Container-Entrypoint ist `radio-ripper` – du kannst Argumente wie `--config /pfad/config.json` oder `--log-level DEBUG` anhängen.
 
 ## Entwicklung
