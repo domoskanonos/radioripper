@@ -22,7 +22,7 @@ _MEGA_URL = (
     "/refs/heads/main/---everything-checked-repo.m3u"
 )
 _PROBE_TIMEOUT = 8.0
-_MAX_CONCURRENT = 50
+_MAX_CONCURRENT = 300
 _RANDOM_SAMPLE_SIZE = 10000
 _WORK_STATION_COUNT = 400
 
