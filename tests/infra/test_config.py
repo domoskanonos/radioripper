@@ -74,7 +74,7 @@ class TestLoadSettings:
         s = load_settings()
         assert isinstance(s, Settings)
         assert s.work_dir == Path("./work")
-        assert s.destination == Path("/home/laptop/trash/mp3")
+        assert s.destination == Path("./destination")
 
 
 class TestDefaults:

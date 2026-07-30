@@ -66,7 +66,7 @@ class Settings(BaseModel):
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
     work_dir: Path = Field(default=Path("./work"))
-    destination: Path = Field(default=Path("/home/laptop/trash/mp3"))
+    destination: Path = Field(default=Path("./destination"))
     log_level: str = "INFO"
 
     stream_keywords: list[str] = Field(
