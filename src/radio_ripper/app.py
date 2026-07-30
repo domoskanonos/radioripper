@@ -290,9 +290,7 @@ class RadioRipperApp:
             try:
                 await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
             except TimeoutError:
-                self.logger.warning(
-                    "Not all recorders stopped within 15s — continuing shutdown."
-                )
+                self.logger.warning("Not all recorders stopped within 15s — continuing shutdown.")
         self.logger.info("All recorders stopped.")
 
 

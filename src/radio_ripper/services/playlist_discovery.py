@@ -23,6 +23,8 @@ _MEGA_URL = (
 )
 _PROBE_TIMEOUT = 8.0
 _MAX_CONCURRENT = 50
+_RANDOM_SAMPLE_SIZE = 10000
+_WORK_STATION_COUNT = 400
 
 
 @dataclass(frozen=True)
@@ -204,6 +206,10 @@ async def _probe_batch(
                 return (entry, probe)
             return None
 
+    total = len(entries)
+    log_interval = max(1, total // 10) if total > 10 else total
+    last_logged = 0
+
     tasks = [asyncio.create_task(_probe_one(e)) for e in entries]
     ok: list[tuple[M3uEntry, dict[str, Any]]] = []
     pending = set(tasks)
@@ -217,6 +223,17 @@ async def _probe_batch(
                     ok.append(entry_data)
             except Exception:
                 pass
+        completed = total - len(pending)
+        next_milestone = (last_logged // log_interval + 1) * log_interval
+        if completed >= next_milestone:
+            _LOGGER.info(
+                "Probe progress: %d/%d (%.0f%%), %d OK",
+                completed,
+                total,
+                completed / total * 100,
+                len(ok),
+            )
+            last_logged = next_milestone
 
     for t in pending:
         t.cancel()
@@ -290,30 +307,62 @@ def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
 
 
 def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    lines: list[str] = ["#EXTM3U"]
-    for s in stations:
-        attr = []
-        if getattr(s, "bitrate", 0):
-            attr.append(f"bitrate={s.bitrate}")
-        if getattr(s, "source", ""):
-            attr.append(f"source={s.source}")
-        attr_str = (" " + " ".join(attr)) if attr else ""
-        lines.append(f"#EXTINF:-1{attr_str},{s.name}")
-        lines.append(str(s.url))
-    tmp = cache_file.with_suffix(".tmp")
-    tmp.write_text("\n".join(lines) + "\n", "utf-8")
-    tmp.replace(cache_file)
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        lines: list[str] = ["#EXTM3U"]
+        for s in stations:
+            attr = []
+            if getattr(s, "bitrate", 0):
+                attr.append(f"bitrate={s.bitrate}")
+            if getattr(s, "source", ""):
+                attr.append(f"source={s.source}")
+            attr_str = (" " + " ".join(attr)) if attr else ""
+            lines.append(f"#EXTINF:-1{attr_str},{s.name}")
+            lines.append(str(s.url))
+        tmp = cache_file.with_suffix(".tmp")
+        tmp.write_text("\n".join(lines) + "\n", "utf-8")
+        tmp.replace(cache_file)
+    except Exception:
+        _LOGGER.warning("Failed to save cache to %s", cache_file)
 
 
 # ---------------------------------------------------------------- prefiltered
 
 
 PREFILTERED_FILENAME = "prefiltered.m3u"
+RANDOM_FILENAME = "random_stations.m3u"
+FILTERED_FILENAME = "filtered_checked_stations.m3u"
+WORK_FILENAME = "work_stations.m3u"
 
 
 def _prefiltered_path(settings: Settings) -> Path:
     return settings.work_dir / PREFILTERED_FILENAME
+
+
+def _random_stations_path(settings: Settings) -> Path:
+    return settings.work_dir / RANDOM_FILENAME
+
+
+def _filtered_path(settings: Settings) -> Path:
+    return settings.work_dir / FILTERED_FILENAME
+
+
+def _work_path(settings: Settings) -> Path:
+    return settings.work_dir / WORK_FILENAME
+
+
+def _save_m3u_entries(path: Path, entries: list[M3uEntry]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = ["#EXTM3U"]
+        for e in entries:
+            lines.append(e.extinf or f"#EXTINF:-1,{e.name}")
+            lines.append(e.url)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("\n".join(lines) + "\n", "utf-8")
+        tmp.replace(path)
+    except Exception:
+        _LOGGER.warning("Failed to save M3U entries to %s", path)
 
 
 def _save_prefiltered(path: Path, good: list[tuple[M3uEntry, dict[str, Any]]]) -> None:
@@ -358,23 +407,56 @@ class PlaylistDiscoveryService:
         if not self._settings.discovery_enabled:
             return []
 
-        prefiltered_file = _prefiltered_path(self._settings)
+        work_file = _work_path(self._settings)
+        if work_file.is_file():
+            stations, _ = _load_cache(work_file)
+            if stations:
+                self._log.info("Loaded %d stations from %s", len(stations), work_file.name)
+                return stations
 
-        if prefiltered_file.is_file():
-            prefiltered = _load_prefiltered(prefiltered_file)
+        filtered_file = _filtered_path(self._settings)
+        if not filtered_file.is_file():
+            legacy = _prefiltered_path(self._settings)
+            if legacy.is_file():
+                filtered_file = legacy
+                self._log.info("Found legacy %s, treating as filtered cache", legacy.name)
+
+        if filtered_file.is_file():
+            prefiltered = _load_prefiltered(filtered_file)
             if prefiltered:
-                self._log.info("Loaded %d stations from %s", len(prefiltered), prefiltered_file.name)
-                return self._select_from_prefiltered(prefiltered)
+                self._log.info("Loaded %d stations from %s", len(prefiltered), filtered_file.name)
+                stations = self._select_from_prefiltered(prefiltered)
+                if stations:
+                    _save_cache(work_file, stations)
+                    self._log.info("Saved %d stations to %s", len(stations), work_file.name)
+                return stations
 
-        self._log.info("No prefilter found. Starting full discovery…")
-        text = await self._load_or_download_mega()
-        prefiltered = await self._discover_prefiltered(text)
+        random_file = _random_stations_path(self._settings)
+        if random_file.is_file():
+            random_entries = _parse_m3u_text(random_file.read_text("utf-8"), random_file.name)
+            self._log.info("Loaded %d random entries from %s", len(random_entries), random_file.name)
+        else:
+            text = await self._load_or_download_mega()
+            all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
+            unique = _deduplicate_by_name(all_entries)
+            self._log.info("Parsed %d unique entries from mega M3U", len(unique))
+            random.shuffle(unique)
+            random_entries = unique[:_RANDOM_SAMPLE_SIZE]
+            _save_m3u_entries(random_file, random_entries)
+            self._log.info("Saved %d random entries to %s", len(random_entries), random_file.name)
 
-        if prefiltered:
-            _save_prefiltered(prefiltered_file, prefiltered)
-            self._log.info("Saved %d stations to %s", len(prefiltered), prefiltered_file.name)
+        good = await self._probe_and_filter(random_entries)
 
-        return self._select_from_prefiltered(prefiltered)
+        if good:
+            _save_prefiltered(filtered_file, good)
+            self._log.info("Saved %d stations to %s", len(good), filtered_file.name)
+
+        stations = self._select_from_prefiltered(good)
+        if stations:
+            _save_cache(work_file, stations)
+            self._log.info("Saved %d stations to %s", len(stations), work_file.name)
+
+        return stations
 
     async def _load_or_download_mega(self) -> str:
         raw_mega = _raw_mega_path(self._settings)
@@ -391,29 +473,28 @@ class PlaylistDiscoveryService:
             pass
         return text
 
-    async def _discover_prefiltered(self, text: str) -> list[tuple[M3uEntry, dict[str, Any]]]:
-        all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
-        self._log.info("Parsed %d total M3U entries", len(all_entries))
-
-        unique = _deduplicate_by_name(all_entries)
-        self._log.info("After dedup: %d unique stations", len(unique))
-
-        if not unique:
+    async def _probe_and_filter(
+        self,
+        entries: list[M3uEntry],
+    ) -> list[tuple[M3uEntry, dict[str, Any]]]:
+        if not entries:
             return []
 
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
-        self._log.info("Probing all %d stations for prefilter…", len(unique))
-        good = await _probe_batch(unique, max_ok=len(unique), semaphore=semaphore)
+        total = len(entries)
+        self._log.info("Probing %d stations…", total)
+        good = await _probe_batch(entries, max_ok=total, semaphore=semaphore)
         self._log.info("Probing done: %d ICY-capable streams found", len(good))
 
         min_bps = self._settings.discovery_min_bitrate
         if min_bps > 0:
             before = len(good)
             good = [(e, p) for e, p in good if p.get("bitrate", 0) >= min_bps]
-            if len(good) < before:
+            filtered_count = before - len(good)
+            if filtered_count:
                 self._log.info(
                     "Filtered %d stations below %d kbps",
-                    before - len(good),
+                    filtered_count,
                     min_bps,
                 )
 
