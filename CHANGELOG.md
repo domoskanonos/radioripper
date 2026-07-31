@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.3.3 (2026-07-31)
+
+### Bug Fixes
+
+- Verbessere Timeout-Handling in der _probe_batch-Funktion
+  ([`736601e`](https://github.com/domoskanonos/radioripper/commit/736601e89f271b059d48744e9f7936a28b32470a))
+
+
 ## v2.3.2 (2026-07-31)
 
 ### Bug Fixes
