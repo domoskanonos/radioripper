@@ -202,7 +202,13 @@ async def _probe_batch(
 ) -> list[tuple[M3uEntry, dict[str, Any]]]:
     async def _probe_one(entry: M3uEntry) -> tuple[M3uEntry, dict[str, Any]] | None:
         async with semaphore:
-            probe = await probe_icy(entry.url)
+            try:
+                probe = await asyncio.wait_for(
+                    probe_icy(entry.url),
+                    timeout=_PROBE_TIMEOUT + 1.0,
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                return None
             if probe["icy"]:
                 return (entry, probe)
             return None
