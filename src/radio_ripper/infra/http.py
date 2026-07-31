@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from radio_ripper import __version__
+
 
 class AsyncHttpClient(ABC):
     @abstractmethod
@@ -38,14 +40,14 @@ class HttpxAsyncClient(AsyncHttpClient):
     def __init__(
         self,
         *,
-        user_agent: str = "Radio-Ripper/2.0",
+        user_agent: str | None = None,
         verify: bool = True,
         connect_timeout: float = 10.0,
         total_timeout: float = 30.0,
         max_pool_size: int = 400,
     ) -> None:
         self._client = httpx.AsyncClient(
-            headers={"User-Agent": user_agent},
+            headers={"User-Agent": user_agent or f"Radio-Ripper/{__version__}"},
             verify=verify,
             follow_redirects=True,
             timeout=httpx.Timeout(total_timeout, connect=connect_timeout),

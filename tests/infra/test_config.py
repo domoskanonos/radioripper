@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from radio_ripper import __version__
 from radio_ripper.infra.config import Settings, StreamConfig, load_settings
 from radio_ripper.infra.errors import ConfigurationError
 
@@ -104,7 +105,7 @@ class TestSettingsProperties:
         s = Settings.model_validate(GOOD_BASE)
         ss = s.stream
         assert ss.max_concurrent_streams == 400
-        assert ss.user_agent == "Radio-Ripper/2.0"
+        assert ss.user_agent == f"Radio-Ripper/{__version__}"
 
     def test_discovery_property(self):
         s = Settings.model_validate(GOOD_BASE)

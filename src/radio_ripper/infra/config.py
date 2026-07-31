@@ -6,7 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
 
+from radio_ripper import __version__
 from radio_ripper.infra.errors import ConfigurationError
+
+
+def _default_user_agent() -> str:
+    return f"Radio-Ripper/{__version__}"
 
 
 class StreamConfig(BaseModel):
@@ -31,7 +36,7 @@ class StreamConfig(BaseModel):
 
 class StreamSettings(BaseModel):
     max_concurrent_streams: int = Field(default=400, ge=1, le=500)
-    user_agent: str = "Radio-Ripper/2.0"
+    user_agent: str = Field(default_factory=_default_user_agent)
     request_timeout: float = Field(default=30.0, ge=1.0)
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
@@ -92,7 +97,7 @@ class Settings(BaseModel):
     request_timeout: float = Field(default=30.0, ge=1.0)
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
-    user_agent: str = "Radio-Ripper/2.0"
+    user_agent: str = Field(default_factory=_default_user_agent)
     min_file_size_bytes: int = Field(default=1572864, ge=0)
     max_files_inbox: int = Field(default=100000, ge=1)
     ignore_title_patterns: list[str] = Field(default_factory=list)
