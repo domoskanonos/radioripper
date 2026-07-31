@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -362,6 +365,110 @@ class TestRadioRipperAppLifecycleMethods:
         await app.start()
         await app.stop()
         assert app._housekeeping_task is None
+
+
+class TestConfigReload:
+    """Config-change reload: one shared start path re-run."""
+
+    def _live_app(self, tmp_path, **overrides):
+        base = {
+            "work_dir": str(tmp_path / "work"),
+            "destination": str(tmp_path / "work" / "destination"),
+            "log_level": "INFO",
+            "streams": [{"name": "TestStation", "url": "http://fake.example.com/listen.m3u"}],
+        }
+        base.update(overrides)
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(base))
+        settings = Settings.model_validate(base)
+        app = RadioRipperApp.from_settings_with_live_config(settings, config_path)
+        return app, config_path, base
+
+    def _write_change(self, config_path, base, **changes):
+        cfg = dict(base)
+        cfg.update(changes)
+        config_path.write_text(json.dumps(cfg))
+        # guarantee a distinct mtime even on coarse filesystems
+        t = time.time() + 2
+        os.utime(config_path, (t, t))
+
+    def test_reload_fields_exclude_cheap_handlers(self):
+        from radio_ripper.app import _RELOAD_FIELDS
+
+        assert "log_level" not in _RELOAD_FIELDS
+        assert "max_files_inbox" not in _RELOAD_FIELDS
+        assert "max_concurrent_streams" in _RELOAD_FIELDS
+        assert "stream_keywords" in _RELOAD_FIELDS
+        assert "discovery_min_bitrate" in _RELOAD_FIELDS
+        assert "streams" in _RELOAD_FIELDS
+        assert "work_dir" in _RELOAD_FIELDS
+
+    async def test_process_config_reload_triggers_full_reload(self, tmp_path):
+        app, config_path, base = self._live_app(tmp_path)
+        app._reload_after_config_change = AsyncMock()
+
+        self._write_change(config_path, base, max_concurrent_streams=123)
+        await app._process_config_reload()
+
+        app._reload_after_config_change.assert_awaited_once()
+        assert app.settings.max_concurrent_streams == 123
+
+    async def test_process_config_reload_skips_reload_for_log_level(self, tmp_path):
+        app, config_path, base = self._live_app(tmp_path)
+        app._reload_after_config_change = AsyncMock()
+
+        self._write_change(config_path, base, log_level="DEBUG")
+        await app._process_config_reload()
+
+        app._reload_after_config_change.assert_not_awaited()
+        assert app.settings.log_level == "DEBUG"
+
+    async def test_reload_after_config_change_restarts_recorders(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        await app.start()
+        assert len(app.recorders()) == 1
+        old = app.recorders()[0]
+
+        await app._reload_after_config_change()
+
+        assert len(app.recorders()) == 1
+        new = app.recorders()[0]
+        assert new is not old
+        assert old._stop_event.is_set()
+        await app.stop()
+
+    async def test_reload_reruns_discovery_and_clears_stations(self, tmp_path):
+        settings = Settings.model_validate(
+            {
+                "work_dir": str(tmp_path / "work"),
+                "destination": str(tmp_path / "destination"),
+                "discovery_enabled": True,
+            }
+        )
+        (tmp_path / "work" / "stations").mkdir(parents=True)
+        (tmp_path / "work" / "stations" / "custom.m3u").write_text("#EXTM3U\n")
+        client = AsyncMock()
+        client.aclose = AsyncMock()
+        app = RadioRipperApp(
+            settings=settings,
+            client=client,
+            playlist_resolver=StaticPlaylistResolver(["http://x"]),
+        )
+        with patch(
+            "radio_ripper.app.PlaylistDiscoveryService.load_or_discover",
+            return_value=[StreamConfig(name="D1", url="http://d1")],
+        ):
+            await app.start()
+            assert len(app.recorders()) == 1
+        with patch(
+            "radio_ripper.app.PlaylistDiscoveryService.load_or_discover",
+            return_value=[],
+        ) as discover2:
+            await app._reload_after_config_change()
+        discover2.assert_awaited_once()
+        assert app.recorders() == []
+        await app.stop()
 
 
 __all__ = []

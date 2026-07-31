@@ -18,6 +18,8 @@ _PROBE_CONCURRENT = 20
 
 _LOGGER = logging.getLogger("radio_ripper.app")
 
+_RELOAD_FIELDS = frozenset(Settings.model_fields) - frozenset({"log_level", "max_files_inbox"})
+
 
 class RadioRipperApp:
     def __init__(
@@ -95,6 +97,12 @@ class RadioRipperApp:
 
         self._housekeeping_task = asyncio.create_task(self._run_housekeeping())
 
+        stations = await self._resolve_stations()
+        if not stations:
+            return
+        self._start_recorders(stations)
+
+    async def _resolve_stations(self, *, context: str | None = None) -> list[StreamConfig]:
         stations = self._select_stations()
         has_explicit = bool(self.settings.streams)
 
@@ -104,16 +112,17 @@ class RadioRipperApp:
             stations.extend(discovered)
 
         if not stations:
-            self.logger.error("No streams available. Exiting.")
-            return
+            self.logger.error("No streams available.%s", f" {context}." if context else " Exiting.")
+            return []
 
         stations = self._apply_stream_limit(stations)
 
         stations = await self._preflight_check(stations)
         if not stations:
-            self.logger.error("No reachable streams. Exiting.")
-            return
+            self.logger.error("No reachable streams.%s", f" {context}." if context else " Exiting.")
+        return stations
 
+    def _start_recorders(self, stations: list[StreamConfig]) -> None:
         for stream in stations:
             if not stream.enabled:
                 self.logger.info("Skipping disabled stream: %s", stream.name)
@@ -134,6 +143,19 @@ class RadioRipperApp:
             rec.start()
             self._recorders.append(rec)
         self.logger.info("Started %d stream recorders.", len(self._recorders))
+
+    async def _stop_all_recorders(self) -> None:
+        if not self._recorders:
+            return
+        self.logger.info("Stopping %d stream recorders...", len(self._recorders))
+        for rec in self._recorders:
+            rec.stop()
+        tasks = [rec.join() for rec in self._recorders]
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
+        except TimeoutError:
+            self.logger.warning("Not all recorders stopped within 15s — continuing.")
+        self._recorders.clear()
 
     def _apply_stream_limit(self, stations: list[StreamConfig]) -> list[StreamConfig]:
         max_streams = self.settings.max_concurrent_streams
@@ -206,10 +228,8 @@ class RadioRipperApp:
         while not self._cancel_requested:
             now = time.monotonic()
 
-            if now >= next_config and self._live_config is not None:
-                diff = await self._live_config.check_reload()
-                if diff:
-                    self._apply_config_diff(diff)
+            if now >= next_config:
+                await self._process_config_reload()
                 next_config = now + config_interval
 
             if now >= next_inbox:
@@ -218,6 +238,17 @@ class RadioRipperApp:
 
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._sleep_until(next_config, next_inbox), timeout=5.0)
+
+    async def _process_config_reload(self) -> None:
+        lc = self._live_config
+        if lc is None:
+            return
+        diff = await lc.check_reload()
+        if not diff:
+            return
+        self._apply_config_diff(diff)
+        if _RELOAD_FIELDS.intersection(diff):
+            await self._reload_after_config_change()
 
     async def _sleep_until(self, *times: float) -> None:
         """Sleep until the earliest of *times or cancelled."""
@@ -268,6 +299,16 @@ class RadioRipperApp:
                 lc.settings.max_files_inbox,
             )
 
+    async def _reload_after_config_change(self) -> None:
+        if self._cancel_requested:
+            return
+        self.logger.info("Config changed — restarting stream recorders.")
+        await self._stop_all_recorders()
+        stations = await self._resolve_stations(context="after config reload")
+        if not stations:
+            return
+        self._start_recorders(stations)
+
     # ------------------------------------------------------------------ lifecycle
 
     def cancel(self) -> None:
@@ -285,12 +326,7 @@ class RadioRipperApp:
             rec.stop()
         # Close HTTP client first — interrupts all in-flight stream connections
         await self.client.aclose()
-        if self._recorders:
-            tasks = [rec.join() for rec in self._recorders]
-            try:
-                await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
-            except TimeoutError:
-                self.logger.warning("Not all recorders stopped within 15s — continuing shutdown.")
+        await self._stop_all_recorders()
         self.logger.info("All recorders stopped.")
 
 
