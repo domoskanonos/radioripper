@@ -308,7 +308,7 @@ def _extract_fingerprint(text: str) -> str:
 
 
 def _fingerprint_valid(actual: str, expected: str) -> bool:
-    return not actual or actual == expected
+    return actual == expected
 
 
 def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:

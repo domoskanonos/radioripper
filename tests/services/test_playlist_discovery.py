@@ -311,7 +311,7 @@ class TestPlaylistDiscoveryService:
         stations_in = [
             StreamConfig(name="Rock FM", url="http://a", icy=True),
         ]
-        _save_cache(_work_path(settings), stations_in)
+        _save_cache(_work_path(settings), stations_in, _selection_fingerprint(settings))
 
         svc = PlaylistDiscoveryService(settings)
         result = await svc.load_or_discover()
@@ -450,14 +450,21 @@ class TestCacheFingerprintInvalidation:
         assert _extract_fingerprint(text) == _probe_fingerprint(settings_b)
 
     @pytest.mark.asyncio
-    async def test_legacy_work_cache_without_fingerprint_still_used(self, tmp_path) -> None:
-        settings = self._settings(tmp_path, max_concurrent_streams=5, stream_keywords=["rock"])
+    async def test_legacy_work_cache_without_fingerprint_is_stale(self, tmp_path) -> None:
+        settings = self._settings(tmp_path, max_concurrent_streams=5, stream_keywords=[])
         _save_cache(_work_path(settings), [StreamConfig(name="Legacy", url="http://a", icy=True)])
+        _save_prefiltered(
+            _filtered_path(settings),
+            [(M3uEntry(name="New A", url="http://a", source="f"), {"icy": True, "bitrate": 128})],
+            _probe_fingerprint(settings),
+        )
 
         svc = PlaylistDiscoveryService(settings)
         result = await svc.load_or_discover()
 
-        assert [s.name for s in result] == ["Legacy"]
+        assert [s.name for s in result] == ["New A"]
+        _, fp = _load_cache(_work_path(settings))
+        assert fp == _selection_fingerprint(settings)
 
 
 # ---------------------------------------------------------------------------
