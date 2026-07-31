@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v2.3.2 (2026-07-31)
+
+### Bug Fixes
+
+- Modified
+  ([`72b97dd`](https://github.com/domoskanonos/radioripper/commit/72b97dd32488a20b0674c029f1458ad8fffea2cf))
+
+### Chores
+
+- Aktualisiere Changelog und füge Versionstoml für Semantic Release hinzu
+  ([`5fb7947`](https://github.com/domoskanonos/radioripper/commit/5fb794779158c877042364ed40423edcffd38e74))
+
+
 ## [2.3.0] - 2026-07-31
 
 ### Added
