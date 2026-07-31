@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import random
@@ -273,9 +274,47 @@ def _raw_mega_path(settings: Settings) -> Path:
     return settings.work_dir / "---everything-checked-repo.m3u"
 
 
+_FINGERPRINT_PREFIX = "# radio-ripper-config: "
+
+
+def _fingerprint_value(fields: dict[str, Any]) -> str:
+    payload = json.dumps(fields, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _selection_fingerprint(settings: Settings) -> str:
+    return _fingerprint_value(
+        {
+            "max_concurrent_streams": settings.max_concurrent_streams,
+            "stream_keywords": list(settings.stream_keywords),
+        }
+    )
+
+
+def _probe_fingerprint(settings: Settings) -> str:
+    return _fingerprint_value(
+        {
+            "discovery_min_bitrate": settings.discovery_min_bitrate,
+        }
+    )
+
+
+def _extract_fingerprint(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_FINGERPRINT_PREFIX):
+            return stripped[len(_FINGERPRINT_PREFIX) :].strip()
+    return ""
+
+
+def _fingerprint_valid(actual: str, expected: str) -> bool:
+    return not actual or actual == expected
+
+
 def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
     try:
         text = cache_file.read_text("utf-8")
+        fingerprint = _extract_fingerprint(text)
         if text.strip().startswith("["):
             try:
                 raw = json.loads(text)
@@ -301,15 +340,17 @@ def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
                 )
             except Exception:
                 continue
-        return result, ""
+        return result, fingerprint
     except Exception:
         return [], ""
 
 
-def _save_cache(cache_file: Path, stations: list[StreamConfig]) -> None:
+def _save_cache(cache_file: Path, stations: list[StreamConfig], fingerprint: str = "") -> None:
     try:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         lines: list[str] = ["#EXTM3U"]
+        if fingerprint:
+            lines.append(_FINGERPRINT_PREFIX + fingerprint)
         for s in stations:
             attr = []
             if getattr(s, "bitrate", 0):
@@ -365,9 +406,15 @@ def _save_m3u_entries(path: Path, entries: list[M3uEntry]) -> None:
         _LOGGER.warning("Failed to save M3U entries to %s", path)
 
 
-def _save_prefiltered(path: Path, good: list[tuple[M3uEntry, dict[str, Any]]]) -> None:
+def _save_prefiltered(
+    path: Path,
+    good: list[tuple[M3uEntry, dict[str, Any]]],
+    fingerprint: str = "",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = ["#EXTM3U"]
+    if fingerprint:
+        lines.append(_FINGERPRINT_PREFIX + fingerprint)
     for entry, probe in good:
         br = probe.get("bitrate", 0) or 0
         lines.append(f"#EXTINF:-1 bitrate={br},{entry.name}")
@@ -407,12 +454,16 @@ class PlaylistDiscoveryService:
         if not self._settings.discovery_enabled:
             return []
 
+        expected_sel = _selection_fingerprint(self._settings)
+        expected_probe = _probe_fingerprint(self._settings)
+
         work_file = _work_path(self._settings)
         if work_file.is_file():
-            stations, _ = _load_cache(work_file)
-            if stations:
+            stations, fingerprint = _load_cache(work_file)
+            if stations and _fingerprint_valid(fingerprint, expected_sel):
                 self._log.info("Loaded %d stations from %s", len(stations), work_file.name)
                 return stations
+            self._log.info("Work cache %s is stale — rebuilding selection.", work_file.name)
 
         filtered_file = _filtered_path(self._settings)
         if not filtered_file.is_file():
@@ -422,14 +473,21 @@ class PlaylistDiscoveryService:
                 self._log.info("Found legacy %s, treating as filtered cache", legacy.name)
 
         if filtered_file.is_file():
+            try:
+                text = filtered_file.read_text("utf-8")
+            except Exception:
+                text = ""
             prefiltered = _load_prefiltered(filtered_file)
-            if prefiltered:
+            fingerprint = _extract_fingerprint(text)
+            if prefiltered and _fingerprint_valid(fingerprint, expected_probe):
                 self._log.info("Loaded %d stations from %s", len(prefiltered), filtered_file.name)
                 stations = self._select_from_prefiltered(prefiltered)
                 if stations:
-                    _save_cache(work_file, stations)
+                    _save_cache(work_file, stations, expected_sel)
                     self._log.info("Saved %d stations to %s", len(stations), work_file.name)
                 return stations
+            if prefiltered:
+                self._log.info("Filtered cache %s is stale — reprobing.", filtered_file.name)
 
         random_file = _random_stations_path(self._settings)
         if random_file.is_file():
@@ -448,12 +506,12 @@ class PlaylistDiscoveryService:
         good = await self._probe_and_filter(random_entries)
 
         if good:
-            _save_prefiltered(filtered_file, good)
+            _save_prefiltered(filtered_file, good, expected_probe)
             self._log.info("Saved %d stations to %s", len(good), filtered_file.name)
 
         stations = self._select_from_prefiltered(good)
         if stations:
-            _save_cache(work_file, stations)
+            _save_cache(work_file, stations, expected_sel)
             self._log.info("Saved %d stations to %s", len(stations), work_file.name)
 
         return stations

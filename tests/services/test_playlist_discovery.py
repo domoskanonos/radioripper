@@ -19,12 +19,17 @@ from radio_ripper.services.playlist_discovery import (
     _deduplicate_by_name,
     _distribute_probe_pool,
     _download_mega_m3u,
+    _extract_fingerprint,
+    _filtered_path,
     _keyword_coverage,
     _load_cache,
     _match_keywords,
     _parse_m3u_text,
     _probe_batch,
+    _probe_fingerprint,
     _save_cache,
+    _save_prefiltered,
+    _selection_fingerprint,
     _work_path,
     probe_icy,
 )
@@ -340,6 +345,119 @@ class TestPlaylistDiscoveryService:
         assert result[0].name == "Classic Rock"
         assert (tmp_path / "filtered_checked_stations.m3u").is_file()
         assert (tmp_path / "work_stations.m3u").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Config fingerprints
+# ---------------------------------------------------------------------------
+
+
+class _SettingsBuilder:
+    def __call__(self, tmp_path: Path, **overrides) -> Settings:
+        base = {
+            "destination": "./rec",
+            "work_dir": tmp_path,
+            "discovery_enabled": True,
+        }
+        base.update(overrides)
+        return Settings(**base)
+
+
+class TestConfigFingerprint:
+    def _settings(self, tmp_path: Path, **overrides) -> Settings:
+        return _SettingsBuilder()(tmp_path, **overrides)
+
+    def test_selection_fingerprint_sensitive_to_config(self, tmp_path) -> None:
+        a = self._settings(tmp_path, max_concurrent_streams=100, stream_keywords=["rock"])
+        b = self._settings(tmp_path, max_concurrent_streams=200, stream_keywords=["rock"])
+        c = self._settings(tmp_path, max_concurrent_streams=100, stream_keywords=["rock", "pop"])
+        assert _selection_fingerprint(a) != _selection_fingerprint(b)
+        assert _selection_fingerprint(a) != _selection_fingerprint(c)
+
+    def test_probe_fingerprint_sensitive_to_bitrate(self, tmp_path) -> None:
+        a = self._settings(tmp_path, discovery_min_bitrate=0)
+        b = self._settings(tmp_path, discovery_min_bitrate=128)
+        assert _probe_fingerprint(a) != _probe_fingerprint(b)
+
+    def test_extract_fingerprint_from_m3u(self, tmp_path) -> None:
+        fp = _selection_fingerprint(self._settings(tmp_path))
+        text = "#EXTM3U\n# radio-ripper-config: " + fp + "\n#EXTINF:-1,X\nhttp://x\n"
+        assert _extract_fingerprint(text) == fp
+
+    def test_extract_fingerprint_empty_when_missing(self) -> None:
+        assert _extract_fingerprint("#EXTM3U\n#EXTINF:-1,X\nhttp://x\n") == ""
+        assert _extract_fingerprint("") == ""
+
+
+class TestCacheFingerprintInvalidation:
+    def _settings(self, tmp_path: Path, **overrides) -> Settings:
+        return _SettingsBuilder()(tmp_path, **overrides)
+
+    @pytest.mark.asyncio
+    async def test_work_cache_stale_rebuilds_from_filtered(self, tmp_path) -> None:
+        settings_a = self._settings(tmp_path, max_concurrent_streams=5, stream_keywords=[])
+        work = _work_path(settings_a)
+        _save_cache(
+            work,
+            [StreamConfig(name="Old", url="http://old", icy=True)],
+            _selection_fingerprint(settings_a),
+        )
+
+        settings_b = self._settings(tmp_path, max_concurrent_streams=10, stream_keywords=[])
+        _save_prefiltered(
+            _filtered_path(settings_b),
+            [(M3uEntry(name="New A", url="http://a", source="f"), {"icy": True, "bitrate": 128})],
+            _probe_fingerprint(settings_b),
+        )
+
+        svc = PlaylistDiscoveryService(settings_b)
+        result = await svc.load_or_discover()
+
+        assert [s.name for s in result] == ["New A"]
+        loaded, fp = _load_cache(work)
+        assert fp == _selection_fingerprint(settings_b)
+        assert loaded[0].name == "New A"
+
+    @pytest.mark.asyncio
+    async def test_filtered_cache_stale_triggers_reprobe(self, tmp_path) -> None:
+        settings_a = self._settings(tmp_path, discovery_min_bitrate=0)
+        filtered = _filtered_path(settings_a)
+        _save_prefiltered(
+            filtered,
+            [(M3uEntry(name="Rock", url="http://a", source="f"), {"icy": True, "bitrate": 128})],
+            _probe_fingerprint(settings_a),
+        )
+
+        settings_b = self._settings(tmp_path, discovery_min_bitrate=200)
+        m3u_text = "#EXTM3U\n#EXTINF:-1,New Rock\nhttp://new.example.com\n"
+        new_entry = M3uEntry(name="New Rock", url="http://new.example.com", source="mega")
+        svc = PlaylistDiscoveryService(settings_b)
+        with (
+            patch(
+                "radio_ripper.services.playlist_discovery._download_mega_m3u",
+                return_value=m3u_text,
+            ),
+            patch(
+                "radio_ripper.services.playlist_discovery._probe_batch",
+                return_value=[(new_entry, {"icy": True, "bitrate": 256})],
+            ) as probe,
+        ):
+            result = await svc.load_or_discover()
+
+        probe.assert_awaited_once()
+        assert [s.name for s in result] == ["New Rock"]
+        text = filtered.read_text("utf-8")
+        assert _extract_fingerprint(text) == _probe_fingerprint(settings_b)
+
+    @pytest.mark.asyncio
+    async def test_legacy_work_cache_without_fingerprint_still_used(self, tmp_path) -> None:
+        settings = self._settings(tmp_path, max_concurrent_streams=5, stream_keywords=["rock"])
+        _save_cache(_work_path(settings), [StreamConfig(name="Legacy", url="http://a", icy=True)])
+
+        svc = PlaylistDiscoveryService(settings)
+        result = await svc.load_or_discover()
+
+        assert [s.name for s in result] == ["Legacy"]
 
 
 # ---------------------------------------------------------------------------
