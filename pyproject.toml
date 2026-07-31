@@ -61,6 +61,17 @@ warn_return_any = true
 disallow_untyped_defs = true
 disallow_untyped_calls = true
 
+[tool.semantic_release]
+branch = "main"
+tag_format = "v{version}"
+version_variables = [
+    "src/radio_ripper/__init__.py:__version__",
+]
+build_command = """
+uv lock --upgrade-package "$PACKAGE_NAME"
+git add uv.lock
+"""
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
@@ -70,4 +81,5 @@ dev = [
     "ruff>=0.16.0",
     "mypy>=2.3.0",
     "pre-commit>=4.6.0",
+    "python-semantic-release>=10.0.0",
 ]
