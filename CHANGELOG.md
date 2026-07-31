@@ -1,5 +1,18 @@
 # Changelog – radio-ripper-stream
 
+## [2.3.0] - 2026-07-31
+
+### Added
+- **Config-Reload via Neustart**: Bei Änderungen an relevanten Config-Feldern werden alle Recorder kurz gestoppt und über den gemeinsamen Startpfad neu gestartet (statt Diff-Sync)
+- **Cache-Invalidierung per Config-Fingerprint**: Playlist-Discovery-Caches werden automatisch invalidiert, wenn sich relevante Config-Werte ändern (z. B. `max_concurrent_streams`, `stream_keywords`, `discovery_min_bitrate`)
+- Konfigurierbares Zielverzeichnis `destination` in der Config
+- Automatisches Versions-Tagging im Docker-Workflow (`2.3.0` nur bei Git-Tags, `latest` weiterhin bei jedem main-Push)
+- Docker-Image-Label `org.opencontainers.image.version` wird dynamisch aus der pyproject-Version gesetzt
+
+### Changed
+- Maximale Anzahl gleichzeitiger Verbindungen auf 400 erhöht
+- Playlist-Discovery-Logging und Cache-Verwaltung optimiert
+
 ## [2.2.0] - 2026-07-29
 
 ### Added

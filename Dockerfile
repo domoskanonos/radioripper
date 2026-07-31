@@ -29,8 +29,9 @@ RUN uv sync --quiet
 
 FROM python:3.12-slim
 
+ARG VERSION=dev
 LABEL org.opencontainers.image.title="radio-ripper-stream" \
-      org.opencontainers.image.version="2.2.0" \
+      org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.description="Webradio stream recorder — ICY metadata, parallel recording, auto-discovery" \
       org.opencontainers.image.source="https://github.com/domoskanonos/radioripper"
 
