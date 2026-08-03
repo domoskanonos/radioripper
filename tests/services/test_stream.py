@@ -94,6 +94,7 @@ def _make_recorder(
     logger: Any = None,
     ignore_title_patterns: Any = None,
     no_icy_disable_after: int = 10,
+    acoustid_api_key: str = "",
 ) -> StreamRecorder:
     return StreamRecorder(
         station_name="TestStation",
@@ -104,6 +105,7 @@ def _make_recorder(
         logger=logger,
         ignore_title_patterns=ignore_title_patterns,
         no_icy_disable_after=no_icy_disable_after,
+        acoustid_api_key=acoustid_api_key,
     )
 
 
@@ -513,3 +515,110 @@ class TestStreamEdgeCases:
         rec = _make_recorder(settings=settings, http_client=client)
         result = await rec._connect_stream("http://example.com/stream")
         assert result is None
+
+
+class TestAcoustidFinalize:
+    async def test_match_renames_to_artist_title(self, tmp_path, monkeypatch):
+        """With AcoustID enabled and a metadata match, the file lands as
+        'Artist - Title.mp3'."""
+        from radio_ripper.services.storage import AcoustidLookup, AcoustidMatch
+
+        stream = _make_stream_bytes(
+            ["Mid", "Adele - Hello", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+
+        async def fake_lookup(path, api_key):
+            return AcoustidLookup(accepted=True, match=AcoustidMatch("Adele", "Hello", 0.95))
+
+        monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
+        rec = _make_recorder(
+            settings=settings,
+            http_client=client,
+            acoustid_api_key="test-key",
+        )
+        stream_dir = settings.destination
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
+        assert "Adele - Hello.mp3" in files
+        assert not any(name.endswith(".part") for name in files)
+
+    async def test_match_none_falls_back_to_icy_name(self, tmp_path, monkeypatch):
+        """Without usable metadata the staging file keeps the ICY title name."""
+        from radio_ripper.services.storage import AcoustidLookup
+
+        stream = _make_stream_bytes(
+            ["Mid", "Adele - Hello", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+
+        async def fake_lookup(path, api_key):
+            return AcoustidLookup(accepted=True, match=None)
+
+        monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
+        rec = _make_recorder(
+            settings=settings,
+            http_client=client,
+            acoustid_api_key="test-key",
+        )
+        stream_dir = settings.destination
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
+        assert "Adele - Hello.mp3" in files
+
+    async def test_below_threshold_leaves_no_staging(self, tmp_path, monkeypatch):
+        """A below-threshold discard cleans up the staging file."""
+        from radio_ripper.services.storage import AcoustidLookup
+
+        stream = _make_stream_bytes(
+            ["Mid", "Adele - Hello", "Next - Song"],
+            audio_per_song=METADATA_INTERVAL,
+        )
+        client = FakeHttpClient(stream)
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+
+        async def fake_lookup(path, api_key):
+            return AcoustidLookup(accepted=False, match=None)
+
+        monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
+        rec = _make_recorder(
+            settings=settings,
+            http_client=client,
+            acoustid_api_key="test-key",
+        )
+        stream_dir = settings.destination
+        task = rec.start()
+        await asyncio.sleep(0.5)
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        leftovers = list(stream_dir.iterdir()) if stream_dir.is_dir() else []
+        assert leftovers == []
+
+    def test_make_writer_stages_when_acoustid_enabled(self, tmp_path):
+        """With an AcoustID key the writer uses a unique staging path."""
+        settings = _make_settings(tmp_path)
+        rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""), acoustid_api_key="key")
+        writer = rec._make_writer("Artist - Song")
+        assert writer is not None
+        assert writer.final_path.name.startswith(".")
+        assert writer.final_path.name.endswith(".part")
+        assert rec._fallback_paths[writer.final_path].name == "Artist - Song.mp3"
+        writer.discard()
+
+    def test_make_writer_uses_icy_name_without_key(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""))
+        writer = rec._make_writer("Artist - Song")
+        assert writer is not None
+        assert writer.final_path.name == "Artist - Song.mp3"
+        writer.discard()

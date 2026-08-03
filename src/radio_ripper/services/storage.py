@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -17,6 +18,12 @@ _LOGGER = logging.getLogger(__name__)
 
 _ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
 _ACOUSTID_MIN_SCORE = 0.9  # Mindest-Score fuer einen gueltigen Match (0.0-1.0)
+
+_SCORE_TAG_DESC = "ACOUSTID_SCORE"
+
+# Serializes the collision-check + rename section of finalize_with_metadata so
+# concurrent recorders never race on the same target file.
+_FINALIZE_LOCK = asyncio.Lock()
 
 
 @dataclass(frozen=True)
@@ -231,52 +238,73 @@ async def acoustid_lookup(
         return AcoustidLookup(accepted=True, match=None)
 
     # --- 3. Evaluate score & extract metadata ---------------------------------
-    match = _parse_acoustid_response(api_data, min_score)
-    if match is None:
+    try:
+        if not isinstance(api_data, dict):
+            raise ValueError("unexpected AcoustID response shape")
+        parsed = _parse_acoustid_response(api_data, min_score)
+    except Exception as exc:
+        _LOGGER.warning("AcoustID response parse error for %s: %s — skipping threshold check", path.name, exc)
+        return AcoustidLookup(accepted=True, match=None)
+
+    if parsed is None:
         _LOGGER.info("AcoustID: no qualifying match for %s — discarding", path.name)
         return AcoustidLookup(accepted=False, match=None)
 
+    best_score, best_result = parsed
+    match = _extract_match_metadata(best_result, best_score)
     _LOGGER.info(
-        "AcoustID: %s accepted (score=%.2f >= %.2f, %s - %s)",
+        "AcoustID: %s accepted (score=%.2f >= %.2f%s)",
         path.name,
-        match.score,
+        best_score,
         min_score,
-        match.artist,
-        match.title,
+        f", {match.artist} - {match.title}" if match is not None else " — no metadata",
     )
     return AcoustidLookup(accepted=True, match=match)
 
 
-def _parse_acoustid_response(api_data: dict[str, Any], min_score: float) -> AcoustidMatch | None:
-    """Return the best metadata match from an AcoustID API response, or None."""
-    best: AcoustidMatch | None = None
+def _parse_acoustid_response(api_data: dict[str, Any], min_score: float) -> tuple[float, dict[str, Any]] | None:
+    """Return ``(best_score, best_result)`` for the highest-scoring result that
+    reaches *min_score*, or None when no result qualifies. Acceptance is purely
+    score-based — metadata is extracted separately."""
+    best_score = -1.0
+    best_result: dict[str, Any] | None = None
     for result in api_data.get("results") or []:
         try:
             score = float(result.get("score", 0.0))
         except (TypeError, ValueError):
             continue
-        if score < min_score:
+        if score >= min_score and score > best_score:
+            best_score = score
+            best_result = result
+    if best_result is None:
+        return None
+    return best_score, best_result
+
+
+def _extract_match_metadata(result: dict[str, Any], score: float) -> AcoustidMatch | None:
+    """Extract artist/title from the first recording of *result* that carries
+    usable metadata, or None. The score applies to the whole result."""
+    for recording in result.get("recordings") or []:
+        artists = [a.get("name", "").strip() for a in recording.get("artists") or [] if a.get("name")]
+        artist = ", ".join(a for a in artists if a)
+        title = (recording.get("title") or "").strip()
+        if not artist and not title:
             continue
-        for recording in result.get("recordings") or []:
-            artists = [a.get("name", "").strip() for a in recording.get("artists") or [] if a.get("name")]
-            artist = ", ".join(a for a in artists if a)
-            title = (recording.get("title") or "").strip()
-            if not artist and not title:
-                continue
-            candidate = AcoustidMatch(artist=artist, title=title, score=score)
-            if best is None or score > best.score:
-                best = candidate
-    return best
+        return AcoustidMatch(artist=artist, title=title, score=score)
+    return None
 
 
-def write_mp3_tags(path: Path, *, artist: str, title: str) -> bool:
+def write_mp3_tags(path: Path, *, artist: str, title: str, score: float | None = None) -> bool:
     """Write artist/title as ID3 tags into the MP3 at *path*.
+
+    When *score* is given it is stored as a ``TXXX:ACOUSTID_SCORE`` frame so
+    later collision handling can read it without a re-lookup.
 
     Returns True on success (or when mutagen is not installed, so recordings
     are never lost), False if tagging failed.
     """
     try:
-        from mutagen.id3 import ID3, TIT2, TPE1, ID3NoHeaderError
+        from mutagen.id3 import ID3, TIT2, TPE1, TXXX, ID3NoHeaderError
     except ImportError:
         _LOGGER.warning("mutagen not installed — skipping ID3 tags for %s", path.name)
         return True
@@ -289,11 +317,39 @@ def write_mp3_tags(path: Path, *, artist: str, title: str) -> bool:
             audio.add(TPE1(encoding=3, text=[artist]))  # type: ignore[no-untyped-call]
         if title:
             audio.add(TIT2(encoding=3, text=[title]))  # type: ignore[no-untyped-call]
+        if score is not None:
+            audio.add(TXXX(encoding=3, desc=_SCORE_TAG_DESC, text=[f"{score:.6f}"]))  # type: ignore[no-untyped-call]
         audio.save(path)  # type: ignore[no-untyped-call]
         return True
     except Exception as exc:
         _LOGGER.warning("Failed to write ID3 tags for %s: %s", path.name, exc)
         return False
+
+
+def read_mp3_score(path: Path) -> float | None:
+    """Read the stored ``TXXX:ACOUSTID_SCORE`` tag of *path*, or None."""
+    try:
+        from mutagen.id3 import ID3, TXXX
+
+        tags = ID3(path)  # type: ignore[no-untyped-call]
+        for frame in tags.values():  # type: ignore[no-untyped-call]
+            if isinstance(frame, TXXX) and frame.desc == _SCORE_TAG_DESC:  # type: ignore[attr-defined]
+                return float(frame.text[0])  # type: ignore[attr-defined]
+    except Exception:
+        return None
+    return None
+
+
+def split_icy_title(title: str) -> tuple[str, str]:
+    """Split an ICY 'Artist - Title' string into ``(artist, title)``.
+
+    Falls back to ``("", title)`` when no ' - ' separator is present.
+    """
+    clean = title.strip()
+    if " - " in clean:
+        artist, _, song = clean.partition(" - ")
+        return artist.strip(), song.strip()
+    return "", clean
 
 
 def build_metadata_filename(artist: str, title: str) -> str:
@@ -335,42 +391,63 @@ async def finalize_with_metadata(
     """Write ID3 tags to *path* and rename it to '<artist> - <title>.mp3'.
 
     If a file with the target name already exists, the recording with the
-    higher AcoustID score wins: on a tie (or a higher existing score) the
-    existing file is kept and *path* is deleted; otherwise *path* replaces the
-    existing file. Returns the path of the surviving file.
+    higher AcoustID score wins. The existing score is read from its ID3 tag
+    first and only re-queried via the API when the tag is missing (legacy
+    files). If the existing score cannot be determined, the existing file is
+    kept (never lose data). Returns the path of the surviving file.
+
+    *path* should be a uniquely named staging file in the target directory so
+    a losing new recording can simply be deleted. Replacement uses an atomic
+    ``os.replace``. The collision + rename section is serialized so concurrent
+    recorders cannot race on the same target.
     """
     target_name = build_metadata_filename(artist, title)
     if not target_name or target_name == path.name:
-        write_mp3_tags(path, artist=artist, title=title)
+        write_mp3_tags(path, artist=artist, title=title, score=score)
         return path
 
     target = path.parent / target_name
-    if target.exists():
-        existing = await acoustid_lookup(target, api_key)
-        existing_score = existing.match.score if existing.match else None
-        if existing_score is not None and existing_score >= score:
+    async with _FINALIZE_LOCK:
+        if target.exists():
+            existing_score = read_mp3_score(target)
+            if existing_score is None:
+                existing = await acoustid_lookup(target, api_key)
+                existing_score = existing.match.score if existing.match else None
+            if existing_score is None:
+                _LOGGER.warning(
+                    "Kept existing %s (score unknown); discarding %s",
+                    target.name,
+                    path.name,
+                )
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                return target
+            if existing_score >= score:
+                _LOGGER.info(
+                    "Kept existing %s (score %.2f >= %.2f); discarding %s",
+                    target.name,
+                    existing_score,
+                    score,
+                    path.name,
+                )
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                return target
             _LOGGER.info(
-                "Kept existing %s (score %.2f >= %.2f); discarding %s",
+                "Replacing %s with %s (score %.2f > %.2f)",
                 target.name,
-                existing_score,
-                score,
                 path.name,
+                score,
+                existing_score,
             )
-            with contextlib.suppress(OSError):
-                path.unlink(missing_ok=True)
-            return target
-        _LOGGER.info(
-            "Replacing %s with %s (score %.2f > %s)",
-            target.name,
-            path.name,
-            score,
-            f"{existing_score:.2f}" if existing_score is not None else "unknown",
-        )
-        with contextlib.suppress(OSError):
-            target.unlink(missing_ok=True)
 
-    write_mp3_tags(path, artist=artist, title=title)
-    return rename_track(path, artist, title)
+    write_mp3_tags(path, artist=artist, title=title, score=score)
+    try:
+        os.replace(str(path), str(target))
+    except OSError as exc:
+        _LOGGER.warning("Failed to move %s -> %s: %s", path, target, exc)
+        return path
+    return target
 
 
 __all__ = [
@@ -382,7 +459,9 @@ __all__ = [
     "finalize_with_metadata",
     "get_mp3_duration",
     "is_valid_mp3",
+    "read_mp3_score",
     "rename_track",
     "sanitize_filename",
+    "split_icy_title",
     "write_mp3_tags",
 ]

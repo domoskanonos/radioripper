@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import json
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from radio_ripper.services.storage import (
+    AcoustidMatch,
     TrackWriter,
+    _extract_match_metadata,
     _parse_acoustid_response,
     build_metadata_filename,
+    read_mp3_score,
     rename_track,
     sanitize_filename,
+    split_icy_title,
     write_mp3_tags,
 )
 
@@ -203,18 +208,18 @@ class TestParseAcoustidResponse:
             ]
         }
 
-    def test_selects_best_match(self):
+    def test_selects_best_score(self):
         data = {
             "results": [
                 {"id": "low", "score": 0.5, "recordings": [{"title": "Low", "artists": [{"name": "X"}]}]},
                 {"id": "high", "score": 0.95, "recordings": [{"title": "Song", "artists": [{"name": "Artist"}]}]},
             ]
         }
-        match = _parse_acoustid_response(data, min_score=0.9)
-        assert match is not None
-        assert match.artist == "Artist"
-        assert match.title == "Song"
-        assert match.score == pytest.approx(0.95)
+        parsed = _parse_acoustid_response(data, min_score=0.9)
+        assert parsed is not None
+        score, result = parsed
+        assert score == pytest.approx(0.95)
+        assert result["id"] == "high"
 
     def test_below_threshold_returns_none(self):
         assert _parse_acoustid_response(self._response(0.5), min_score=0.9) is None
@@ -222,33 +227,150 @@ class TestParseAcoustidResponse:
     def test_no_results_returns_none(self):
         assert _parse_acoustid_response({"status": "ok", "results": []}, min_score=0.9) is None
 
-    def test_joins_multiple_artists(self):
-        data = {
-            "results": [
-                {
-                    "id": "r",
-                    "score": 0.95,
-                    "recordings": [
-                        {
-                            "id": "rec",
-                            "title": "Song",
-                            "artists": [{"name": "A"}, {"name": "B"}],
-                        }
-                    ],
-                }
-            ]
-        }
-        match = _parse_acoustid_response(data, min_score=0.9)
-        assert match is not None
-        assert match.artist == "A, B"
-
-    def test_recording_without_metadata_is_skipped(self):
-        data = {"results": [{"id": "r", "score": 0.95, "recordings": [{"id": "rec", "title": "", "artists": []}]}]}
-        assert _parse_acoustid_response(data, min_score=0.9) is None
-
     def test_invalid_score_skipped(self):
         data = {"results": [{"id": "r", "score": "nope", "recordings": [{"title": "T", "artists": [{"name": "A"}]}]}]}
         assert _parse_acoustid_response(data, min_score=0.9) is None
+
+
+class TestExtractMatchMetadata:
+    def _recording(self, *, title: str = "Song", artists: list[dict] | None = None) -> dict:
+        return {"recordings": [{"id": "rec", "title": title, "artists": artists or [{"name": "Artist"}]}]}
+
+    def test_extracts_artist_and_title(self):
+        match = _extract_match_metadata(self._recording(), score=0.95)
+        assert match == AcoustidMatch(artist="Artist", title="Song", score=0.95)
+
+    def test_joins_multiple_artists(self):
+        match = _extract_match_metadata(self._recording(artists=[{"name": "A"}, {"name": "B"}]), score=0.9)
+        assert match is not None
+        assert match.artist == "A, B"
+
+    def test_first_recording_with_metadata_wins(self):
+        result = {
+            "recordings": [
+                {"id": "r1", "title": "", "artists": []},
+                {"id": "r2", "title": "Song", "artists": [{"name": "Artist"}]},
+            ]
+        }
+        match = _extract_match_metadata(result, score=0.95)
+        assert match is not None
+        assert match.title == "Song"
+
+    def test_no_metadata_returns_none(self):
+        assert _extract_match_metadata({"recordings": [{"id": "r1", "title": "", "artists": []}]}, score=0.95) is None
+
+    def test_no_recordings_returns_none(self):
+        assert _extract_match_metadata({"recordings": []}, score=0.95) is None
+
+
+class TestAcoustidLookupMetadataRegression:
+    async def test_high_score_without_metadata_is_accepted(self, tmp_path):
+        """A qualifying score without usable metadata must keep the file."""
+        from radio_ripper.services.storage import acoustid_lookup
+
+        path = tmp_path / "song.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        fp = json.dumps({"fingerprint": "fp", "duration": 120.0}).encode()
+        api = json.dumps(
+            {"status": "ok", "results": [{"id": "r", "score": 0.95, "recordings": [{"id": "rec"}]}]}
+        ).encode()
+
+        proc = AsyncMock()
+        proc.communicate.return_value = (fp, b"")
+        urlopen = Mock()
+        urlopen.return_value.read.return_value = api
+        with (
+            patch("radio_ripper.services.storage.shutil.which", return_value="/usr/bin/fpcalc"),
+            patch("radio_ripper.services.storage.asyncio.create_subprocess_exec", return_value=proc),
+            patch("urllib.request.urlopen", urlopen),
+        ):
+            result = await acoustid_lookup(path, "key")
+
+        assert result.accepted is True
+        assert result.match is None
+
+    async def test_result_without_recordings_is_accepted(self, tmp_path):
+        """A qualifying result with no recordings block still passes."""
+        from radio_ripper.services.storage import acoustid_lookup
+
+        path = tmp_path / "song.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        fp = json.dumps({"fingerprint": "fp", "duration": 120.0}).encode()
+        api = json.dumps({"status": "ok", "results": [{"id": "r", "score": 0.95}]}).encode()
+
+        proc = AsyncMock()
+        proc.communicate.return_value = (fp, b"")
+        urlopen = Mock()
+        urlopen.return_value.read.return_value = api
+        with (
+            patch("radio_ripper.services.storage.shutil.which", return_value="/usr/bin/fpcalc"),
+            patch("radio_ripper.services.storage.asyncio.create_subprocess_exec", return_value=proc),
+            patch("urllib.request.urlopen", urlopen),
+        ):
+            result = await acoustid_lookup(path, "key")
+
+        assert result.accepted is True
+        assert result.match is None
+
+    async def test_below_threshold_discards(self, tmp_path):
+        from radio_ripper.services.storage import acoustid_lookup
+
+        path = tmp_path / "song.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        fp = json.dumps({"fingerprint": "fp", "duration": 120.0}).encode()
+        api = json.dumps(
+            {"status": "ok", "results": [{"id": "r", "score": 0.5, "recordings": [{"title": "T"}]}]}
+        ).encode()
+
+        proc = AsyncMock()
+        proc.communicate.return_value = (fp, b"")
+        urlopen = Mock()
+        urlopen.return_value.read.return_value = api
+        with (
+            patch("radio_ripper.services.storage.shutil.which", return_value="/usr/bin/fpcalc"),
+            patch("radio_ripper.services.storage.asyncio.create_subprocess_exec", return_value=proc),
+            patch("urllib.request.urlopen", urlopen),
+        ):
+            result = await acoustid_lookup(path, "key")
+
+        assert result.accepted is False
+        assert result.match is None
+
+    async def test_non_dict_response_fail_open(self, tmp_path):
+        """A malformed API response must not raise and must keep the file."""
+        from radio_ripper.services.storage import acoustid_lookup
+
+        path = tmp_path / "song.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        fp = json.dumps({"fingerprint": "fp", "duration": 120.0}).encode()
+
+        proc = AsyncMock()
+        proc.communicate.return_value = (fp, b"")
+        urlopen = Mock()
+        urlopen.return_value.read.return_value = b"[1, 2, 3]"
+        with (
+            patch("radio_ripper.services.storage.shutil.which", return_value="/usr/bin/fpcalc"),
+            patch("radio_ripper.services.storage.asyncio.create_subprocess_exec", return_value=proc),
+            patch("urllib.request.urlopen", urlopen),
+        ):
+            result = await acoustid_lookup(path, "key")
+
+        assert result.accepted is True
+        assert result.match is None
+
+
+class TestSplitIcyTitle:
+    def test_artist_title(self):
+        assert split_icy_title("Artist - Title") == ("Artist", "Title")
+
+    def test_no_separator(self):
+        assert split_icy_title("Just a Song") == ("", "Just a Song")
+
+    def test_multiple_separators(self):
+        assert split_icy_title("A - B - C") == ("A", "B - C")
+
+    def test_strips_whitespace(self):
+        assert split_icy_title("  Artist  -  Title  ") == ("Artist", "Title")
 
 
 class TestBuildMetadataFilename:
@@ -394,7 +516,8 @@ class TestFinalizeWithMetadata:
         assert result == existing
         assert not src.exists()
 
-    async def test_existing_without_metadata_is_replaced(self, tmp_path, monkeypatch):
+    async def test_existing_with_unknown_score_is_kept(self, tmp_path, monkeypatch):
+        """Policy: never lose data — keep existing when its score is unknown."""
         from radio_ripper.services.storage import (
             AcoustidLookup,
             finalize_with_metadata,
@@ -410,7 +533,75 @@ class TestFinalizeWithMetadata:
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
         result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.95)
+        assert result == existing
+        assert existing.read_bytes() == b"old"
+        assert not src.exists()
+
+    async def test_existing_tag_score_used_without_relookup(self, tmp_path, monkeypatch):
+        """A stored TXXX score avoids an API re-lookup of the existing file."""
+        from radio_ripper.services.storage import (
+            AcoustidLookup,
+            AcoustidMatch,
+            finalize_with_metadata,
+        )
+
+        existing = tmp_path / "Artist - Title.mp3"
+        existing.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        write_mp3_tags(existing, artist="Artist", title="Title", score=0.99)
+        src = tmp_path / "new.mp3"
+        src.write_bytes(b"new")
+
+        called = False
+
+        async def fake_lookup(path, api_key):
+            nonlocal called
+            called = True
+            return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.0))
+
+        monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
+        result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.9)
+        assert result == existing
+        assert not src.exists()
+        assert called is False
+
+    async def test_existing_tag_score_lower_replaces(self, tmp_path, monkeypatch):
+        from radio_ripper.services.storage import (
+            AcoustidLookup,
+            AcoustidMatch,
+            finalize_with_metadata,
+        )
+
+        existing = tmp_path / "Artist - Title.mp3"
+        existing.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        write_mp3_tags(existing, artist="Artist", title="Title", score=0.8)
+        src = tmp_path / "new.mp3"
+        src.write_bytes(b"new")
+
+        called = False
+
+        async def fake_lookup(path, api_key):
+            nonlocal called
+            called = True
+            return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.0))
+
+        monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
+        result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.95)
         assert result.name == "Artist - Title.mp3"
         assert result.is_file()
-        assert b"new" in result.read_bytes()
-        assert not src.exists()
+        assert called is False
+
+
+class TestReadMp3Score:
+    def test_reads_written_score(self, tmp_path):
+        path = tmp_path / "song.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        write_mp3_tags(path, artist="Artist", title="Title", score=0.9123)
+        assert read_mp3_score(path) == pytest.approx(0.9123)
+
+    def test_untagged_returns_none(self, tmp_path):
+        path = tmp_path / "song.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        assert read_mp3_score(path) is None
+
+    def test_missing_file_returns_none(self, tmp_path):
+        assert read_mp3_score(tmp_path / "nope.mp3") is None

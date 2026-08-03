@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import random
 import re
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +21,8 @@ from radio_ripper.services.storage import (
     get_mp3_duration,
     is_valid_mp3,
     sanitize_filename,
+    split_icy_title,
+    write_mp3_tags,
 )
 
 if TYPE_CHECKING:
@@ -76,6 +80,7 @@ class StreamRecorder:
         self._paused = asyncio.Event()
         self._station_bitrate = station_bitrate
         self._acoustid_api_key = acoustid_api_key
+        self._fallback_paths: dict[Path, Path] = {}
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -242,7 +247,12 @@ class StreamRecorder:
         if not safe_name:
             self._log.error("[%s] Cannot create file for title=%r", self.station_name, title)
             return None
-        file_path = stream_dir / (safe_name + ".mp3")
+        if self._acoustid_api_key:
+            staging = stream_dir / f".{safe_name}.{uuid.uuid4().hex}.part"
+            self._fallback_paths[staging] = stream_dir / (safe_name + ".mp3")
+            file_path = staging
+        else:
+            file_path = stream_dir / (safe_name + ".mp3")
         try:
             return TrackWriter(
                 file_path,
@@ -280,6 +290,7 @@ class StreamRecorder:
                 if self._stop_event.is_set():
                     self._log.info("[%s] Stop requested; discarding in-flight song.", self.station_name)
                     if writer is not None:
+                        self._fallback_paths.pop(writer.final_path, None)
                         writer.discard()
                     return True
                 if not chunk:
@@ -313,16 +324,22 @@ class StreamRecorder:
                         writer = self._make_writer(new_title.strip())
                         if writer is not None:
                             recording = True
-                            self._log.info("[%s] Recording -> %s", self.station_name, writer.final_path.name)
+                            self._log.info(
+                                "[%s] Recording -> %s",
+                                self.station_name,
+                                self._fallback_paths.get(writer.final_path, writer.final_path).name,
+                            )
                         else:
                             recording = False
             self._log.info("[%s] stream ended (EOF).", self.station_name)
             if writer is not None:
+                self._fallback_paths.pop(writer.final_path, None)
                 writer.discard()
             return True
         except Exception as exc:
             self._log.warning("[%s] stream interrupted: %s", self.station_name, exc)
             if writer is not None:
+                self._fallback_paths.pop(writer.final_path, None)
                 writer.discard()
             return False
         finally:
@@ -337,14 +354,18 @@ class StreamRecorder:
                 self.station_name,
                 writer.final_path.name,
             )
+            self._fallback_paths.pop(writer.final_path, None)
             return
         final_path = writer.final_path
+        fallback = self._fallback_paths.pop(final_path, None)
+        log_name = fallback.name if fallback is not None else final_path.name
+
         if 0 < self._station_bitrate < 128:
             self._log.info(
                 "[%s] Discarded (bitrate %d kbps < 128): %s",
                 self.station_name,
                 self._station_bitrate,
-                final_path.name,
+                log_name,
             )
             with contextlib.suppress(OSError):
                 final_path.unlink(missing_ok=True)
@@ -353,7 +374,7 @@ class StreamRecorder:
             self._log.info(
                 "[%s] Discarded (not a valid MP3): %s",
                 self.station_name,
-                final_path.name,
+                log_name,
             )
             with contextlib.suppress(OSError):
                 final_path.unlink(missing_ok=True)
@@ -361,13 +382,15 @@ class StreamRecorder:
         ok = await self._check_min_duration(final_path)
         if not ok:
             return
+
+        acoustid_tagged = False
         if self._acoustid_api_key:
             lookup = await acoustid_lookup(final_path, self._acoustid_api_key)
             if not lookup.accepted:
                 self._log.info(
                     "[%s] Discarded (AcoustID score below threshold): %s",
                     self.station_name,
-                    final_path.name,
+                    log_name,
                 )
                 with contextlib.suppress(OSError):
                     final_path.unlink(missing_ok=True)
@@ -381,6 +404,24 @@ class StreamRecorder:
                     title=match.title,
                     score=match.score,
                 )
+                acoustid_tagged = True
+            elif fallback is not None:
+                try:
+                    os.replace(str(final_path), str(fallback))
+                    final_path = fallback
+                except OSError as exc:
+                    self._log.warning(
+                        "[%s] Failed to move %s -> %s: %s",
+                        self.station_name,
+                        final_path,
+                        fallback,
+                        exc,
+                    )
+
+        if not acoustid_tagged and _current_title:
+            artist, title = split_icy_title(_current_title)
+            write_mp3_tags(final_path, artist=artist, title=title)
+
         self._log.info(
             "[%s] Streaming result: %s (%d bytes)",
             self.station_name,
