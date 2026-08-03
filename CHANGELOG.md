@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.4.1 (2026-08-03)
+
+### Bug Fixes
+
+- Aktualisiere Mindest-Score für AcoustID auf 0.9 und erhöhe die Version auf 2.3.4
+  ([`8192b48`](https://github.com/domoskanonos/radioripper/commit/8192b48d5e26abf73c5153058247553e8f389945))
+
+
 ## v2.4.0 (2026-08-03)
 
 ### Features
