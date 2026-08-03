@@ -14,7 +14,7 @@ _WHITESPACE_RE = re.compile(r"\s+")
 _LOGGER = logging.getLogger(__name__)
 
 _ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
-_ACOUSTID_MIN_SCORE = 0.7  # Mindest-Score fuer einen gueltigen Match (0.0-1.0)
+_ACOUSTID_MIN_SCORE = 0.9  # Mindest-Score fuer einen gueltigen Match (0.0-1.0)
 
 
 def sanitize_filename(name: str) -> str:
