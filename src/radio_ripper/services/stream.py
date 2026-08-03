@@ -1,9 +1,20 @@
+"""Stream recorder — records ICY streams into unchecked_mp3 staging.
+
+The recorder is responsible for:
+  1. Connecting to a stream URL and parsing ICY metadata.
+  2. Writing audio chunks to a temporary ``.part`` file inside ``unchecked_mp3/``.
+  3. At each title boundary: committing the file (size + duration + MP3 validity
+     checks), then handing it to the ``AcoustidQueue`` for async fingerprinting.
+
+The recorder does *not* do AcoustID lookups itself any more.  All final naming
+and destination placement is handled by ``AcoustidQueue``.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
-import os
 import random
 import re
 import uuid
@@ -17,17 +28,14 @@ from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.playlist import PlaylistResolver
 from radio_ripper.services.storage import (
     TrackWriter,
-    acoustid_lookup,
-    finalize_with_metadata,
     get_mp3_duration,
     is_valid_mp3,
     sanitize_filename,
-    split_icy_title,
-    write_mp3_tags,
 )
 
 if TYPE_CHECKING:
     from radio_ripper.infra.http import AsyncHttpClient
+    from radio_ripper.services.acoustid_queue import AcoustidQueue
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,11 +67,11 @@ class StreamRecorder:
         settings: Settings,
         http_client: AsyncHttpClient,
         playlist_resolver: PlaylistResolver,
+        acoustid_queue: AcoustidQueue | None = None,
         logger: logging.Logger | None = None,
         ignore_title_patterns: list[str] | None = None,
         no_icy_disable_after: int = 10,
         station_bitrate: int = 0,
-        acoustid_api_key: str = "",
     ) -> None:
         self.station_name = station_name
         try:
@@ -73,6 +81,7 @@ class StreamRecorder:
         self.settings = settings
         self._http = http_client
         self._resolver = playlist_resolver
+        self._acoustid_queue = acoustid_queue
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -83,8 +92,6 @@ class StreamRecorder:
         self._connect_failures = 0
         self._paused = asyncio.Event()
         self._station_bitrate = station_bitrate
-        self._acoustid_api_key = acoustid_api_key
-        self._fallback_paths: dict[Path, Path] = {}
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -244,19 +251,24 @@ class StreamRecorder:
             path.unlink(missing_ok=True)
         return False
 
-    def _make_writer(self, title: str) -> TrackWriter | None:
-        stream_dir = self.settings.destination
-        stream_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = sanitize_filename(title)
+    def _make_writer(self, icy_title: str) -> TrackWriter | None:
+        """Create a TrackWriter that stages the recording in unchecked_mp3/.
+
+        The filename is ``<safe_icy_title>.<uuid>.mp3`` so multiple recordings
+        of the same title can coexist without clobbering each other.
+        The ICY title is only used as a human-readable hint — the final filename
+        will be determined by the AcoustID lookup.
+        """
+        unchecked_dir = self.settings.work_dir / "unchecked_mp3"
+        unchecked_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = sanitize_filename(icy_title)
         if not safe_name:
-            self._log.error("[%s] Cannot create file for title=%r", self.station_name, title)
+            self._log.error("[%s] Cannot create file for title=%r", self.station_name, icy_title)
             return None
-        if self._acoustid_api_key:
-            staging = stream_dir / f".{safe_name}.{uuid.uuid4().hex}.part"
-            self._fallback_paths[staging] = stream_dir / (safe_name + ".mp3")
-            file_path = staging
-        else:
-            file_path = stream_dir / (safe_name + ".mp3")
+
+        # Unique staging name: keeps ICY title readable while avoiding collisions
+        file_path = unchecked_dir / f"{safe_name}.{uuid.uuid4().hex}.mp3"
         try:
             return TrackWriter(
                 file_path,
@@ -294,7 +306,6 @@ class StreamRecorder:
                 if self._stop_event.is_set():
                     self._log.info("[%s] Stop requested; discarding in-flight song.", self.station_name)
                     if writer is not None:
-                        self._fallback_paths.pop(writer.final_path, None)
                         writer.discard()
                     return True
                 if not chunk:
@@ -331,26 +342,25 @@ class StreamRecorder:
                             self._log.info(
                                 "[%s] Recording -> %s",
                                 self.station_name,
-                                self._fallback_paths.get(writer.final_path, writer.final_path).name,
+                                writer.final_path.name,
                             )
                         else:
                             recording = False
             self._log.info("[%s] stream ended (EOF).", self.station_name)
             if writer is not None:
-                self._fallback_paths.pop(writer.final_path, None)
                 writer.discard()
             return True
         except Exception as exc:
             self._log.warning("[%s] stream interrupted: %s", self.station_name, exc)
             if writer is not None:
-                self._fallback_paths.pop(writer.final_path, None)
                 writer.discard()
             return False
         finally:
             with contextlib.suppress(Exception):
                 await agen.aclose()
 
-    async def _finalize_writer(self, writer: TrackWriter, _current_title: str | None = None) -> None:
+    async def _finalize_writer(self, writer: TrackWriter, _icy_title: str | None = None) -> None:
+        """Commit a completed recording, run quality checks, hand off to queue."""
         committed = writer.commit()
         if not committed:
             self._log.info(
@@ -358,86 +368,52 @@ class StreamRecorder:
                 self.station_name,
                 writer.final_path.name,
             )
-            self._fallback_paths.pop(writer.final_path, None)
             return
+
         final_path = writer.final_path
-        fallback = self._fallback_paths.pop(final_path, None)
-        log_name = fallback.name if fallback is not None else final_path.name
 
         if 0 < self._station_bitrate < 128:
             self._log.info(
                 "[%s] Discarded (bitrate %d kbps < 128): %s",
                 self.station_name,
                 self._station_bitrate,
-                log_name,
+                final_path.name,
             )
             with contextlib.suppress(OSError):
                 final_path.unlink(missing_ok=True)
             return
+
         if not await is_valid_mp3(final_path):
             self._log.info(
                 "[%s] Discarded (not a valid MP3): %s",
                 self.station_name,
-                log_name,
+                final_path.name,
             )
             with contextlib.suppress(OSError):
                 final_path.unlink(missing_ok=True)
             return
+
         ok = await self._check_min_duration(final_path)
         if not ok:
             return
 
-        acoustid_tagged = False
-        if self._acoustid_api_key:
-            lookup = await acoustid_lookup(
-                final_path,
-                self._acoustid_api_key,
-                min_score=self.settings.acoustid_min_score,
-                http_client=self._http,
+        # All local checks passed — hand off to AcoustID queue
+        if self._acoustid_queue is not None:
+            self._log.info(
+                "[%s] Queued for AcoustID: %s (%d bytes)",
+                self.station_name,
+                final_path.name,
+                _safe_size(final_path),
             )
-            if not lookup.accepted:
-                self._log.info(
-                    "[%s] Discarded (AcoustID score below threshold): %s",
-                    self.station_name,
-                    log_name,
-                )
-                with contextlib.suppress(OSError):
-                    final_path.unlink(missing_ok=True)
-                return
-            if lookup.match is not None:
-                match = lookup.match
-                final_path = await finalize_with_metadata(
-                    final_path,
-                    self._acoustid_api_key,
-                    artist=match.artist,
-                    title=match.title,
-                    score=match.score,
-                    http_client=self._http,
-                )
-                acoustid_tagged = True
-            elif fallback is not None:
-                try:
-                    os.replace(str(final_path), str(fallback))
-                    final_path = fallback
-                except OSError as exc:
-                    self._log.warning(
-                        "[%s] Failed to move %s -> %s: %s",
-                        self.station_name,
-                        final_path,
-                        fallback,
-                        exc,
-                    )
-
-        if not acoustid_tagged and _current_title:
-            artist, title = split_icy_title(_current_title)
-            write_mp3_tags(final_path, artist=artist, title=title)
-
-        self._log.info(
-            "[%s] Streaming result: %s (%d bytes)",
-            self.station_name,
-            final_path.name,
-            _safe_size(final_path),
-        )
+            self._acoustid_queue.enqueue(final_path)
+        else:
+            # No queue configured (tests / no API key): keep as-is in unchecked_mp3
+            self._log.info(
+                "[%s] No AcoustID queue — file stays in unchecked_mp3: %s (%d bytes)",
+                self.station_name,
+                final_path.name,
+                _safe_size(final_path),
+            )
 
 
 __all__ = ["StreamRecorder"]

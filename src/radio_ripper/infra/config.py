@@ -114,9 +114,21 @@ class Settings(BaseModel):
     discovery_random_sample_size: int = Field(default=10000, ge=100)
     discovery_work_station_count: int = Field(default=400, ge=1)
 
-    # AcoustID settings (previously hardcoded in storage.py)
+    # AcoustID settings
     acoustid_min_score: float = Field(default=0.9, ge=0.0, le=1.0)
     acoustid_api_url: str = Field(default="https://api.acoustid.org/v2/lookup")
+    # Rate limit: AcoustID allows 3 req/s; 60/min is conservative and safe
+    acoustid_requests_per_minute: int = Field(default=60, ge=1, le=180)
+    # Max retries for transient API errors (network, timeout) before giving up
+    acoustid_retry_max_attempts: int = Field(default=5, ge=0)
+    # Base delay for retry backoff (seconds)
+    acoustid_retry_base_delay: float = Field(default=30.0, ge=1.0)
+    # Max retry delay cap (seconds)
+    acoustid_retry_max_delay: float = Field(default=3600.0, ge=60.0)
+
+    # Unchecked MP3 staging directory limits (inside work_dir/unchecked_mp3)
+    max_unchecked_files: int = Field(default=10000, ge=100)
+    max_unchecked_bytes: int = Field(default=10 * 1024 * 1024 * 1024, ge=0)  # 10 GB
 
     # Logging settings (previously hardcoded in logging.py)
     log_file_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)  # 5 MB

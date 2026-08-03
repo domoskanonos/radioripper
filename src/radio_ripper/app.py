@@ -9,8 +9,10 @@ from pathlib import Path
 
 from radio_ripper.infra.config import LiveConfig, Settings, StreamConfig
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
+from radio_ripper.services.acoustid_queue import AcoustidQueue
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver, load_local_m3u
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService, probe_icy
+from radio_ripper.services.storage import read_mp3_score
 from radio_ripper.services.stream import StreamRecorder
 
 _LOGGER = logging.getLogger("radio_ripper.app")
@@ -26,27 +28,35 @@ class RadioRipperApp:
         client: AsyncHttpClient,
         playlist_resolver: PlaylistResolver,
         live_config: LiveConfig | None = None,
+        acoustid_api_key: str = "",
         logger: logging.Logger | None = None,
     ) -> None:
         self.settings = settings
         self.client = client
         self.resolver = playlist_resolver
         self._live_config = live_config
+        self._acoustid_api_key = acoustid_api_key
         self.logger = logger or _LOGGER
         self._recorders: list[StreamRecorder] = []
         self._recorders_lock = asyncio.Lock()
         self._cancel_requested = False
         self._housekeeping_task: asyncio.Task[None] | None = None
+        # AcoustID queue — created in start() once we have a running event loop
+        self._acoustid_queue: AcoustidQueue | None = None
+        # Dedicated small HTTP client for AcoustID (separate from stream pool)
+        self._acoustid_http: HttpxAsyncClient | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings, *, logger: logging.Logger | None = None) -> RadioRipperApp:
         log = logger or _LOGGER
         client = HttpxAsyncClient(user_agent=settings.user_agent)
         resolver = HttpPlaylistResolver(client, timeout=settings.request_timeout)
+        acoustid_key = os.environ.get("ACOUST_ID", "").strip()
         return cls(
             settings=settings,
             client=client,
             playlist_resolver=resolver,
+            acoustid_api_key=acoustid_key,
             logger=log,
         )
 
@@ -62,11 +72,13 @@ class RadioRipperApp:
         client = HttpxAsyncClient(user_agent=settings.user_agent)
         resolver = HttpPlaylistResolver(client, timeout=settings.request_timeout)
         live_config = LiveConfig(config_path, settings)
+        acoustid_key = os.environ.get("ACOUST_ID", "").strip()
         return cls(
             settings=settings,
             client=client,
             playlist_resolver=resolver,
             live_config=live_config,
+            acoustid_api_key=acoustid_key,
             logger=log,
         )
 
@@ -93,12 +105,65 @@ class RadioRipperApp:
             self.logger.info("Startup cancelled.")
             return
 
+        # ------------------------------------------------------------------
+        # AcoustID queue setup
+        # ------------------------------------------------------------------
+        if self._acoustid_api_key:
+            # Dedicated client with a small connection pool for AcoustID
+            self._acoustid_http = HttpxAsyncClient(
+                user_agent=self.settings.user_agent,
+                max_pool_size=4,
+                total_timeout=25.0,
+            )
+            self._acoustid_queue = AcoustidQueue(
+                settings=self.settings,
+                api_key=self._acoustid_api_key,
+                destination=self.settings.destination,
+                http_client=self._acoustid_http,
+                logger=self.logger,
+            )
+            self._acoustid_queue.start()
+            recovered = self._acoustid_queue.load_existing_unchecked()
+            if recovered:
+                self.logger.info("Recovered %d file(s) from previous run into AcoustID queue.", recovered)
+            # Migrate existing destination files that lack an ACOUSTID_SCORE tag
+            await self._migrate_unscored_files()
+        else:
+            self.logger.warning(
+                "ACOUST_ID not set — AcoustID fingerprinting disabled. "
+                "Recordings stay in work/unchecked_mp3 and are not moved to destination."
+            )
+
         self._housekeeping_task = asyncio.create_task(self._run_housekeeping())
 
         stations = await self._resolve_stations()
         if not stations:
             return
         await self._start_recorders(stations)
+
+    async def _migrate_unscored_files(self) -> None:
+        """Move existing destination MP3s without ACOUSTID_SCORE tag to unchecked_mp3."""
+        dest = self.settings.destination
+        if not dest.is_dir() or self._acoustid_queue is None:
+            return
+        moved = 0
+        for mp3 in dest.glob("*.mp3"):
+            score = read_mp3_score(mp3)
+            if score is None:
+                try:
+                    target = self._acoustid_queue.unchecked_dir / mp3.name
+                    # Avoid clobbering if same name already in unchecked
+                    if target.exists():
+                        import uuid as _uuid
+
+                        target = self._acoustid_queue.unchecked_dir / f"{mp3.stem}.{_uuid.uuid4().hex}.mp3"
+                    mp3.rename(target)
+                    self._acoustid_queue.enqueue(target)
+                    moved += 1
+                except OSError as exc:
+                    self.logger.warning("Could not migrate %s: %s", mp3.name, exc)
+        if moved:
+            self.logger.info("Migrated %d unscored destination file(s) to unchecked_mp3.", moved)
 
     async def _resolve_stations(self, *, context: str | None = None) -> list[StreamConfig]:
         stations = self._select_stations()
@@ -121,12 +186,6 @@ class RadioRipperApp:
         return stations
 
     async def _start_recorders(self, stations: list[StreamConfig]) -> None:
-        acoustid_key = os.environ.get("ACOUST_ID", "").strip()
-        if not acoustid_key:
-            self.logger.warning(
-                "ACOUST_ID environment variable is not set — AcoustID fingerprinting disabled. "
-                "Set ACOUST_ID to enable quality filtering of recordings."
-            )
         async with self._recorders_lock:
             for stream in stations:
                 if not stream.enabled:
@@ -140,11 +199,11 @@ class RadioRipperApp:
                     settings=self.settings,
                     http_client=self.client,
                     playlist_resolver=self.resolver,
+                    acoustid_queue=self._acoustid_queue,
                     logger=self.logger,
                     ignore_title_patterns=patterns,
                     no_icy_disable_after=self.settings.no_icy_disable_after,
                     station_bitrate=stream.bitrate,
-                    acoustid_api_key=acoustid_key,
                 )
                 rec.start()
                 self._recorders.append(rec)
@@ -334,9 +393,14 @@ class RadioRipperApp:
         async with self._recorders_lock:
             for rec in self._recorders:
                 rec.stop()
-        # Stop all recorders BEFORE closing HTTP client to prevent connection leaks
+        # Stop recorders BEFORE closing HTTP clients to prevent connection leaks
         await self._stop_all_recorders()
         await self.client.aclose()
+        # Stop AcoustID queue after recorders so no new items arrive during shutdown
+        if self._acoustid_queue is not None:
+            await self._acoustid_queue.stop()
+        if self._acoustid_http is not None:
+            await self._acoustid_http.aclose()
         self.logger.info("All recorders stopped.")
 
 

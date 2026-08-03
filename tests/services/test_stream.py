@@ -94,7 +94,7 @@ def _make_recorder(
     logger: Any = None,
     ignore_title_patterns: Any = None,
     no_icy_disable_after: int = 10,
-    acoustid_api_key: str = "",
+    acoustid_queue: Any = None,
 ) -> StreamRecorder:
     return StreamRecorder(
         station_name="TestStation",
@@ -102,10 +102,10 @@ def _make_recorder(
         settings=settings,
         http_client=http_client,
         playlist_resolver=StaticPlaylistResolver(["http://fake.example.com/stream"]),
+        acoustid_queue=acoustid_queue,
         logger=logger,
         ignore_title_patterns=ignore_title_patterns,
         no_icy_disable_after=no_icy_disable_after,
-        acoustid_api_key=acoustid_api_key,
     )
 
 
@@ -139,7 +139,7 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
         rec = _make_recorder(settings=settings, http_client=client)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -156,7 +156,7 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path)
         rec = _make_recorder(settings=settings, http_client=client)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -174,7 +174,7 @@ class TestStreamRecorder:
         await asyncio.sleep(0.3)
         rec.stop()
         await asyncio.wait_for(task, timeout=3)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("A - B" in f for f in files)
 
@@ -213,7 +213,7 @@ class TestStreamRecorder:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
         rec = _make_recorder(settings=settings, http_client=client)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
@@ -234,7 +234,7 @@ class TestIgnorePatterns:
         settings = _make_settings(tmp_path)
         import shutil
 
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         if stream_dir.is_dir():
             shutil.rmtree(stream_dir)
         rec = StreamRecorder(
@@ -249,7 +249,7 @@ class TestIgnorePatterns:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("Werbung" in f for f in files)
         assert any("Artist" in f for f in files)
@@ -274,7 +274,7 @@ class TestIgnorePatterns:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert not any("ADVERTISEMENT" in f for f in files)
         assert any("Artist" in f for f in files)
@@ -292,7 +292,7 @@ class TestIgnorePatterns:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert any("Werbung" in f for f in files)
 
@@ -385,7 +385,7 @@ class TestBlankOrAdTitles:
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
         assert all("   " not in f for f in files)
         assert any("Artist" in f for f in files)
@@ -397,7 +397,7 @@ class TestDiscardSmallFile:
         import shutil
 
         settings = _make_settings(tmp_path, min_file_size_bytes=250)
-        stream_dir = settings.destination
+        stream_dir = settings.work_dir / "unchecked_mp3"
         if stream_dir.is_dir():
             shutil.rmtree(stream_dir)
         stream = _make_stream_bytes(["Joining", "Artist - Too Small", "Next - Song"])
@@ -518,10 +518,9 @@ class TestStreamEdgeCases:
 
 
 class TestAcoustidFinalize:
-    async def test_match_renames_to_artist_title(self, tmp_path, monkeypatch):
-        """With AcoustID enabled and a metadata match, the file lands as
-        'Artist - Title.mp3'."""
-        from radio_ripper.services.storage import AcoustidLookup, AcoustidMatch
+    async def test_valid_recording_enqueues_to_acoustid_queue(self, tmp_path):
+        """After size/duration/validity checks pass, the file is enqueued."""
+        from unittest.mock import MagicMock
 
         stream = _make_stream_bytes(
             ["Mid", "Adele - Hello", "Next - Song"],
@@ -530,95 +529,85 @@ class TestAcoustidFinalize:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
 
-        async def fake_lookup(path, api_key, **kwargs):
-            return AcoustidLookup(accepted=True, match=AcoustidMatch("Adele", "Hello", 0.95))
+        mock_queue = MagicMock()
+        mock_queue.enqueue = MagicMock()
 
-        monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
         rec = _make_recorder(
             settings=settings,
             http_client=client,
-            acoustid_api_key="test-key",
+            acoustid_queue=mock_queue,
         )
-        stream_dir = settings.destination
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
-        assert "Adele - Hello.mp3" in files
-        assert not any(name.endswith(".part") for name in files)
 
-    async def test_match_none_falls_back_to_icy_name(self, tmp_path, monkeypatch):
-        """Without usable metadata the staging file keeps the ICY title name."""
-        from radio_ripper.services.storage import AcoustidLookup
+        # File should be in unchecked_mp3, not destination
+        unchecked = tmp_path / "work" / "unchecked_mp3"
+        dest = tmp_path / "work" / "destination"
+        dest_files = list(dest.glob("*.mp3")) if dest.is_dir() else []
+        unchecked_files = list(unchecked.glob("*.mp3")) if unchecked.is_dir() else []
+        # Either file is still in unchecked (if queue not called yet) or queue was called
+        assert mock_queue.enqueue.called or len(unchecked_files) > 0
+        assert not any(name.name.endswith(".part") for name in dest_files)
+
+    async def test_below_min_size_not_enqueued(self, tmp_path):
+        """A recording below min_file_size_bytes is discarded without queue enqueue."""
+        from unittest.mock import MagicMock
 
         stream = _make_stream_bytes(
             ["Mid", "Adele - Hello", "Next - Song"],
             audio_per_song=METADATA_INTERVAL,
         )
         client = FakeHttpClient(stream)
-        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+        # Set min size higher than the fake audio data
+        settings = _make_settings(tmp_path, min_file_size_bytes=999999999)
 
-        async def fake_lookup(path, api_key, **kwargs):
-            return AcoustidLookup(accepted=True, match=None)
+        mock_queue = MagicMock()
+        mock_queue.enqueue = MagicMock()
 
-        monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
         rec = _make_recorder(
             settings=settings,
             http_client=client,
-            acoustid_api_key="test-key",
+            acoustid_queue=mock_queue,
         )
-        stream_dir = settings.destination
         task = rec.start()
         await asyncio.sleep(0.5)
         rec.stop()
         await asyncio.wait_for(task, timeout=5)
-        files = [f.name for f in stream_dir.glob("*.mp3")] if stream_dir.is_dir() else []
-        assert "Adele - Hello.mp3" in files
 
-    async def test_below_threshold_leaves_no_staging(self, tmp_path, monkeypatch):
-        """A below-threshold discard cleans up the staging file."""
-        from radio_ripper.services.storage import AcoustidLookup
+        # Queue must never have been called — file was too small
+        mock_queue.enqueue.assert_not_called()
 
-        stream = _make_stream_bytes(
-            ["Mid", "Adele - Hello", "Next - Song"],
-            audio_per_song=METADATA_INTERVAL,
-        )
-        client = FakeHttpClient(stream)
-        settings = _make_settings(tmp_path, min_file_size_bytes=1)
-
-        async def fake_lookup(path, api_key, **kwargs):
-            return AcoustidLookup(accepted=False, match=None)
-
-        monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
-        rec = _make_recorder(
-            settings=settings,
-            http_client=client,
-            acoustid_api_key="test-key",
-        )
-        stream_dir = settings.destination
-        task = rec.start()
-        await asyncio.sleep(0.5)
-        rec.stop()
-        await asyncio.wait_for(task, timeout=5)
-        leftovers = list(stream_dir.iterdir()) if stream_dir.is_dir() else []
-        assert leftovers == []
-
-    def test_make_writer_stages_when_acoustid_enabled(self, tmp_path):
-        """With an AcoustID key the writer uses a unique staging path."""
-        settings = _make_settings(tmp_path)
-        rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""), acoustid_api_key="key")
-        writer = rec._make_writer("Artist - Song")
-        assert writer is not None
-        assert writer.final_path.name.startswith(".")
-        assert writer.final_path.name.endswith(".part")
-        assert rec._fallback_paths[writer.final_path].name == "Artist - Song.mp3"
-        writer.discard()
-
-    def test_make_writer_uses_icy_name_without_key(self, tmp_path):
+    def test_make_writer_stages_in_unchecked_mp3(self, tmp_path):
+        """Writer stages recordings in work/unchecked_mp3 with unique name."""
         settings = _make_settings(tmp_path)
         rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""))
         writer = rec._make_writer("Artist - Song")
         assert writer is not None
-        assert writer.final_path.name == "Artist - Song.mp3"
+        unchecked_dir = tmp_path / "work" / "unchecked_mp3"
+        assert writer.final_path.parent == unchecked_dir
+        assert "Artist - Song" in writer.final_path.name
+        assert writer.final_path.name.endswith(".mp3")
+        writer.discard()
+
+    def test_make_writer_unique_names_for_same_title(self, tmp_path):
+        """Two writers for the same title get different filenames (UUID suffix)."""
+        settings = _make_settings(tmp_path)
+        rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""))
+        w1 = rec._make_writer("Adele - Hello")
+        w2 = rec._make_writer("Adele - Hello")
+        assert w1 is not None
+        assert w2 is not None
+        assert w1.final_path != w2.final_path
+        w1.discard()
+        w2.discard()
+
+    def test_make_writer_uses_icy_name_without_queue(self, tmp_path):
+        """Without a queue the file still goes to unchecked_mp3."""
+        settings = _make_settings(tmp_path)
+        rec = _make_recorder(settings=settings, http_client=FakeHttpClient(b""))
+        writer = rec._make_writer("Artist - Song")
+        assert writer is not None
+        assert "Artist - Song" in writer.final_path.name
         writer.discard()

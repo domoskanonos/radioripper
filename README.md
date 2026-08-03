@@ -11,7 +11,7 @@ Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwalt
 - **Song-Titelerkennung** – benennt jede Aufnahme als `{Künstler} - {Titel}.mp3`
 - **Werbefilter** – überspringt Titel per Regex-Muster (z. B. `["^Werbung", "^Advertisement$"]`)
 - **Datei-Validierung** – verwirft zu kurze (< 90 s), zu kleine (< 1,5 MB) oder ungültige MP3-Dateien
-- **AcoustID-Filterung** – behalte nur Aufnahmen, die einen bekannten AcoustID-Fingerprint-Score erreichen (konfigurierbar, Standard 0,7); erfordert `ACOUST_ID` API-Key und `fpcalc`
+- **AcoustID-Filterung** – behalte nur Aufnahmen, die einen bekannten AcoustID-Fingerprint-Score erreichen (konfigurierbar, Standard 0,9); erfordert `ACOUST_ID` API-Key und `fpcalc`
 - **Inbox-Überwachung** – pausiert alle Streams bei vollem Zielverzeichnis, setzt automatisch fort
 - **Hot-Reload** – Konfigurationsänderungen werden live übernommen (alle 60 s), kein Neustart nötig
 - **Auto-Discovery** – findet Sender automatisch aus Community-Playlists, filtert nach Keywords und Bitrate

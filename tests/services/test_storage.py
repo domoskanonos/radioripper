@@ -163,7 +163,10 @@ class TestTrackWriterAdvanced:
         w.write(b"data")
         with patch.object(w._fh, "flush", side_effect=OSError("disk error")):
             ok = w.commit()
-        assert ok is True
+        # Flush failure means the data could not be persisted — the file must
+        # be discarded and reported as failed (never silently kept).
+        assert ok is False
+        assert not dst.exists()
 
     def test_discard_twice_noop(self, tmp_path):
         dst = tmp_path / "out/test.mp3"
@@ -264,8 +267,8 @@ class TestExtractMatchMetadata:
 
 
 class TestAcoustidLookupMetadataRegression:
-    async def test_high_score_without_metadata_is_accepted(self, tmp_path):
-        """A qualifying score without usable metadata must keep the file."""
+    async def test_high_score_without_metadata_is_rejected(self, tmp_path):
+        """A qualifying score without usable metadata must reject the file."""
         from radio_ripper.services.storage import acoustid_lookup
 
         path = tmp_path / "song.mp3"
@@ -286,11 +289,12 @@ class TestAcoustidLookupMetadataRegression:
         ):
             result = await acoustid_lookup(path, "key")
 
-        assert result.accepted is True
+        # Strict policy: score without artist/title metadata cannot be kept
+        assert result.outcome == "rejected"
         assert result.match is None
 
-    async def test_result_without_recordings_is_accepted(self, tmp_path):
-        """A qualifying result with no recordings block still passes."""
+    async def test_result_without_recordings_is_rejected(self, tmp_path):
+        """A qualifying result with no recordings block must reject the file."""
         from radio_ripper.services.storage import acoustid_lookup
 
         path = tmp_path / "song.mp3"
@@ -309,7 +313,8 @@ class TestAcoustidLookupMetadataRegression:
         ):
             result = await acoustid_lookup(path, "key")
 
-        assert result.accepted is True
+        # Strict policy: no usable metadata means the file cannot be named/kept
+        assert result.outcome == "rejected"
         assert result.match is None
 
     async def test_below_threshold_discards(self, tmp_path):
@@ -336,8 +341,8 @@ class TestAcoustidLookupMetadataRegression:
         assert result.accepted is False
         assert result.match is None
 
-    async def test_non_dict_response_fail_open(self, tmp_path):
-        """A malformed API response must not raise and must keep the file."""
+    async def test_non_dict_response_is_error(self, tmp_path):
+        """A malformed API response must return outcome='error' (strict fail-closed)."""
         from radio_ripper.services.storage import acoustid_lookup
 
         path = tmp_path / "song.mp3"
@@ -355,7 +360,8 @@ class TestAcoustidLookupMetadataRegression:
         ):
             result = await acoustid_lookup(path, "key")
 
-        assert result.accepted is True
+        # Strict fail-closed: malformed response is a transient error, not accepted
+        assert result.outcome == "error"
         assert result.match is None
 
 
@@ -466,7 +472,7 @@ class TestFinalizeWithMetadata:
         src.write_bytes(b"new")
 
         async def fake_lookup(path, api_key, **kwargs):
-            return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.99))
+            return AcoustidLookup(outcome="accepted", match=AcoustidMatch("Artist", "Title", 0.99))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
         result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.9)
@@ -487,7 +493,7 @@ class TestFinalizeWithMetadata:
         src.write_bytes(b"new")
 
         async def fake_lookup(path, api_key, **kwargs):
-            return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.8))
+            return AcoustidLookup(outcome="accepted", match=AcoustidMatch("Artist", "Title", 0.8))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
         result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.95)
@@ -509,15 +515,15 @@ class TestFinalizeWithMetadata:
         src.write_bytes(b"new")
 
         async def fake_lookup(path, api_key, **kwargs):
-            return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.95))
+            return AcoustidLookup(outcome="accepted", match=AcoustidMatch("Artist", "Title", 0.95))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
         result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.95)
         assert result == existing
         assert not src.exists()
 
-    async def test_existing_with_unknown_score_is_kept(self, tmp_path, monkeypatch):
-        """Policy: never lose data — keep existing when its score is unknown."""
+    async def test_existing_with_unknown_score_is_replaced(self, tmp_path, monkeypatch):
+        """Policy change: unknown score on existing file → new recording replaces it."""
         from radio_ripper.services.storage import (
             AcoustidLookup,
             finalize_with_metadata,
@@ -526,16 +532,17 @@ class TestFinalizeWithMetadata:
         existing = tmp_path / "Artist - Title.mp3"
         existing.write_bytes(b"old")
         src = tmp_path / "new.mp3"
-        src.write_bytes(b"new")
+        src.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
 
         async def fake_lookup(path, api_key, **kwargs):
-            return AcoustidLookup(accepted=True, match=None)
+            # Simulate API error for existing file — score unknown
+            return AcoustidLookup(outcome="error", error_detail="timeout")
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
         result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.95)
-        assert result == existing
-        assert existing.read_bytes() == b"old"
-        assert not src.exists()
+        # New recording should replace the unscored existing file
+        assert result.name == "Artist - Title.mp3"
+        assert result.is_file()
 
     async def test_existing_tag_score_used_without_relookup(self, tmp_path, monkeypatch):
         """A stored TXXX score avoids an API re-lookup of the existing file."""
@@ -556,7 +563,7 @@ class TestFinalizeWithMetadata:
         async def fake_lookup(path, api_key, **kwargs):
             nonlocal called
             called = True
-            return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.0))
+            return AcoustidLookup(outcome="accepted", match=AcoustidMatch("Artist", "Title", 0.0))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
         result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.9)
@@ -582,7 +589,7 @@ class TestFinalizeWithMetadata:
         async def fake_lookup(path, api_key, **kwargs):
             nonlocal called
             called = True
-            return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.0))
+            return AcoustidLookup(outcome="accepted", match=AcoustidMatch("Artist", "Title", 0.0))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
         result = await finalize_with_metadata(src, "key", artist="Artist", title="Title", score=0.95)
