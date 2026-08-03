@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v2.8.0 (2026-08-03)
+
+### Features
+
+- Implement backpressure handling for AcoustID queue — add limits for unchecked files and bytes, and
+  pause/resume recorders based on storage capacity
+  ([`2b92d83`](https://github.com/domoskanonos/radioripper/commit/2b92d83cc171163637b82e36c592412e1fb45111))
+
+
 ## v2.7.0 (2026-08-03)
 
 ### Features
