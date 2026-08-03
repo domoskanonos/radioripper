@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.7.0 (2026-08-03)
+
+### Features
+
+- Erweitere AcoustID-Konfiguration — füge neue Parameter für API-Anfragen und Score hinzu
+  ([`4205888`](https://github.com/domoskanonos/radioripper/commit/4205888354b426adf888a054d3e2a39bb611fbf6))
+
+
 ## v2.6.0 (2026-08-03)
 
 ### Features
