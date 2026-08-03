@@ -9,8 +9,9 @@ Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwalt
 - **ICY-Metadaten** – erkennt Songtitel in Echtzeit, trennt Aufnahmen sauber an Songgrenzen
 - **Auto-Healing** – bei Verbindungsabbruch automatische Wiederverbindung mit exponentiellem Backoff
 - **Song-Titelerkennung** – benennt jede Aufnahme als `{Künstler} - {Titel}.mp3`
-- **Werbefilter** – überspringt Titel per Regex-Muster (z. B. `["^Werbung", "^Advertisement$"]`)
+- **Werbefilter** – überspringt Titel per Regex-Muster (z. B. `["^Werbung", "^Advertisement$"]`)
 - **Datei-Validierung** – verwirft zu kurze (< 90 s), zu kleine (< 1,5 MB) oder ungültige MP3-Dateien
+- **AcoustID-Filterung** – behalte nur Aufnahmen, die einen bekannten AcoustID-Fingerprint-Score erreichen (konfigurierbar, Standard 0,7); erfordert `ACOUST_ID` API-Key und `fpcalc`
 - **Inbox-Überwachung** – pausiert alle Streams bei vollem Zielverzeichnis, setzt automatisch fort
 - **Hot-Reload** – Konfigurationsänderungen werden live übernommen (alle 60 s), kein Neustart nötig
 - **Auto-Discovery** – findet Sender automatisch aus Community-Playlists, filtert nach Keywords und Bitrate
@@ -30,8 +31,9 @@ cat > radio-ripper-config/config.json <<'EOF'
 }
 EOF
 
-# Container starten
+# Container starten (ACOUST_ID ist Pflicht)
 docker run --rm \
+  -e ACOUST_ID=dein_acoustid_api_key \
   -v "$PWD/radio-ripper-config:/app/config:ro" \
   -v "$PWD/radio-ripper-mp3:/app/destination" \
   -v "$PWD/radio-ripper-work:/app/work" \
@@ -62,6 +64,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+    environment:
+      # AcoustID API-Key – PFLICHTFELD (https://acoustid.org/login)
+      ACOUST_ID: "dein_acoustid_api_key"
     volumes:
       # Konfiguration (read-only)
       - ./radio-ripper-config:/app/config:ro
@@ -70,6 +75,13 @@ services:
       # Arbeitsverzeichnis (Cache, Logs)
       - ./radio-ripper-work:/app/work
 ```
+
+## Umgebungsvariablen
+
+| Variable | Pflicht | Beschreibung |
+|---|---|---|
+| `ACOUST_ID` | **ja** | AcoustID API-Key. Ohne diesen Wert startet radio-ripper nicht. Kostenlos registrieren unter [acoustid.org/login](https://acoustid.org/login). |
+| `GITHUB_PAT` | nein | GitHub Personal Access Token für den Download der Community-M3U-Playlist. |
 
 ## Konfiguration (`config/config.json`)
 
@@ -145,7 +157,7 @@ Jede Aufnahme durchläuft folgenden Lebenszyklus:
 3. **Song-Erkennung**: Bei Titelwechsel wird die vorherige Datei abgeschlossen und eine neue gestartet
 4. **Temporäre Datei**: Die Aufnahme wird zuerst in eine `.tmp`-Datei im System-Temp geschrieben
 5. **Commit**: Bei Titelwechsel wird die `.tmp`-Datei als `{Künstler} - {Titel}.mp3` ins Zielverzeichnis verschoben
-6. **Validierung**: Die fertige MP3 wird auf Größe, Dauer und Gültigkeit geprüft – zu kurze oder ungültige Dateien werden automatisch gelöscht
+6. **Validierung**: Die fertige MP3 wird auf Größe, Dauer und Gültigkeit geprüft – zu kurze oder ungültige Dateien werden automatisch gelöscht. Anschließend prüft **AcoustID** per Chromaprint-Fingerprint, ob der Track einem bekannten Song entspricht (Score ≥ 0,7); Aufnahmen ohne ausreichenden Match werden ebenfalls verworfen.
 
 ### Stream-Recorder Lebenszyklus
 
@@ -221,6 +233,12 @@ Der Container-Entrypoint ist `radio-ripper` – du kannst Argumente wie `--confi
 ## Entwicklung
 
 ```bash
+# Systemabhängigkeiten (Ubuntu/Debian)
+sudo apt-get install ffmpeg libchromaprint-tools   # fpcalc für AcoustID-Fingerprinting
+
+# macOS
+brew install ffmpeg chromaprint
+
 # Abhängigkeiten installieren
 uv sync
 
@@ -233,7 +251,7 @@ uv run mypy src/radio_ripper/
 uv run pytest
 
 # Manueller Start (Config liegt in config/config.json)
-uv run radio-ripper --config config/config.json
+ACOUST_ID=dein_api_key uv run radio-ripper --config config/config.json
 ```
 
 ## Lizenz

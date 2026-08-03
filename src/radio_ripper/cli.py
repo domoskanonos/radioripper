@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import shutil
 import signal
 import sys
@@ -57,6 +58,15 @@ async def _run(settings: Settings, config_path: str | None, logger: logging.Logg
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+    acoust_id = os.environ.get("ACOUST_ID", "").strip()
+    if not acoust_id:
+        print(
+            "Error: environment variable ACOUST_ID is not set. "
+            "Set it to your AcoustID API key before starting radio-ripper.",
+            file=sys.stderr,
+        )
+        return 3
 
     try:
         settings = load_settings(args.config)

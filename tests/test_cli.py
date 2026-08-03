@@ -12,6 +12,8 @@ import pytest
 
 from radio_ripper.cli import main
 
+_ACOUSTID_ENV = {"ACOUST_ID": "test-api-key"}
+
 
 class TestCli:
     def test_help(self):
@@ -29,13 +31,21 @@ class TestCli:
                 }
             )
         )
-        with patch("radio_ripper.cli._run") as mock:
+        with patch("radio_ripper.cli._run") as mock, patch.dict("os.environ", _ACOUSTID_ENV):
             main(["--config", str(cfg)])
         mock.assert_called_once()
 
     def test_missing_config_returns_2(self):
-        rc = main(["--config", "/nonexistent/config.json"])
+        with patch.dict("os.environ", _ACOUSTID_ENV):
+            rc = main(["--config", "/nonexistent/config.json"])
         assert rc == 2
+
+    def test_missing_acoustid_returns_3(self, tmp_path: Path):
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text(json.dumps({"work_dir": str(tmp_path), "destination": str(tmp_path / "destination")}))
+        with patch.dict("os.environ", {}, clear=True):
+            rc = main(["--config", str(cfg)])
+        assert rc == 3
 
     def test_version(self):
         with pytest.raises(SystemExit) as exc:
@@ -45,14 +55,14 @@ class TestCli:
     def test_log_level_override(self, tmp_path: Path):
         cfg = tmp_path / "cfg.json"
         cfg.write_text(json.dumps({"work_dir": str(tmp_path), "destination": str(tmp_path / "inbox")}))
-        with patch("radio_ripper.cli._run") as mock:
+        with patch("radio_ripper.cli._run") as mock, patch.dict("os.environ", _ACOUSTID_ENV):
             main(["--config", str(cfg), "--log-level", "DEBUG"])
         mock.assert_called_once()
 
     def test_keyboard_interrupt_returns_0(self, tmp_path: Path):
         cfg = tmp_path / "cfg.json"
         cfg.write_text(json.dumps({"work_dir": str(tmp_path), "destination": str(tmp_path / "inbox")}))
-        with patch("radio_ripper.cli._run", side_effect=KeyboardInterrupt):
+        with patch("radio_ripper.cli._run", side_effect=KeyboardInterrupt), patch.dict("os.environ", _ACOUSTID_ENV):
             rc = main(["--config", str(cfg)])
         assert rc == 0
 

@@ -12,7 +12,13 @@ from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.playlist import PlaylistResolver
-from radio_ripper.services.storage import TrackWriter, get_mp3_duration, is_valid_mp3, sanitize_filename
+from radio_ripper.services.storage import (
+    TrackWriter,
+    acoustid_meets_threshold,
+    get_mp3_duration,
+    is_valid_mp3,
+    sanitize_filename,
+)
 
 if TYPE_CHECKING:
     from radio_ripper.infra.http import AsyncHttpClient
@@ -51,6 +57,7 @@ class StreamRecorder:
         ignore_title_patterns: list[str] | None = None,
         no_icy_disable_after: int = 10,
         station_bitrate: int = 0,
+        acoustid_api_key: str = "",
     ) -> None:
         self.station_name = station_name
         self.playlist_url = playlist_url
@@ -67,6 +74,7 @@ class StreamRecorder:
         self._connect_failures = 0
         self._paused = asyncio.Event()
         self._station_bitrate = station_bitrate
+        self._acoustid_api_key = acoustid_api_key
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -350,13 +358,25 @@ class StreamRecorder:
                 final_path.unlink(missing_ok=True)
             return
         ok = await self._check_min_duration(final_path)
-        if ok:
-            self._log.info(
-                "[%s] Streaming result: %s (%d bytes)",
-                self.station_name,
-                final_path.name,
-                _safe_size(final_path),
-            )
+        if not ok:
+            return
+        if self._acoustid_api_key:
+            acoustid_ok = await acoustid_meets_threshold(final_path, self._acoustid_api_key)
+            if not acoustid_ok:
+                self._log.info(
+                    "[%s] Discarded (AcoustID score below threshold): %s",
+                    self.station_name,
+                    final_path.name,
+                )
+                with contextlib.suppress(OSError):
+                    final_path.unlink(missing_ok=True)
+                return
+        self._log.info(
+            "[%s] Streaming result: %s (%d bytes)",
+            self.station_name,
+            final_path.name,
+            _safe_size(final_path),
+        )
 
 
 __all__ = ["StreamRecorder"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -123,6 +124,7 @@ class RadioRipperApp:
         return stations
 
     def _start_recorders(self, stations: list[StreamConfig]) -> None:
+        acoustid_key = os.environ.get("ACOUST_ID", "").strip()
         for stream in stations:
             if not stream.enabled:
                 self.logger.info("Skipping disabled stream: %s", stream.name)
@@ -139,6 +141,7 @@ class RadioRipperApp:
                 ignore_title_patterns=patterns,
                 no_icy_disable_after=self.settings.no_icy_disable_after,
                 station_bitrate=stream.bitrate,
+                acoustid_api_key=acoustid_key,
             )
             rec.start()
             self._recorders.append(rec)

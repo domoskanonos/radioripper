@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## [2.3.4] - 2026-08-03
+
+### Added
+- **AcoustID-Filterung**: Aufnahmen werden nach dem Fingerprinting via Chromaprint gegen die AcoustID-Datenbank geprüft. Nur Dateien mit einem Match-Score ≥ 0,7 werden behalten – unbekannte oder qualitativ schlechte Aufnahmen werden automatisch verworfen.
+- Umgebungsvariable `ACOUST_ID` ist jetzt **Pflichtfeld**: radio-ripper startet nicht ohne einen gültigen AcoustID API-Key (Exit-Code 3).
+- `fpcalc` (Chromaprint) wird im Docker-Image automatisch installiert (`libchromaprint-tools`).
+
+### Changed
+- Dockerfile: `libchromaprint-tools` zu den Laufzeit-Abhängigkeiten hinzugefügt (neben `ffmpeg`).
+- `docker-compose.yml`: `ACOUST_ID`-Variable als Pflichtfeld dokumentiert.
+- README aktualisiert: Umgebungsvariablen-Tabelle, Schnellstart-Beispiele, Entwicklungsanleitung und Architektur-Beschreibung.
+
+
 ## v2.3.3 (2026-07-31)
 
 ### Bug Fixes
@@ -40,7 +53,7 @@
 
 ### Added
 - **Live-Config (Hot-Reload)**: Config-Änderungen werden alle 60s erkannt und live übernommen
-- **Inbox-Monitor**: Bei vollem Inbox-Verzeichnis pausieren alle Streams; alle 5 Min wird geprüft, automatische Wiederaufnahme bei ≤80 % des Limits
+- **Inbox-Monitor**: Bei vollem Inbox-Verzeichnis pausieren alle Streams; alle 5 Min wird geprüft, automatische Wiederaufnahme bei ≤80 % des Limits
 - **Stream-Pause/Resume-API**: Graceful pause (aktueller Track wird fertig geschrieben) für zentrale Steuerung
 - `RadioRipperApp.from_settings_with_live_config()` für integriertes Hot-Reload
 

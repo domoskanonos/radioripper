@@ -39,7 +39,7 @@ RUN groupadd --system --gid 1000 ripper \
  && useradd --system --uid 1000 --gid ripper --home-dir /app --shell /usr/sbin/nologin ripper
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg \
+ && apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

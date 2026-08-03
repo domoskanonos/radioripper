@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import shutil
@@ -11,6 +12,9 @@ from pathlib import Path
 _ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE_RE = re.compile(r"\s+")
 _LOGGER = logging.getLogger(__name__)
+
+_ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
+_ACOUSTID_MIN_SCORE = 0.7  # Mindest-Score fuer einen gueltigen Match (0.0-1.0)
 
 
 def sanitize_filename(name: str) -> str:
@@ -138,8 +142,93 @@ async def is_valid_mp3(path: Path) -> bool:
         return False
 
 
+async def acoustid_meets_threshold(
+    path: Path,
+    api_key: str,
+    *,
+    min_score: float = _ACOUSTID_MIN_SCORE,
+) -> bool:
+    """Return True if the MP3 at *path* has an AcoustID match score >= *min_score*.
+
+    Steps:
+    1. Run ``fpcalc`` (Chromaprint) to compute audio fingerprint + duration.
+    2. Query the AcoustID lookup API with the fingerprint.
+    3. Accept the file if at least one result has score >= *min_score*.
+
+    Returns True (i.e. keep the file) when:
+    - ``fpcalc`` is not installed (fail-open so recordings are not silently lost).
+    - The API call fails for any reason (network error, timeout, etc.).
+    - A matching result is found with a sufficiently high score.
+
+    Returns False (i.e. discard the file) only when the API responds successfully
+    and every result has a score below *min_score*.
+    """
+    fpcalc = shutil.which("fpcalc")
+    if fpcalc is None:
+        _LOGGER.warning("fpcalc not found — skipping AcoustID check for %s", path.name)
+        return True
+
+    # --- 1. Compute fingerprint -----------------------------------------------
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            fpcalc,
+            "-json",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except Exception as exc:
+        _LOGGER.warning("fpcalc failed for %s: %s — skipping AcoustID check", path.name, exc)
+        return True
+
+    try:
+        fp_data = json.loads(stdout.decode())
+        fingerprint: str = fp_data["fingerprint"]
+        duration: float = float(fp_data["duration"])
+    except Exception as exc:
+        _LOGGER.warning("fpcalc output parse error for %s: %s — skipping AcoustID check", path.name, exc)
+        return True
+
+    # --- 2. Query AcoustID API ------------------------------------------------
+    params = f"client={api_key}&meta=recordings&duration={int(duration)}&fingerprint={fingerprint}"
+    url = f"{_ACOUSTID_LOOKUP_URL}?{params}"
+    try:
+        import urllib.request
+
+        loop = asyncio.get_running_loop()
+        response_bytes = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: urllib.request.urlopen(url, timeout=15).read()),  # noqa: S310
+            timeout=20,
+        )
+        api_data = json.loads(response_bytes.decode())
+    except Exception as exc:
+        _LOGGER.warning("AcoustID API request failed for %s: %s — skipping threshold check", path.name, exc)
+        return True
+
+    # --- 3. Evaluate score ----------------------------------------------------
+    results = api_data.get("results", [])
+    if not results:
+        _LOGGER.info("AcoustID: no results for %s — discarding", path.name)
+        return False
+
+    best_score: float = max((r.get("score", 0.0) for r in results), default=0.0)
+    if best_score >= min_score:
+        _LOGGER.info("AcoustID: %s accepted (score=%.2f >= %.2f)", path.name, best_score, min_score)
+        return True
+
+    _LOGGER.info(
+        "AcoustID: %s discarded (best score=%.2f < threshold=%.2f)",
+        path.name,
+        best_score,
+        min_score,
+    )
+    return False
+
+
 __all__ = [
     "TrackWriter",
+    "acoustid_meets_threshold",
     "get_mp3_duration",
     "is_valid_mp3",
     "sanitize_filename",
