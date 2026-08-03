@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -13,6 +15,7 @@ from radio_ripper.services.storage import (
     _extract_match_metadata,
     _parse_acoustid_response,
     build_metadata_filename,
+    move_across_devices,
     read_mp3_score,
     rename_track,
     sanitize_filename,
@@ -596,6 +599,60 @@ class TestFinalizeWithMetadata:
         assert result.name == "Artist - Title.mp3"
         assert result.is_file()
         assert called is False
+
+
+class TestMoveAcrossDevices:
+    def test_same_device_renames(self, tmp_path):
+        src = tmp_path / "a.mp3"
+        dst = tmp_path / "b.mp3"
+        src.write_bytes(b"payload")
+        move_across_devices(src, dst)
+        assert dst.read_bytes() == b"payload"
+        assert not src.exists()
+
+    def test_exdev_falls_back_to_copy_and_removes_source(self, tmp_path):
+        src = tmp_path / "a.mp3"
+        dst = tmp_path / "b.mp3"
+        src.write_bytes(b"payload")
+        with patch("radio_ripper.services.storage.os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")):
+            move_across_devices(src, dst)
+        assert dst.read_bytes() == b"payload"
+        assert not src.exists()
+
+    def test_exdev_preserves_metadata(self, tmp_path):
+        src = tmp_path / "a.mp3"
+        dst = tmp_path / "b.mp3"
+        src.write_bytes(b"payload")
+        os.chmod(src, 0o640)
+        with patch("radio_ripper.services.storage.os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")):
+            move_across_devices(src, dst)
+        assert dst.stat().st_mode & 0o777 == 0o640
+        assert not src.exists()
+
+    def test_non_exdev_error_propagates(self, tmp_path):
+        src = tmp_path / "a.mp3"
+        dst = tmp_path / "b.mp3"
+        src.write_bytes(b"payload")
+        with (
+            patch("radio_ripper.services.storage.os.replace", side_effect=OSError(errno.EACCES, "permission denied")),
+            pytest.raises(OSError),
+        ):
+            move_across_devices(src, dst)
+        assert src.exists()
+        assert not dst.exists()
+
+    def test_exdev_copy_failure_cleans_target_and_propagates(self, tmp_path):
+        src = tmp_path / "a.mp3"
+        dst = tmp_path / "b.mp3"
+        src.write_bytes(b"payload")
+        with (
+            patch("radio_ripper.services.storage.os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")),
+            patch("radio_ripper.services.storage.shutil.copy2", side_effect=OSError(errno.ENOSPC, "no space")),
+            pytest.raises(OSError),
+        ):
+            move_across_devices(src, dst)
+        assert src.exists()
+        assert not dst.exists()
 
 
 class TestReadMp3Score:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import logging
 import os
@@ -447,6 +448,40 @@ def build_metadata_filename(artist: str, title: str) -> str:
     return safe + ".mp3"
 
 
+def move_across_devices(src: Path, dst: Path) -> None:
+    """Move *src* to *dst*, falling back to copy+unlink across filesystems.
+
+    ``os.replace``/``rename(2)`` cannot move a file onto a different mount
+    point and fail with ``EXDEV`` ("Invalid cross-device link"). Docker mounts
+    each volume separately, so ``work`` and ``destination`` are commonly on
+    different devices even when they share the same underlying filesystem.
+    In that case the file is copied (metadata preserved) and the source
+    removed, so the content always reaches its destination.
+
+    Raises ``OSError`` when the move fails — any error other than ``EXDEV``,
+    or a copy/unlink failure in the fallback — so callers can decide whether
+    to retry.
+    """
+    try:
+        os.replace(str(src), str(dst))
+        return
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+    try:
+        shutil.copy2(src, dst)
+    except OSError:
+        with contextlib.suppress(OSError):
+            dst.unlink(missing_ok=True)
+        raise
+    try:
+        src.unlink()
+    except OSError:
+        with contextlib.suppress(OSError):
+            dst.unlink(missing_ok=True)
+        raise
+
+
 def rename_track(path: Path, artist: str, title: str) -> Path:
     """Rename *path* to '<artist> - <title>.mp3' in the same directory.
 
@@ -552,6 +587,7 @@ __all__ = [
     "finalize_with_metadata",
     "get_mp3_duration",
     "is_valid_mp3",
+    "move_across_devices",
     "read_mp3_score",
     "rename_track",
     "sanitize_filename",

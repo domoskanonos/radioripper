@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import shutil
 import time
 from pathlib import Path
@@ -40,6 +39,7 @@ from radio_ripper.services.storage import (
     build_metadata_filename,
     get_mp3_duration,
     is_valid_mp3,
+    move_across_devices,
     read_mp3_score,
     write_mp3_tags,
 )
@@ -468,13 +468,14 @@ class AcoustidQueue:
                         match.score,
                     )
 
-            # Write ID3 tags into staging file, then atomic replace
+            # Write ID3 tags into staging file, then move it to its destination
+            # (atomic rename on one device; copy+unlink fallback across mounts).
             if not write_mp3_tags(path, artist=match.artist, title=match.title, score=match.score):
                 self._log.error("Could not tag %s; retaining it in unchecked_mp3.", path.name)
                 return False
             self._destination.mkdir(parents=True, exist_ok=True)
             try:
-                os.replace(str(path), str(target))
+                move_across_devices(path, target)
             except OSError as exc:
                 self._log.error("Failed to move %s -> %s: %s", path.name, target.name, exc)
                 return False

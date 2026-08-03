@@ -7,6 +7,7 @@ processes the oldest file first, and retries failures with back-off.
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import time
 from pathlib import Path
@@ -180,3 +181,44 @@ class TestDirectoryAsQueue:
         # Transient error -> file must be kept for a later retry
         assert f.exists()
         assert f in queue._retry_info
+
+
+class TestCommitCrossDevice:
+    @pytest.mark.asyncio
+    async def test_commit_falls_back_across_devices(self, tmp_path):
+        from radio_ripper.services.storage import AcoustidLookup, AcoustidMatch, is_valid_mp3
+
+        queue = _make_queue(tmp_path)
+        staging = queue.unchecked_dir
+        staging.mkdir(parents=True)
+        src = staging / "song.mp3"
+        src.write_bytes(_valid_mp3())
+        result = AcoustidLookup(outcome="accepted", match=AcoustidMatch(artist="Artist", title="Title", score=0.95))
+        with patch("radio_ripper.services.storage.os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")):
+            committed = await queue._commit(src, result)
+
+        assert committed is True
+        assert not src.exists()
+        target = queue._destination / "Artist - Title.mp3"
+        assert target.exists()
+        # Tags were written before the move and the content arrived intact
+        assert target.read_bytes()[:3] == b"ID3"
+        assert await is_valid_mp3(target) is True
+
+    @pytest.mark.asyncio
+    async def test_commit_keeps_source_on_real_move_error(self, tmp_path):
+        from radio_ripper.services.storage import AcoustidLookup, AcoustidMatch
+
+        queue = _make_queue(tmp_path)
+        staging = queue.unchecked_dir
+        staging.mkdir(parents=True)
+        src = staging / "song.mp3"
+        src.write_bytes(_valid_mp3())
+        result = AcoustidLookup(outcome="accepted", match=AcoustidMatch(artist="Artist", title="Title", score=0.95))
+        with patch("radio_ripper.services.storage.os.replace", side_effect=OSError(errno.EACCES, "permission denied")):
+            committed = await queue._commit(src, result)
+
+        # Non-EXDEV failures are real errors -> retry, source is retained
+        assert committed is False
+        assert src.exists()
+        assert not (queue._destination / "Artist - Title.mp3").exists()

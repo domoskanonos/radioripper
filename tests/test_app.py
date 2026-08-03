@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -516,6 +517,49 @@ class TestConfigReload:
         discover2.assert_awaited_once()
         assert app.recorders() == []
         await app.stop()
+
+
+class TestMigrateUnscoredFiles:
+    async def test_migrates_unscored_files_across_devices(self, tmp_path) -> None:
+        settings = _make_settings(tmp_path)
+        dest = settings.destination
+        dest.mkdir(parents=True)
+        payload = b"\xff\xe0\x90\x00" + b"\x00" * 100
+        legacy = dest / "legacy.mp3"
+        legacy.write_bytes(payload)
+
+        app = _make_app(settings)
+        app._acoustid_queue = Mock()
+        app._acoustid_queue.unchecked_dir = settings.work_dir / "unchecked_mp3"
+        app._acoustid_queue.unchecked_dir.mkdir(parents=True)
+
+        with patch("radio_ripper.services.storage.os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")):
+            await app._migrate_unscored_files()
+
+        assert not legacy.exists()
+        moved = list(app._acoustid_queue.unchecked_dir.glob("*.mp3"))
+        assert len(moved) == 1
+        assert moved[0].read_bytes() == payload
+        app._acoustid_queue.enqueue.assert_called_once_with(moved[0])
+
+    async def test_scored_files_are_not_migrated(self, tmp_path) -> None:
+        settings = _make_settings(tmp_path)
+        dest = settings.destination
+        dest.mkdir(parents=True)
+        from radio_ripper.services.storage import write_mp3_tags
+
+        scored = dest / "scored.mp3"
+        scored.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 100)
+        write_mp3_tags(scored, artist="Artist", title="Title", score=0.95)
+
+        app = _make_app(settings)
+        app._acoustid_queue = Mock()
+        app._acoustid_queue.unchecked_dir = settings.work_dir / "unchecked_mp3"
+
+        await app._migrate_unscored_files()
+
+        assert scored.exists()
+        app._acoustid_queue.enqueue.assert_not_called()
 
 
 __all__ = []

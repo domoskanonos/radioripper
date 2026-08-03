@@ -13,7 +13,7 @@ from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.acoustid_queue import AcoustidQueue, cleanup_stale_parts
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver, load_local_m3u
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService, probe_icy
-from radio_ripper.services.storage import read_mp3_score
+from radio_ripper.services.storage import move_across_devices, read_mp3_score
 from radio_ripper.services.stream import StreamRecorder
 
 _LOGGER = logging.getLogger("radio_ripper.app")
@@ -169,7 +169,7 @@ class RadioRipperApp:
                     # Avoid clobbering if same name already in unchecked
                     if target.exists():
                         target = self._acoustid_queue.unchecked_dir / f"{mp3.stem}.{uuid.uuid4().hex}.mp3"
-                    mp3.rename(target)
+                    move_across_devices(mp3, target)
                     self._acoustid_queue.enqueue(target)
                     moved += 1
                 except OSError as exc:
