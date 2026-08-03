@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.4.0 (2026-08-03)
+
+### Features
+
+- AcoustID-Filterung — nur Aufnahmen mit ausreichendem Fingerprint-Score behalten
+  ([`2b5fb0f`](https://github.com/domoskanonos/radioripper/commit/2b5fb0fc6384efe7218c9be5a8224d0c5b3d7543))
+
+
 ## [2.3.4] - 2026-08-03
 
 ### Added

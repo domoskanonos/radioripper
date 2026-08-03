@@ -999,7 +999,7 @@ wheels = [
 
 [[package]]
 name = "radio-ripper-stream"
-version = "2.3.3"
+version = "2.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
