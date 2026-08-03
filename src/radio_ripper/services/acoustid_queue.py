@@ -1,23 +1,24 @@
-"""AcoustID processing queue.
+"""AcoustID processing queue — ``work_dir/unchecked_mp3`` IS the queue.
 
-All successfully recorded MP3 files land in ``work_dir/unchecked_mp3/`` first.
-This module manages a queue that picks them up, applies rate-limited AcoustID
-lookups, and either moves them to the final destination (with correct
-``Artist - Title.mp3`` naming) or discards them.
+Recordings land directly in ``work_dir/unchecked_mp3/`` (written there by the
+recorder, committed atomically from ``.part``). There is deliberately no second
+in-memory queue: a single worker scans the directory, processes the *oldest*
+file first (by modification/creation time), runs a rate-limited AcoustID lookup
+and either moves the file to ``destination`` (with correct ``Artist - Title.mp3``
+naming) or discards it.
 
 Design goals
 ------------
+* **unchecked_mp3 is the queue** — durable, survives restarts, sorted oldest
+  first. ``enqueue()`` only wakes the worker; it never buffers.
 * **Strict fail-closed**: only a successful AcoustID lookup (score ≥ min_score
   *with* usable artist/title metadata) results in a kept file. Transient errors
-  (network, API timeout, fpcalc crash) are retried with exponential back-off;
-  the file stays in ``unchecked_mp3`` until the retry budget is exhausted.
-* **Rate-limited**: a token-bucket style rate limiter enforces
-  ``acoustid_requests_per_minute`` across all concurrent workers.
-* **Persistent**: ``unchecked_mp3`` survives process restarts. On startup the
-  app re-enqueues every ``*.mp3`` file found there.
+  are retried with exponential back-off; the file stays in ``unchecked_mp3``.
+* **Rate-limited**: requests are evenly spaced to stay within
+  ``acoustid_requests_per_minute`` (AcoustID hard limit: 180/min = 3 req/s).
 * **Atomic rename + collision handling**: the final destination write is
-  protected by ``_FINALIZE_LOCK`` so two concurrent workers can never clobber
-  the same target. The recording with the higher AcoustID score wins.
+  protected by ``_FINALIZE_LOCK`` so concurrent workers can never clobber the
+  same target. The recording with the higher AcoustID score wins.
 """
 
 from __future__ import annotations
@@ -48,17 +49,13 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger("radio_ripper.acoustid_queue")
 
-# Sentinel used to signal the worker to stop
-_STOP = object()
-
 
 class _RateLimiter:
     """Evenly spaced rate limiter for AcoustID requests.
 
     A sliding-window limiter would permit a burst of ``rpm`` requests at the
     start of every minute. AcoustID documents a per-second limit, so requests
-    are deliberately spaced at a fixed interval instead. The lock also makes
-    the behavior correct if the queue gains more than one worker later.
+    are deliberately spaced at a fixed interval instead.
     """
 
     def __init__(self, requests_per_minute: int) -> None:
@@ -78,16 +75,15 @@ class _RateLimiter:
 
 
 class AcoustidQueue:
-    """Single-process AcoustID processing queue.
+    """Single-process AcoustID worker over ``work_dir/unchecked_mp3``.
 
     Instantiate once per application, then:
     1. Call ``start()`` to launch the background worker task.
-    2. Call ``enqueue(path)`` from any coroutine to add an unchecked file.
+    2. Call ``enqueue(path)`` from any coroutine once a file is committed.
     3. Call ``stop()`` (and await) for graceful shutdown.
 
-    The queue also exposes ``load_existing_unchecked()`` which scans
-    ``work_dir/unchecked_mp3/`` for leftover files from previous runs and
-    re-enqueues them.
+    The worker scans ``unchecked_mp3`` itself, so files left behind by a
+    previous run are picked up automatically on startup.
     """
 
     UNCHECKED_DIR_NAME = "unchecked_mp3"
@@ -108,11 +104,12 @@ class AcoustidQueue:
         self._log = logger or _LOGGER
         self._unchecked_dir = settings.work_dir / self.UNCHECKED_DIR_NAME
         self._rate_limiter = _RateLimiter(settings.acoustid_requests_per_minute)
-        # asyncio.Queue accepts both Path objects and the _STOP sentinel
-        self._queue: asyncio.Queue[object] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
-        self._retry_tasks: set[asyncio.Task[None]] = set()
         self._stopped = False
+        self._wake_event = asyncio.Event()
+        # path -> (next_retry_monotonic, attempts) for files in cooldown/back-off
+        self._retry_info: dict[Path, tuple[float, int]] = {}
+        self._idle_sleep = 2.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,18 +128,14 @@ class AcoustidQueue:
         self._worker_task = asyncio.create_task(self._worker_loop(), name="AcoustidQueue-worker")
 
     async def stop(self) -> None:
-        """Stop workers without processing queued files during shutdown.
+        """Stop the worker; files stay durable in ``unchecked_mp3``.
 
-        Files already in ``unchecked_mp3`` are durable queue entries, so a
-        shutdown should cancel the in-memory worker and leave those files for
-        the next startup instead of waiting behind a potentially huge queue.
+        Because the directory is the queue, an unfinished shutdown simply leaves
+        files there for the next startup — nothing is lost and nothing is
+        buffered in memory.
         """
         self._stopped = True
-        for task in self._retry_tasks:
-            task.cancel()
-        if self._retry_tasks:
-            await asyncio.gather(*self._retry_tasks, return_exceptions=True)
-        self._retry_tasks.clear()
+        self._wake_event.set()
         if self._worker_task is not None:
             self._worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, TimeoutError):
@@ -150,27 +143,24 @@ class AcoustidQueue:
             self._worker_task = None
 
     def enqueue(self, path: Path) -> None:
-        """Add a finished, validated MP3 to the processing queue.
+        """Signal that a new file is available in ``unchecked_mp3``.
 
-        The file must already reside in ``unchecked_dir`` before calling this.
-        If the unchecked directory is over the configured limits, the file is
-        discarded and a warning is logged instead.
+        The file is already durably stored there; this only wakes the worker so
+        it does not have to poll. The file is never deleted here, even when the
+        staging directory is over its configured limits — pausing recording is
+        the application's backpressure concern.
         """
         if self._stopped:
             return
         if not self._check_unchecked_limits(path):
-            # Keep the file recoverable. The application can use this signal to
-            # pause recording instead of losing an otherwise valid capture.
             self._log.warning("Unchecked directory over limit — retaining %s", path.name)
-        self._queue.put_nowait(path)
+        self._wake_event.set()
 
     def load_existing_unchecked(self) -> int:
-        """Re-enqueue every ``*.mp3`` file found in ``unchecked_dir``.
+        """Clean stale ``.part`` files and report pending recordings.
 
-        Called once at application startup to recover files from previous runs.
-        Files with a ``ACOUSTID_SCORE`` tag already set are also re-queued so
-        their scoring is verified against current threshold (in case threshold
-        changed).  Returns the number of files enqueued.
+        The worker picks up existing files naturally by scanning the directory,
+        so nothing needs to be re-queued. Returns the number of pending MP3s.
         """
         self._unchecked_dir.mkdir(parents=True, exist_ok=True)
         stale_parts = sorted(self._unchecked_dir.glob("*.part"))
@@ -179,141 +169,130 @@ class AcoustidQueue:
                 part.unlink(missing_ok=True)
         if stale_parts:
             self._log.info("Removed %d incomplete recording(s) from previous run.", len(stale_parts))
-        files = sorted(self._unchecked_dir.glob("*.mp3"))
-        for f in files:
-            self._queue.put_nowait(f)
-        if files:
-            self._log.info("Re-enqueued %d unchecked file(s) from previous run.", len(files))
-        return len(files)
+        pending = sorted(self._unchecked_dir.glob("*.mp3"))
+        if pending:
+            self._log.info("Found %d pending recording(s) in unchecked_mp3.", len(pending))
+            self._wake_event.set()
+        return len(pending)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Worker loop
     # ------------------------------------------------------------------
-
-    def _check_unchecked_limits(self, incoming: Path) -> bool:
-        """Return True if limits are not exceeded, False if we should drop."""
-        max_files = self._settings.max_unchecked_files
-        max_bytes = self._settings.max_unchecked_bytes
-        if max_files <= 0 and max_bytes <= 0:
-            return True
-        try:
-            existing = list(self._unchecked_dir.glob("*.mp3"))
-        except OSError:
-            return True
-        if max_files > 0 and len(existing) >= max_files:
-            return False
-        if max_bytes > 0:
-            total = 0
-            for file in existing:
-                with contextlib.suppress(OSError):
-                    total += file.stat().st_size
-            if incoming not in existing:
-                with contextlib.suppress(OSError):
-                    total += incoming.stat().st_size
-            if total >= max_bytes:
-                return False
-        return True
 
     async def _worker_loop(self) -> None:
         self._log.info("AcoustID queue worker started.")
-        while True:
-            item = await self._queue.get()
+        while not self._stopped:
             try:
-                if item is _STOP:
-                    break
-                assert isinstance(item, Path)
-                await self._process(item)
+                target = self._pick_next()
+            except asyncio.CancelledError:
+                break
+            if target is None:
+                # Nothing ready right now — sleep until the earliest retry or
+                # until a new file wakes us.
+                self._wake_event.clear()
+                if self._pick_next() is not None:
+                    continue
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._wake_event.wait(), timeout=self._cooldown_wait())
+                continue
+            try:
+                await self._process(target)
             except Exception:
-                self._log.exception("Unexpected error in AcoustID worker.")
-            finally:
-                self._queue.task_done()
+                self._log.exception("Unexpected error processing %s", target.name)
+                self._schedule_retry(target, self._settings.acoustid_retry_base_delay)
         self._log.info("AcoustID queue worker stopped.")
 
-    async def _process(self, path: Path) -> None:
-        """Run the full AcoustID pipeline for a single file.
+    def _pick_next(self) -> Path | None:
+        """Return the oldest pending file whose retry cooldown has elapsed."""
+        for p in [p for p in self._retry_info if not p.exists()]:
+            self._retry_info.pop(p, None)
+        now = time.monotonic()
+        try:
+            files = sorted(self._unchecked_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return None
+        for f in files:
+            info = self._retry_info.get(f)
+            if info is not None and info[0] > now:
+                continue
+            return f
+        return None
 
-        Retry transient errors (rate-limit / network / timeout) up to
-        ``acoustid_retry_max_attempts`` times with exponential back-off.
-        On permanent rejection (score too low, no metadata) delete the file.
-        On success move it to ``destination`` with the correct name.
-        """
+    def _cooldown_wait(self) -> float:
+        """Seconds to sleep until the earliest pending retry (or idle poll)."""
+        if not self._retry_info:
+            return self._idle_sleep
+        now = time.monotonic()
+        pending = [t for t, _ in self._retry_info.values() if t > now]
+        if not pending:
+            return self._idle_sleep
+        return min(min(pending) - now, 60.0)
+
+    # ------------------------------------------------------------------
+    # Processing
+    # ------------------------------------------------------------------
+
+    async def _process(self, path: Path) -> None:
+        """Run the full AcoustID pipeline for a single file (one attempt)."""
         if not path.exists():
-            self._log.debug("File gone before processing: %s", path.name)
+            self._retry_info.pop(path, None)
             return
 
         local_result = await self._validate_local_file(path)
         if local_result is False:
+            self._retry_info.pop(path, None)
             return
         if local_result is None:
             self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
             return
 
-        attempts = 0
-        max_attempts = max(1, self._settings.acoustid_retry_max_attempts + 1)
-        delay = self._settings.acoustid_retry_base_delay
+        await self._rate_limiter.acquire()
 
-        while attempts < max_attempts:
-            attempts += 1
-
-            # Honour the rate limit before every API call
-            await self._rate_limiter.acquire()
-
-            result = await acoustid_lookup(
-                path,
-                self._api_key,
-                min_score=self._settings.acoustid_min_score,
-                api_url=self._settings.acoustid_api_url,
-                http_client=self._http,
-            )
-
-            if result.outcome == "accepted":
-                if result.match is None:
-                    self._log.error(
-                        "AcoustID accepted %s without metadata; retaining for retry.",
-                        path.name,
-                    )
-                    self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
-                    return
-                committed = await self._commit(path, result)
-                if not committed:
-                    self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
-                return
-
-            if result.outcome == "rejected":
-                # Score too low or no match in AcoustID database — discard
-                self._log.info(
-                    "AcoustID rejected %s (%s) — deleting.",
-                    path.name,
-                    result.reject_reason or "score below threshold",
-                )
-                with contextlib.suppress(OSError):
-                    path.unlink(missing_ok=True)
-                return
-
-            # outcome == "error" — transient failure, retry
-            self._log.warning(
-                "AcoustID transient error for %s (attempt %d/%d): %s",
-                path.name,
-                attempts,
-                max_attempts,
-                result.error_detail or "unknown",
-            )
-            if attempts < max_attempts:
-                actual_delay = min(delay, self._settings.acoustid_retry_max_delay)
-                self._log.info("Retrying %s in %.0f s.", path.name, actual_delay)
-                await asyncio.sleep(actual_delay)
-                delay = min(delay * 2.0, self._settings.acoustid_retry_max_delay)
-
-        # All retries exhausted — file stays in unchecked_dir for next run
-        self._log.error(
-            "AcoustID gave up on %s after %d attempt(s). File stays in unchecked_mp3 for next restart.",
-            path.name,
-            max_attempts,
+        result = await acoustid_lookup(
+            path,
+            self._api_key,
+            min_score=self._settings.acoustid_min_score,
+            api_url=self._settings.acoustid_api_url,
+            http_client=self._http,
         )
-        self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
+
+        if result.outcome == "accepted":
+            if result.match is None:
+                self._log.error(
+                    "AcoustID accepted %s without metadata; retaining for retry.",
+                    path.name,
+                )
+                self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
+                return
+            committed = await self._commit(path, result)
+            if committed:
+                self._retry_info.pop(path, None)
+            else:
+                self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
+            return
+
+        if result.outcome == "rejected":
+            # Score too low or no match in AcoustID database — discard
+            self._log.info(
+                "AcoustID rejected %s (%s) — deleting.",
+                path.name,
+                result.reject_reason or "score below threshold",
+            )
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+            self._retry_info.pop(path, None)
+            return
+
+        # outcome == "error" — transient failure, retry later
+        self._log.warning(
+            "AcoustID transient error for %s: %s",
+            path.name,
+            result.error_detail or "unknown",
+        )
+        self._schedule_retry(path, self._settings.acoustid_retry_base_delay)
 
     async def _validate_local_file(self, path: Path) -> bool | None:
-        """Validate recovered files before spending an AcoustID request.
+        """Validate files before spending an AcoustID request.
 
         Returns ``True`` for valid, ``False`` for permanent rejection, and
         ``None`` when a local dependency or read failed temporarily.
@@ -353,21 +332,53 @@ class AcoustidQueue:
                 return False
         return True
 
-    def _schedule_retry(self, path: Path, delay: float) -> None:
+    def _schedule_retry(self, path: Path, base_delay: float) -> None:
+        """Record a retry for *path* with exponential back-off.
+
+        The retry is enforced by ``_pick_next`` skipping files whose cooldown
+        has not elapsed. Once ``acoustid_retry_max_attempts`` is exhausted the
+        file simply stays in ``unchecked_mp3`` for the next restart.
+        """
         if self._stopped or not path.exists():
             return
+        _, attempts = self._retry_info.get(path, (0, 0))
+        max_attempts = max(1, self._settings.acoustid_retry_max_attempts + 1)
+        if attempts >= max_attempts:
+            self._log.error(
+                "AcoustID gave up on %s after %d attempt(s); file stays in unchecked_mp3 for next restart.",
+                path.name,
+                max_attempts,
+            )
+            self._retry_info.pop(path, None)
+            return
+        attempts += 1
+        backoff = min(base_delay * (2 ** (attempts - 1)), self._settings.acoustid_retry_max_delay)
+        self._retry_info[path] = (time.monotonic() + backoff, attempts)
+        self._log.info("Retrying %s in %.0f s (attempt %d/%d).", path.name, backoff, attempts, max_attempts)
 
-        async def _retry() -> None:
-            try:
-                await asyncio.sleep(delay)
-                if not self._stopped and path.exists():
-                    self._queue.put_nowait(path)
-            except asyncio.CancelledError:
-                raise
-
-        task = asyncio.create_task(_retry(), name=f"AcoustidRetry-{path.name}")
-        self._retry_tasks.add(task)
-        task.add_done_callback(self._retry_tasks.discard)
+    def _check_unchecked_limits(self, incoming: Path) -> bool:
+        """Return True if limits are not exceeded, False if we should drop."""
+        max_files = self._settings.max_unchecked_files
+        max_bytes = self._settings.max_unchecked_bytes
+        if max_files <= 0 and max_bytes <= 0:
+            return True
+        try:
+            existing = list(self._unchecked_dir.glob("*.mp3"))
+        except OSError:
+            return True
+        if max_files > 0 and len(existing) >= max_files:
+            return False
+        if max_bytes > 0:
+            total = 0
+            for file in existing:
+                with contextlib.suppress(OSError):
+                    total += file.stat().st_size
+            if incoming not in existing:
+                with contextlib.suppress(OSError):
+                    total += incoming.stat().st_size
+            if total >= max_bytes:
+                return False
+        return True
 
     async def _commit(self, path: Path, result: AcoustidLookup) -> bool:
         """Write ID3 tags, build target name, handle collision, atomic move."""

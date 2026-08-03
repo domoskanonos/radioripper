@@ -317,6 +317,83 @@ class TestRadioRipperAppLifecycleMethods:
         count = app._count_inbox_files()
         assert count == 2
 
+    def test_count_inbox_includes_staging_dir(self, tmp_path):
+        # Recordings awaiting AcoustID live in work/unchecked_mp3 and must be
+        # counted so the inbox limit is not bypassed while the queue backs up.
+        inbox = tmp_path / "work" / "destination"
+        inbox.mkdir(parents=True)
+        (inbox / "song1.mp3").write_text("data")
+        staging = tmp_path / "work" / "unchecked_mp3"
+        staging.mkdir(parents=True)
+        (staging / "pending1.mp3").write_text("data")
+        (staging / "pending2.mp3").write_text("data")
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        assert app._count_inbox_files() == 3
+
+
+class TestBackpressure:
+    def test_no_backpressure_by_default(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        app = _make_app(settings)
+        assert app._backpressure_reason() is None
+
+    def test_destination_over_inbox_limit(self, tmp_path):
+        settings = _make_settings(tmp_path, max_files_inbox=2)
+        app = _make_app(settings)
+        dest = settings.destination
+        dest.mkdir(parents=True)
+        for i in range(3):
+            (dest / f"song{i}.mp3").write_bytes(b"x")
+        reason = app._backpressure_reason()
+        assert reason is not None
+        assert "max_files_inbox" in reason
+
+    def test_staging_over_file_limit(self, tmp_path):
+        settings = _make_settings(tmp_path, max_unchecked_files=100)
+        app = _make_app(settings)
+        staging = settings.work_dir / "unchecked_mp3"
+        staging.mkdir(parents=True)
+        for i in range(101):
+            (staging / f"pending{i}.mp3").write_bytes(b"x")
+        reason = app._backpressure_reason()
+        assert reason is not None
+        assert "max_unchecked_files" in reason
+
+    def test_staging_over_byte_limit(self, tmp_path):
+        settings = _make_settings(tmp_path, max_unchecked_bytes=100)
+        app = _make_app(settings)
+        staging = settings.work_dir / "unchecked_mp3"
+        staging.mkdir(parents=True)
+        (staging / "big.mp3").write_bytes(b"x" * 200)
+        reason = app._backpressure_reason()
+        assert reason is not None
+        assert "max_unchecked_bytes" in reason
+
+    @pytest.mark.asyncio
+    async def test_check_backpressure_pauses_on_limit(self, tmp_path):
+        settings = _make_settings(tmp_path, max_files_inbox=1)
+        app = _make_app(settings)
+        dest = settings.destination
+        dest.mkdir(parents=True)
+        (dest / "a.mp3").write_bytes(b"x")
+        with patch.object(app, "_pause_all") as pause, patch.object(app, "_resume_all") as resume:
+            await app._check_backpressure()
+        pause.assert_called_once()
+        resume.assert_not_called()
+        assert app._backpressure_paused is True
+
+    @pytest.mark.asyncio
+    async def test_check_backpressure_resumes_when_cleared(self, tmp_path):
+        settings = _make_settings(tmp_path, max_files_inbox=2)
+        app = _make_app(settings)
+        app._backpressure_paused = True
+        with patch.object(app, "_resume_all") as resume, patch.object(app, "_pause_all") as pause:
+            await app._check_backpressure()
+        resume.assert_called_once()
+        pause.assert_not_called()
+        assert app._backpressure_paused is False
+
     def test_apply_config_diff_log_level(self, tmp_path, caplog):
         import logging
 

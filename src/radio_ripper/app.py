@@ -41,6 +41,8 @@ class RadioRipperApp:
         self._recorders_lock = asyncio.Lock()
         self._cancel_requested = False
         self._housekeeping_task: asyncio.Task[None] | None = None
+        # True while recorders are paused because a storage/queue limit was hit
+        self._backpressure_paused = False
         # AcoustID queue — created in start() once we have a running event loop
         self._acoustid_queue: AcoustidQueue | None = None
         # Dedicated small HTTP client for AcoustID (separate from stream pool)
@@ -278,18 +280,73 @@ class RadioRipperApp:
             rec.resume()
 
     def _count_inbox_files(self) -> int:
+        """Count MP3 files across destination and the unchecked staging dir.
+
+        The staging dir (work/unchecked_mp3) holds recordings waiting for the
+        rate-limited AcoustID queue. Counting both prevents the destination
+        limit from being silently bypassed while files pile up in staging.
+        """
+        count = 0
         inbox = self.settings.destination
-        if not inbox.is_dir():
-            return 0
-        return sum(1 for _ in inbox.glob("*.mp3"))
+        if inbox.is_dir():
+            count += sum(1 for _ in inbox.glob("*.mp3"))
+        staging = self.settings.work_dir / AcoustidQueue.UNCHECKED_DIR_NAME
+        if staging.is_dir():
+            count += sum(1 for _ in staging.glob("*.mp3"))
+        return count
+
+    def _staging_usage(self) -> tuple[int, int]:
+        """Return ``(file_count, total_bytes)`` in work/unchecked_mp3."""
+        staging = self.settings.work_dir / AcoustidQueue.UNCHECKED_DIR_NAME
+        if not staging.is_dir():
+            return 0, 0
+        files = list(staging.glob("*.mp3"))
+        total = 0
+        for f in files:
+            with contextlib.suppress(OSError):
+                total += f.stat().st_size
+        return len(files), total
+
+    def _backpressure_reason(self) -> str | None:
+        """Return a reason string when any storage limit is exceeded.
+
+        The AcoustID queue *is* ``work/unchecked_mp3``, so it is covered by the
+        staging file/byte limits below. Checks, in order: destination file
+        count, staging file count, staging byte count. Returns ``None`` when
+        everything is within limits.
+        """
+        if self.settings.destination.is_dir():
+            dest_count = sum(1 for _ in self.settings.destination.glob("*.mp3"))
+            if dest_count >= self.settings.max_files_inbox:
+                return f"destination {dest_count} >= max_files_inbox {self.settings.max_files_inbox}"
+
+        staging_count, staging_bytes = self._staging_usage()
+        if self.settings.max_unchecked_files > 0 and staging_count >= self.settings.max_unchecked_files:
+            return f"unchecked_mp3 files {staging_count} >= max_unchecked_files {self.settings.max_unchecked_files}"
+        if self.settings.max_unchecked_bytes > 0 and staging_bytes >= self.settings.max_unchecked_bytes:
+            return f"unchecked_mp3 bytes {staging_bytes} >= max_unchecked_bytes {self.settings.max_unchecked_bytes}"
+
+        return None
+
+    def _backpressure_cleared(self) -> bool:
+        """Return True when every limit is back below its resume threshold (80 %)."""
+        if self.settings.destination.is_dir():
+            dest_count = sum(1 for _ in self.settings.destination.glob("*.mp3"))
+            if dest_count > self.settings.max_files_inbox * 0.8:
+                return False
+
+        staging_count, staging_bytes = self._staging_usage()
+        over_files = self.settings.max_unchecked_files > 0 and staging_count > self.settings.max_unchecked_files * 0.8
+        over_bytes = self.settings.max_unchecked_bytes > 0 and staging_bytes > self.settings.max_unchecked_bytes * 0.8
+        return not (over_files or over_bytes)
 
     # ------------------------------------------------------------------ housekeeping
 
     async def _run_housekeeping(self) -> None:
         config_interval = 60.0
-        inbox_interval = 300.0
+        backpressure_interval = 30.0
         next_config = time.monotonic() + config_interval
-        next_inbox = time.monotonic() + inbox_interval
+        next_backpressure = time.monotonic() + backpressure_interval
 
         while not self._cancel_requested:
             now = time.monotonic()
@@ -298,12 +355,12 @@ class RadioRipperApp:
                 await self._process_config_reload()
                 next_config = now + config_interval
 
-            if now >= next_inbox:
-                await self._check_inbox()
-                next_inbox = now + inbox_interval
+            if now >= next_backpressure:
+                await self._check_backpressure()
+                next_backpressure = now + backpressure_interval
 
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._sleep_until(next_config, next_inbox), timeout=5.0)
+                await asyncio.wait_for(self._sleep_until(next_config, next_backpressure), timeout=5.0)
 
     async def _process_config_reload(self) -> None:
         lc = self._live_config
@@ -327,32 +384,30 @@ class RadioRipperApp:
                 return
             await asyncio.sleep(min(remaining, 5.0))
 
-    async def _check_inbox(self) -> None:
-        count = self._count_inbox_files()
-        limit = self.settings.max_files_inbox
-        if count < limit:
+    async def _check_backpressure(self) -> None:
+        """Pause/resume all recorders based on storage and queue capacity.
+
+        Pauses as soon as *any* limit is hit — destination file count, staging
+        dir file/byte count or the in-memory AcoustID queue size. Resumes once
+        every limit is back below 80 % of its threshold.
+        """
+        if self._cancel_requested:
             return
 
-        self.logger.warning(
-            "Inbox full (%d files >= %d) — pausing all recorders.",
-            count,
-            limit,
-        )
+        if self._backpressure_paused:
+            if self._backpressure_cleared():
+                self.logger.info("Backpressure cleared — resuming all recorders.")
+                self._resume_all()
+                self._backpressure_paused = False
+            return
+
+        reason = self._backpressure_reason()
+        if reason is None:
+            return
+
+        self.logger.warning("Backpressure: %s — pausing all recorders.", reason)
         self._pause_all()
-        resume_threshold = limit * 0.8
-        while not self._cancel_requested:
-            await asyncio.sleep(300.0)
-            count = self._count_inbox_files()
-            self.logger.info(
-                "Inbox check: %d files (resume at ≤ %d).",
-                count,
-                resume_threshold,
-            )
-            if count <= resume_threshold:
-                break
-        if not self._cancel_requested:
-            self.logger.info("Inbox has space — resuming all recorders.")
-            self._resume_all()
+        self._backpressure_paused = True
 
     def _apply_config_diff(self, diff: dict[str, tuple]) -> None:
         lc = self._live_config

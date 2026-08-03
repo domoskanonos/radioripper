@@ -111,8 +111,8 @@ Alle Felder sind optional – es gelten die gezeigten Defaults.
 | `acoustid_retry_max_attempts` | integer | `5` | Wiederholungen bei transienten AcoustID-Fehlern |
 | `acoustid_retry_base_delay` | float | `30.0` | Start-Wartezeit vor Retry (Sekunden) |
 | `acoustid_retry_max_delay` | float | `3600.0` | Maximale Wartezeit zwischen Retries (Sekunden) |
-| `max_unchecked_files` | integer | `10000` | Datei-Obergrenze in `work/unchecked_mp3` |
-| `max_unchecked_bytes` | integer | `10737418240` | Größen-Obergrenze für `work/unchecked_mp3` (10 GB) |
+| `max_unchecked_files` | integer | `5000` | Queue-Limit: max. Dateien in `work/unchecked_mp3` (ist die AcoustID-Queue); bei Überschreitung pausieren alle Streams |
+| `max_unchecked_bytes` | integer | `10737418240` | Queue-Limit: max. Größe von `work/unchecked_mp3` (10 GB) |
 
 ### Live-Config (Hot-Reload)
 

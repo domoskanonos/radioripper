@@ -127,8 +127,9 @@ class Settings(BaseModel):
     # Max retry delay cap (seconds)
     acoustid_retry_max_delay: float = Field(default=3600.0, ge=60.0)
 
-    # Unchecked MP3 staging directory limits (inside work_dir/unchecked_mp3)
-    max_unchecked_files: int = Field(default=10000, ge=100)
+    # work_dir/unchecked_mp3 IS the AcoustID queue. These are its limits; when
+    # exceeded the app pauses all recorders until the queue drains.
+    max_unchecked_files: int = Field(default=5000, ge=100)
     max_unchecked_bytes: int = Field(default=10 * 1024 * 1024 * 1024, ge=0)  # 10 GB
 
     # Logging settings (previously hardcoded in logging.py)
