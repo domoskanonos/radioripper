@@ -61,4 +61,5 @@ RUN mkdir -p /app/recordings /app/work /app/config \
 USER ripper
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["radio-ripper"]
+# Kein Binärname in der CMD – der Entrypoint baut den Befehl selbst.
+CMD []
