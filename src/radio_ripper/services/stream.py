@@ -14,7 +14,8 @@ from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.playlist import PlaylistResolver
 from radio_ripper.services.storage import (
     TrackWriter,
-    acoustid_meets_threshold,
+    acoustid_lookup,
+    finalize_with_metadata,
     get_mp3_duration,
     is_valid_mp3,
     sanitize_filename,
@@ -361,8 +362,8 @@ class StreamRecorder:
         if not ok:
             return
         if self._acoustid_api_key:
-            acoustid_ok = await acoustid_meets_threshold(final_path, self._acoustid_api_key)
-            if not acoustid_ok:
+            lookup = await acoustid_lookup(final_path, self._acoustid_api_key)
+            if not lookup.accepted:
                 self._log.info(
                     "[%s] Discarded (AcoustID score below threshold): %s",
                     self.station_name,
@@ -371,6 +372,15 @@ class StreamRecorder:
                 with contextlib.suppress(OSError):
                     final_path.unlink(missing_ok=True)
                 return
+            if lookup.match is not None:
+                match = lookup.match
+                final_path = await finalize_with_metadata(
+                    final_path,
+                    self._acoustid_api_key,
+                    artist=match.artist,
+                    title=match.title,
+                    score=match.score,
+                )
         self._log.info(
             "[%s] Streaming result: %s (%d bytes)",
             self.station_name,

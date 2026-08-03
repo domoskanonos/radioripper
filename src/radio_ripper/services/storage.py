@@ -7,7 +7,9 @@ import logging
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -15,6 +17,29 @@ _LOGGER = logging.getLogger(__name__)
 
 _ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
 _ACOUSTID_MIN_SCORE = 0.9  # Mindest-Score fuer einen gueltigen Match (0.0-1.0)
+
+
+@dataclass(frozen=True)
+class AcoustidMatch:
+    """Metadata of the best AcoustID recording match."""
+
+    artist: str
+    title: str
+    score: float
+
+
+@dataclass(frozen=True)
+class AcoustidLookup:
+    """Result of an AcoustID lookup.
+
+    ``accepted`` is True when the recording should be kept, False when the
+    API answered and no result reached the minimum score. ``match`` carries
+    the metadata of the best accepted match (may be None if the file passed
+    but no usable metadata was returned).
+    """
+
+    accepted: bool
+    match: AcoustidMatch | None
 
 
 def sanitize_filename(name: str) -> str:
@@ -142,31 +167,30 @@ async def is_valid_mp3(path: Path) -> bool:
         return False
 
 
-async def acoustid_meets_threshold(
+async def acoustid_lookup(
     path: Path,
     api_key: str,
     *,
     min_score: float = _ACOUSTID_MIN_SCORE,
-) -> bool:
-    """Return True if the MP3 at *path* has an AcoustID match score >= *min_score*.
+) -> AcoustidLookup:
+    """Query AcoustID for *path* and return score + metadata of the best match.
 
     Steps:
     1. Run ``fpcalc`` (Chromaprint) to compute audio fingerprint + duration.
-    2. Query the AcoustID lookup API with the fingerprint.
-    3. Accept the file if at least one result has score >= *min_score*.
+    2. Query the AcoustID lookup API (``meta=recordings``) with the fingerprint.
+    3. Pick the highest-scoring result that reaches *min_score*.
 
-    Returns True (i.e. keep the file) when:
-    - ``fpcalc`` is not installed (fail-open so recordings are not silently lost).
-    - The API call fails for any reason (network error, timeout, etc.).
-    - A matching result is found with a sufficiently high score.
+    Fail-open behavior (so recordings are never silently lost):
+    - ``fpcalc`` is not installed -> ``accepted=True``, no match.
+    - The API call fails for any reason -> ``accepted=True``, no match.
 
-    Returns False (i.e. discard the file) only when the API responds successfully
-    and every result has a score below *min_score*.
+    ``accepted=False`` is returned only when the API responds successfully and
+    no result reaches *min_score*.
     """
     fpcalc = shutil.which("fpcalc")
     if fpcalc is None:
         _LOGGER.warning("fpcalc not found — skipping AcoustID check for %s", path.name)
-        return True
+        return AcoustidLookup(accepted=True, match=None)
 
     # --- 1. Compute fingerprint -----------------------------------------------
     try:
@@ -180,7 +204,7 @@ async def acoustid_meets_threshold(
         stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
     except Exception as exc:
         _LOGGER.warning("fpcalc failed for %s: %s — skipping AcoustID check", path.name, exc)
-        return True
+        return AcoustidLookup(accepted=True, match=None)
 
     try:
         fp_data = json.loads(stdout.decode())
@@ -188,7 +212,7 @@ async def acoustid_meets_threshold(
         duration: float = float(fp_data["duration"])
     except Exception as exc:
         _LOGGER.warning("fpcalc output parse error for %s: %s — skipping AcoustID check", path.name, exc)
-        return True
+        return AcoustidLookup(accepted=True, match=None)
 
     # --- 2. Query AcoustID API ------------------------------------------------
     params = f"client={api_key}&meta=recordings&duration={int(duration)}&fingerprint={fingerprint}"
@@ -204,32 +228,161 @@ async def acoustid_meets_threshold(
         api_data = json.loads(response_bytes.decode())
     except Exception as exc:
         _LOGGER.warning("AcoustID API request failed for %s: %s — skipping threshold check", path.name, exc)
-        return True
+        return AcoustidLookup(accepted=True, match=None)
 
-    # --- 3. Evaluate score ----------------------------------------------------
-    results = api_data.get("results", [])
-    if not results:
-        _LOGGER.info("AcoustID: no results for %s — discarding", path.name)
-        return False
-
-    best_score: float = max((r.get("score", 0.0) for r in results), default=0.0)
-    if best_score >= min_score:
-        _LOGGER.info("AcoustID: %s accepted (score=%.2f >= %.2f)", path.name, best_score, min_score)
-        return True
+    # --- 3. Evaluate score & extract metadata ---------------------------------
+    match = _parse_acoustid_response(api_data, min_score)
+    if match is None:
+        _LOGGER.info("AcoustID: no qualifying match for %s — discarding", path.name)
+        return AcoustidLookup(accepted=False, match=None)
 
     _LOGGER.info(
-        "AcoustID: %s discarded (best score=%.2f < threshold=%.2f)",
+        "AcoustID: %s accepted (score=%.2f >= %.2f, %s - %s)",
         path.name,
-        best_score,
+        match.score,
         min_score,
+        match.artist,
+        match.title,
     )
-    return False
+    return AcoustidLookup(accepted=True, match=match)
+
+
+def _parse_acoustid_response(api_data: dict[str, Any], min_score: float) -> AcoustidMatch | None:
+    """Return the best metadata match from an AcoustID API response, or None."""
+    best: AcoustidMatch | None = None
+    for result in api_data.get("results") or []:
+        try:
+            score = float(result.get("score", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if score < min_score:
+            continue
+        for recording in result.get("recordings") or []:
+            artists = [a.get("name", "").strip() for a in recording.get("artists") or [] if a.get("name")]
+            artist = ", ".join(a for a in artists if a)
+            title = (recording.get("title") or "").strip()
+            if not artist and not title:
+                continue
+            candidate = AcoustidMatch(artist=artist, title=title, score=score)
+            if best is None or score > best.score:
+                best = candidate
+    return best
+
+
+def write_mp3_tags(path: Path, *, artist: str, title: str) -> bool:
+    """Write artist/title as ID3 tags into the MP3 at *path*.
+
+    Returns True on success (or when mutagen is not installed, so recordings
+    are never lost), False if tagging failed.
+    """
+    try:
+        from mutagen.id3 import ID3, TIT2, TPE1, ID3NoHeaderError
+    except ImportError:
+        _LOGGER.warning("mutagen not installed — skipping ID3 tags for %s", path.name)
+        return True
+    try:
+        try:
+            audio = ID3(path)  # type: ignore[no-untyped-call]
+        except ID3NoHeaderError:
+            audio = ID3()  # type: ignore[no-untyped-call]
+        if artist:
+            audio.add(TPE1(encoding=3, text=[artist]))  # type: ignore[no-untyped-call]
+        if title:
+            audio.add(TIT2(encoding=3, text=[title]))  # type: ignore[no-untyped-call]
+        audio.save(path)  # type: ignore[no-untyped-call]
+        return True
+    except Exception as exc:
+        _LOGGER.warning("Failed to write ID3 tags for %s: %s", path.name, exc)
+        return False
+
+
+def build_metadata_filename(artist: str, title: str) -> str:
+    """Build a filename '<artist> - <title>.mp3' (sanitized, '' if empty)."""
+    raw = f"{artist} - {title}".strip(" -")
+    safe = sanitize_filename(raw)
+    if not safe:
+        return ""
+    return safe + ".mp3"
+
+
+def rename_track(path: Path, artist: str, title: str) -> Path:
+    """Rename *path* to '<artist> - <title>.mp3' in the same directory.
+
+    Returns the new path, or the original path when no (usable) rename is
+    possible. An existing target is overwritten — collision handling (e.g.
+    comparing AcoustID scores) must happen before calling this function.
+    """
+    new_name = build_metadata_filename(artist, title)
+    if not new_name or new_name == path.name:
+        return path
+    target = path.parent / new_name
+    try:
+        path.rename(target)
+    except OSError as exc:
+        _LOGGER.warning("Failed to rename %s -> %s: %s", path, target, exc)
+        return path
+    return target
+
+
+async def finalize_with_metadata(
+    path: Path,
+    api_key: str,
+    *,
+    artist: str,
+    title: str,
+    score: float,
+) -> Path:
+    """Write ID3 tags to *path* and rename it to '<artist> - <title>.mp3'.
+
+    If a file with the target name already exists, the recording with the
+    higher AcoustID score wins: on a tie (or a higher existing score) the
+    existing file is kept and *path* is deleted; otherwise *path* replaces the
+    existing file. Returns the path of the surviving file.
+    """
+    target_name = build_metadata_filename(artist, title)
+    if not target_name or target_name == path.name:
+        write_mp3_tags(path, artist=artist, title=title)
+        return path
+
+    target = path.parent / target_name
+    if target.exists():
+        existing = await acoustid_lookup(target, api_key)
+        existing_score = existing.match.score if existing.match else None
+        if existing_score is not None and existing_score >= score:
+            _LOGGER.info(
+                "Kept existing %s (score %.2f >= %.2f); discarding %s",
+                target.name,
+                existing_score,
+                score,
+                path.name,
+            )
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+            return target
+        _LOGGER.info(
+            "Replacing %s with %s (score %.2f > %s)",
+            target.name,
+            path.name,
+            score,
+            f"{existing_score:.2f}" if existing_score is not None else "unknown",
+        )
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+
+    write_mp3_tags(path, artist=artist, title=title)
+    return rename_track(path, artist, title)
 
 
 __all__ = [
+    "AcoustidLookup",
+    "AcoustidMatch",
     "TrackWriter",
-    "acoustid_meets_threshold",
+    "acoustid_lookup",
+    "build_metadata_filename",
+    "finalize_with_metadata",
     "get_mp3_duration",
     "is_valid_mp3",
+    "rename_track",
     "sanitize_filename",
+    "write_mp3_tags",
 ]

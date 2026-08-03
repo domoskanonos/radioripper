@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.28.1",
+    "mutagen>=1.47.0",
     "pydantic>=2.13.0",
 ]
 
