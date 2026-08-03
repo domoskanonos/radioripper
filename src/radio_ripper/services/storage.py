@@ -10,7 +10,10 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from radio_ripper.infra.http import AsyncHttpClient
 
 _ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -179,6 +182,7 @@ async def acoustid_lookup(
     api_key: str,
     *,
     min_score: float = _ACOUSTID_MIN_SCORE,
+    http_client: AsyncHttpClient | None = None,
 ) -> AcoustidLookup:
     """Query AcoustID for *path* and return score + metadata of the best match.
 
@@ -225,14 +229,23 @@ async def acoustid_lookup(
     params = f"client={api_key}&meta=recordings&duration={int(duration)}&fingerprint={fingerprint}"
     url = f"{_ACOUSTID_LOOKUP_URL}?{params}"
     try:
-        import urllib.request
+        if http_client is not None:
+            # Use provided httpx client (async, non-blocking)
+            response_text = await asyncio.wait_for(
+                http_client.get_text(url, timeout=15.0),
+                timeout=20.0,
+            )
+            api_data = json.loads(response_text)
+        else:
+            # Fallback to urllib (blocking, for backward compatibility)
+            import urllib.request
 
-        loop = asyncio.get_running_loop()
-        response_bytes = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: urllib.request.urlopen(url, timeout=15).read()),  # noqa: S310
-            timeout=20,
-        )
-        api_data = json.loads(response_bytes.decode())
+            loop = asyncio.get_running_loop()
+            response_bytes = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: urllib.request.urlopen(url, timeout=15).read()),  # noqa: S310
+                timeout=20,
+            )
+            api_data = json.loads(response_bytes.decode())
     except Exception as exc:
         _LOGGER.warning("AcoustID API request failed for %s: %s — skipping threshold check", path.name, exc)
         return AcoustidLookup(accepted=True, match=None)
@@ -387,6 +400,7 @@ async def finalize_with_metadata(
     artist: str,
     title: str,
     score: float,
+    http_client: AsyncHttpClient | None = None,
 ) -> Path:
     """Write ID3 tags to *path* and rename it to '<artist> - <title>.mp3'.
 
@@ -411,7 +425,7 @@ async def finalize_with_metadata(
         if target.exists():
             existing_score = read_mp3_score(target)
             if existing_score is None:
-                existing = await acoustid_lookup(target, api_key)
+                existing = await acoustid_lookup(target, api_key, http_client=http_client)
                 existing_score = existing.match.score if existing.match else None
             if existing_score is None:
                 _LOGGER.warning(

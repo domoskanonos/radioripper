@@ -8,7 +8,6 @@ import logging
 import random
 import re
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,52 +15,18 @@ import httpx
 from pydantic import HttpUrl
 
 from radio_ripper.infra.config import Settings, StreamConfig
+from radio_ripper.infra.errors import InvalidUrlError
+from radio_ripper.infra.validation import validate_stream_url
+from radio_ripper.services.m3u_parser import M3uEntry, parse_m3u_entries
+
+# Backward-compatible alias
+_parse_m3u_text = parse_m3u_entries
 
 _LOGGER = logging.getLogger("radio_ripper.discovery")
 _MEGA_URL = (
     "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists"
     "/refs/heads/main/---everything-checked-repo.m3u"
 )
-_PROBE_TIMEOUT = 8.0
-_MAX_CONCURRENT = 300
-_RANDOM_SAMPLE_SIZE = 10000
-_WORK_STATION_COUNT = 400
-
-
-@dataclass(frozen=True)
-class M3uEntry:
-    name: str
-    url: str
-    source: str
-    extinf: str = ""
-
-
-def _parse_m3u_text(text: str, source: str) -> list[M3uEntry]:
-    entries: list[M3uEntry] = []
-    current_name = ""
-    current_extinf = ""
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#EXTM3U"):
-            continue
-        if line.startswith("#EXTINF:"):
-            current_extinf = line
-            after_comma = line.split(",", 1)
-            current_name = after_comma[1].strip() if len(after_comma) > 1 else ""
-        elif line.startswith("#"):
-            continue
-        elif current_name:
-            entries.append(
-                M3uEntry(
-                    name=current_name,
-                    url=line,
-                    source=source,
-                    extinf=current_extinf,
-                )
-            )
-            current_name = ""
-            current_extinf = ""
-    return entries
 
 
 def _match_keywords(entries: list[M3uEntry], keywords: list[str]) -> list[tuple[M3uEntry, set[str]]]:
@@ -150,9 +115,17 @@ def _keyword_coverage(
 async def probe_icy(
     url: str,
     *,
-    timeout: float = _PROBE_TIMEOUT,
+    timeout: float = 8.0,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {"icy": False, "bitrate": 0, "error": None}
+
+    # Validate URL before probing
+    try:
+        url = validate_stream_url(url)
+    except InvalidUrlError as e:
+        result["error"] = f"invalid URL: {e}"
+        return result
+
     headers = {"Icy-MetaData": "1", "User-Agent": "Radio-Ripper/2.0"}
 
     try:
@@ -199,13 +172,15 @@ async def _probe_batch(
     entries: list[M3uEntry],
     max_ok: int,
     semaphore: asyncio.Semaphore,
+    *,
+    probe_timeout: float = 8.0,
 ) -> list[tuple[M3uEntry, dict[str, Any]]]:
     async def _probe_one(entry: M3uEntry) -> tuple[M3uEntry, dict[str, Any]] | None:
         async with semaphore:
             try:
                 probe = await asyncio.wait_for(
-                    probe_icy(entry.url),
-                    timeout=_PROBE_TIMEOUT + 1.0,
+                    probe_icy(entry.url, timeout=probe_timeout),
+                    timeout=probe_timeout + 1.0,
                 )
             except (TimeoutError, asyncio.CancelledError):
                 return None
@@ -271,13 +246,35 @@ async def _download_mega_m3u() -> str:
 
 # ---------------------------------------------------------------- cache
 
+PREFILTERED_FILENAME = "prefiltered.m3u"
+RANDOM_FILENAME = "random_stations.m3u"
+FILTERED_FILENAME = "filtered_checked_stations.m3u"
+WORK_FILENAME = "work_stations.m3u"
+
+
+def _work_path(settings: Settings, filename: str = WORK_FILENAME) -> Path:
+    """Generic path builder for work directory files."""
+    return settings.work_dir / filename
+
 
 def _cache_path(settings: Settings) -> Path:
-    return settings.work_dir / "discovered_stations.m3u"
+    return _work_path(settings, "discovered_stations.m3u")
 
 
 def _raw_mega_path(settings: Settings) -> Path:
-    return settings.work_dir / "---everything-checked-repo.m3u"
+    return _work_path(settings, "---everything-checked-repo.m3u")
+
+
+def _prefiltered_path(settings: Settings) -> Path:
+    return _work_path(settings, "prefiltered.m3u")
+
+
+def _random_stations_path(settings: Settings) -> Path:
+    return _work_path(settings, "random_stations.m3u")
+
+
+def _filtered_path(settings: Settings) -> Path:
+    return _work_path(settings, FILTERED_FILENAME)
 
 
 _FINGERPRINT_PREFIX = "# radio-ripper-config: "
@@ -330,7 +327,7 @@ def _load_cache(cache_file: Path) -> tuple[list[StreamConfig], str]:
             except Exception:
                 pass
 
-        entries = _parse_m3u_text(text, cache_file.name)
+        entries = parse_m3u_entries(text, source=cache_file.name)
         result: list[StreamConfig] = []
         for e in entries:
             try:
@@ -376,28 +373,6 @@ def _save_cache(cache_file: Path, stations: list[StreamConfig], fingerprint: str
 # ---------------------------------------------------------------- prefiltered
 
 
-PREFILTERED_FILENAME = "prefiltered.m3u"
-RANDOM_FILENAME = "random_stations.m3u"
-FILTERED_FILENAME = "filtered_checked_stations.m3u"
-WORK_FILENAME = "work_stations.m3u"
-
-
-def _prefiltered_path(settings: Settings) -> Path:
-    return settings.work_dir / PREFILTERED_FILENAME
-
-
-def _random_stations_path(settings: Settings) -> Path:
-    return settings.work_dir / RANDOM_FILENAME
-
-
-def _filtered_path(settings: Settings) -> Path:
-    return settings.work_dir / FILTERED_FILENAME
-
-
-def _work_path(settings: Settings) -> Path:
-    return settings.work_dir / WORK_FILENAME
-
-
 def _save_m3u_entries(path: Path, entries: list[M3uEntry]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -437,7 +412,7 @@ def _load_prefiltered(path: Path) -> list[tuple[M3uEntry, dict[str, Any]]]:
         text = path.read_text("utf-8")
     except Exception:
         return []
-    entries = _parse_m3u_text(text, path.name)
+    entries = parse_m3u_entries(text, source=path.name)
     result: list[tuple[M3uEntry, dict[str, Any]]] = []
     for e in entries:
         br = 0
@@ -463,7 +438,7 @@ class PlaylistDiscoveryService:
         expected_sel = _selection_fingerprint(self._settings)
         expected_probe = _probe_fingerprint(self._settings)
 
-        work_file = _work_path(self._settings)
+        work_file = _work_path(self._settings, WORK_FILENAME)
         if work_file.is_file():
             stations, fingerprint = _load_cache(work_file)
             if stations and _fingerprint_valid(fingerprint, expected_sel):
@@ -497,15 +472,15 @@ class PlaylistDiscoveryService:
 
         random_file = _random_stations_path(self._settings)
         if random_file.is_file():
-            random_entries = _parse_m3u_text(random_file.read_text("utf-8"), random_file.name)
+            random_entries = parse_m3u_entries(random_file.read_text("utf-8"), source=random_file.name)
             self._log.info("Loaded %d random entries from %s", len(random_entries), random_file.name)
         else:
             text = await self._load_or_download_mega()
-            all_entries = _parse_m3u_text(text, "---everything-checked-repo.m3u")
+            all_entries = parse_m3u_entries(text, source="---everything-checked-repo.m3u")
             unique = _deduplicate_by_name(all_entries)
             self._log.info("Parsed %d unique entries from mega M3U", len(unique))
             random.shuffle(unique)
-            random_entries = unique[:_RANDOM_SAMPLE_SIZE]
+            random_entries = unique[: self._settings.discovery_random_sample_size]
             _save_m3u_entries(random_file, random_entries)
             self._log.info("Saved %d random entries to %s", len(random_entries), random_file.name)
 
@@ -544,10 +519,15 @@ class PlaylistDiscoveryService:
         if not entries:
             return []
 
-        semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
+        semaphore = asyncio.Semaphore(self._settings.discovery_max_concurrent)
         total = len(entries)
         self._log.info("Probing %d stations…", total)
-        good = await _probe_batch(entries, max_ok=total, semaphore=semaphore)
+        good = await _probe_batch(
+            entries,
+            max_ok=total,
+            semaphore=semaphore,
+            probe_timeout=self._settings.discovery_probe_timeout,
+        )
         self._log.info("Probing done: %d ICY-capable streams found", len(good))
 
         min_bps = self._settings.discovery_min_bitrate

@@ -11,6 +11,9 @@ from pathlib import Path
 def configure_logging(
     level: str = "INFO",
     log_file: Path | None = None,
+    *,
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 5,
 ) -> logging.Logger:
     """Configure the ``radio_ripper`` logger with console + optional rotating file handler.
 
@@ -19,8 +22,10 @@ def configure_logging(
 
     Args:
         level: Log level name (``DEBUG`` / ``INFO`` / ``WARNING`` / …).
-        log_file: Optional path for a 5 MB rotating file handler
-            (5 backups). Parent directories are created if needed.
+        log_file: Optional path for a rotating file handler.
+            Parent directories are created if needed.
+        max_bytes: Maximum file size before rotation (default: 5 MB).
+        backup_count: Number of backup log files to keep (default: 5).
 
     Returns:
         The configured ``radio_ripper`` logger instance.
@@ -43,8 +48,8 @@ def configure_logging(
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.handlers.RotatingFileHandler(
             log_file,
-            maxBytes=5 * 1024 * 1024,
-            backupCount=5,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
             encoding="utf-8",
         )
         file_handler.setFormatter(formatter)

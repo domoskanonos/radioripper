@@ -77,7 +77,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.log_level:
         settings = settings.model_copy(update={"log_level": args.log_level})
 
-    logger = configure_logging(settings.log_level, settings.work_dir / "radio_ripper.log")
+    logger = configure_logging(
+        settings.log_level,
+        settings.work_dir / "radio_ripper.log",
+        max_bytes=settings.log_file_max_bytes,
+        backup_count=settings.log_file_backup_count,
+    )
     logger.info("=== Radio-Ripper %s (stream mode) ===", __version__)
 
     try:

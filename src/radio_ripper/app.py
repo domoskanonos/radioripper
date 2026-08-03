@@ -5,7 +5,6 @@ import contextlib
 import logging
 import os
 import time
-from collections.abc import Sequence
 from pathlib import Path
 
 from radio_ripper.infra.config import LiveConfig, Settings, StreamConfig
@@ -13,9 +12,6 @@ from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver, load_local_m3u
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService, probe_icy
 from radio_ripper.services.stream import StreamRecorder
-
-_PROBE_TIMEOUT = 8.0
-_PROBE_CONCURRENT = 20
 
 _LOGGER = logging.getLogger("radio_ripper.app")
 
@@ -38,6 +34,7 @@ class RadioRipperApp:
         self._live_config = live_config
         self.logger = logger or _LOGGER
         self._recorders: list[StreamRecorder] = []
+        self._recorders_lock = asyncio.Lock()
         self._cancel_requested = False
         self._housekeeping_task: asyncio.Task[None] | None = None
 
@@ -73,7 +70,7 @@ class RadioRipperApp:
             logger=log,
         )
 
-    def recorders(self) -> Sequence[StreamRecorder]:
+    def recorders(self) -> list[StreamRecorder]:
         return list(self._recorders)
 
     def _select_stations(self) -> list[StreamConfig]:
@@ -101,7 +98,7 @@ class RadioRipperApp:
         stations = await self._resolve_stations()
         if not stations:
             return
-        self._start_recorders(stations)
+        await self._start_recorders(stations)
 
     async def _resolve_stations(self, *, context: str | None = None) -> list[StreamConfig]:
         stations = self._select_stations()
@@ -123,42 +120,49 @@ class RadioRipperApp:
             self.logger.error("No reachable streams.%s", f" {context}." if context else " Exiting.")
         return stations
 
-    def _start_recorders(self, stations: list[StreamConfig]) -> None:
+    async def _start_recorders(self, stations: list[StreamConfig]) -> None:
         acoustid_key = os.environ.get("ACOUST_ID", "").strip()
-        for stream in stations:
-            if not stream.enabled:
-                self.logger.info("Skipping disabled stream: %s", stream.name)
-                continue
-            p = stream.ignore_title_patterns
-            patterns = p if p is not None else self.settings.ignore_title_patterns
-            rec = StreamRecorder(
-                station_name=stream.name,
-                playlist_url=str(stream.url),
-                settings=self.settings,
-                http_client=self.client,
-                playlist_resolver=self.resolver,
-                logger=self.logger,
-                ignore_title_patterns=patterns,
-                no_icy_disable_after=self.settings.no_icy_disable_after,
-                station_bitrate=stream.bitrate,
-                acoustid_api_key=acoustid_key,
+        if not acoustid_key:
+            self.logger.warning(
+                "ACOUST_ID environment variable is not set — AcoustID fingerprinting disabled. "
+                "Set ACOUST_ID to enable quality filtering of recordings."
             )
-            rec.start()
-            self._recorders.append(rec)
-        self.logger.info("Started %d stream recorders.", len(self._recorders))
+        async with self._recorders_lock:
+            for stream in stations:
+                if not stream.enabled:
+                    self.logger.info("Skipping disabled stream: %s", stream.name)
+                    continue
+                p = stream.ignore_title_patterns
+                patterns = p if p is not None else self.settings.ignore_title_patterns
+                rec = StreamRecorder(
+                    station_name=stream.name,
+                    playlist_url=str(stream.url),
+                    settings=self.settings,
+                    http_client=self.client,
+                    playlist_resolver=self.resolver,
+                    logger=self.logger,
+                    ignore_title_patterns=patterns,
+                    no_icy_disable_after=self.settings.no_icy_disable_after,
+                    station_bitrate=stream.bitrate,
+                    acoustid_api_key=acoustid_key,
+                )
+                rec.start()
+                self._recorders.append(rec)
+            self.logger.info("Started %d stream recorders.", len(self._recorders))
 
     async def _stop_all_recorders(self) -> None:
-        if not self._recorders:
-            return
-        self.logger.info("Stopping %d stream recorders...", len(self._recorders))
-        for rec in self._recorders:
-            rec.stop()
-        tasks = [rec.join() for rec in self._recorders]
-        try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
-        except TimeoutError:
-            self.logger.warning("Not all recorders stopped within 15s — continuing.")
-        self._recorders.clear()
+        async with self._recorders_lock:
+            if not self._recorders:
+                return
+            self.logger.info("Stopping %d stream recorders...", len(self._recorders))
+            for rec in self._recorders:
+                rec.stop()
+            tasks = [rec.join() for rec in self._recorders]
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
+            except TimeoutError:
+                self.logger.warning("Not all recorders stopped within 15s — continuing.")
+            self._recorders.clear()
 
     def _apply_stream_limit(self, stations: list[StreamConfig]) -> list[StreamConfig]:
         max_streams = self.settings.max_concurrent_streams
@@ -174,7 +178,7 @@ class RadioRipperApp:
     async def _preflight_check(self, stations: list[StreamConfig]) -> list[StreamConfig]:
         enabled = [s for s in stations if s.enabled]
         self.logger.info("Verifying reachability of %d station(s)...", len(enabled))
-        sem = asyncio.Semaphore(_PROBE_CONCURRENT)
+        sem = asyncio.Semaphore(self.settings.probe_concurrent)
         probe_count = 0
 
         async def _check(s: StreamConfig) -> StreamConfig | None:
@@ -185,7 +189,7 @@ class RadioRipperApp:
                 prev_pct = (probe_count - 1) * 100 // len(enabled)
                 if pct != prev_pct and pct % 10 == 0:
                     self.logger.info("Probe progress: %d%% (%d/%d)", pct, probe_count, len(enabled))
-                result = await probe_icy(str(s.url), timeout=_PROBE_TIMEOUT)
+                result = await probe_icy(str(s.url), timeout=self.settings.probe_timeout)
                 if result.get("icy") and not result.get("error"):
                     return s
                 reason = result.get("error") or "no ICY metadata"
@@ -249,6 +253,8 @@ class RadioRipperApp:
         diff = await lc.check_reload()
         if not diff:
             return
+        # Update app.settings to the newly created Settings instance
+        self.settings = lc.settings
         self._apply_config_diff(diff)
         if _RELOAD_FIELDS.intersection(diff):
             await self._reload_after_config_change()
@@ -310,7 +316,7 @@ class RadioRipperApp:
         stations = await self._resolve_stations(context="after config reload")
         if not stations:
             return
-        self._start_recorders(stations)
+        await self._start_recorders(stations)
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -325,11 +331,12 @@ class RadioRipperApp:
                 await self._housekeeping_task
             self._housekeeping_task = None
         self.logger.info("Stopping all recorders...")
-        for rec in self._recorders:
-            rec.stop()
-        # Close HTTP client first — interrupts all in-flight stream connections
-        await self.client.aclose()
+        async with self._recorders_lock:
+            for rec in self._recorders:
+                rec.stop()
+        # Stop all recorders BEFORE closing HTTP client to prevent connection leaks
         await self._stop_all_recorders()
+        await self.client.aclose()
         self.logger.info("All recorders stopped.")
 
 

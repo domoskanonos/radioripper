@@ -106,6 +106,22 @@ class Settings(BaseModel):
 
     max_concurrent_streams: int = Field(default=400, ge=1, le=500)
 
+    # Discovery/Probing settings (previously hardcoded in app.py and playlist_discovery.py)
+    probe_timeout: float = Field(default=8.0, ge=1.0)
+    probe_concurrent: int = Field(default=20, ge=1, le=100)
+    discovery_probe_timeout: float = Field(default=8.0, ge=1.0)
+    discovery_max_concurrent: int = Field(default=300, ge=1, le=500)
+    discovery_random_sample_size: int = Field(default=10000, ge=100)
+    discovery_work_station_count: int = Field(default=400, ge=1)
+
+    # AcoustID settings (previously hardcoded in storage.py)
+    acoustid_min_score: float = Field(default=0.9, ge=0.0, le=1.0)
+    acoustid_api_url: str = Field(default="https://api.acoustid.org/v2/lookup")
+
+    # Logging settings (previously hardcoded in logging.py)
+    log_file_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)  # 5 MB
+    log_file_backup_count: int = Field(default=5, ge=0)
+
     @field_validator("log_level")
     @classmethod
     def _valid_level(cls, v: str) -> str:
@@ -198,12 +214,18 @@ class LiveConfig:
 
         self._mtime = mtime
         diff: dict[str, tuple[Any, Any]] = {}
+        updates: dict[str, Any] = {}
         for field in Settings.model_fields:
             old_val = getattr(self._current, field)
             new_val = getattr(new, field)
             if old_val != new_val:
                 diff[field] = (old_val, new_val)
-                setattr(self._current, field, new_val)
+                updates[field] = new_val
+
+        # Use model_copy to safely update the frozen model instead of setattr
+        if updates:
+            self._current = self._current.model_copy(update=updates)
+
         return diff
 
 

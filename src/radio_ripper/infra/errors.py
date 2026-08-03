@@ -23,8 +23,13 @@ class StreamProtocolError(StreamError):
     """The stream violated the expected ICY protocol (bad metaint, oversized metadata)."""
 
 
+class InvalidUrlError(RadioRipperError):
+    """Raised when a URL is invalid or uses an unsupported protocol."""
+
+
 __all__ = [
     "ConfigurationError",
+    "InvalidUrlError",
     "RadioRipperError",
     "StreamConnectionError",
     "StreamError",

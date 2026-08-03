@@ -465,7 +465,7 @@ class TestFinalizeWithMetadata:
         src = tmp_path / "new.mp3"
         src.write_bytes(b"new")
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.99))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
@@ -486,7 +486,7 @@ class TestFinalizeWithMetadata:
         src = tmp_path / "new.mp3"
         src.write_bytes(b"new")
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.8))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
@@ -508,7 +508,7 @@ class TestFinalizeWithMetadata:
         src = tmp_path / "new.mp3"
         src.write_bytes(b"new")
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.95))
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
@@ -528,7 +528,7 @@ class TestFinalizeWithMetadata:
         src = tmp_path / "new.mp3"
         src.write_bytes(b"new")
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             return AcoustidLookup(accepted=True, match=None)
 
         monkeypatch.setattr("radio_ripper.services.storage.acoustid_lookup", fake_lookup)
@@ -553,7 +553,7 @@ class TestFinalizeWithMetadata:
 
         called = False
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             nonlocal called
             called = True
             return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.0))
@@ -579,7 +579,7 @@ class TestFinalizeWithMetadata:
 
         called = False
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             nonlocal called
             called = True
             return AcoustidLookup(accepted=True, match=AcoustidMatch("Artist", "Title", 0.0))

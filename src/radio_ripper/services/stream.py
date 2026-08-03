@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from radio_ripper.infra.config import Settings
-from radio_ripper.infra.errors import StreamConnectionError, StreamProtocolError
+from radio_ripper.infra.errors import InvalidUrlError, StreamConnectionError, StreamProtocolError
+from radio_ripper.infra.validation import validate_stream_url
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.playlist import PlaylistResolver
 from radio_ripper.services.storage import (
@@ -65,7 +66,10 @@ class StreamRecorder:
         acoustid_api_key: str = "",
     ) -> None:
         self.station_name = station_name
-        self.playlist_url = playlist_url
+        try:
+            self.playlist_url = validate_stream_url(playlist_url)
+        except InvalidUrlError as e:
+            raise ValueError(f"Invalid playlist URL for station '{station_name}': {e}") from e
         self.settings = settings
         self._http = http_client
         self._resolver = playlist_resolver
@@ -385,7 +389,12 @@ class StreamRecorder:
 
         acoustid_tagged = False
         if self._acoustid_api_key:
-            lookup = await acoustid_lookup(final_path, self._acoustid_api_key)
+            lookup = await acoustid_lookup(
+                final_path,
+                self._acoustid_api_key,
+                min_score=self.settings.acoustid_min_score,
+                http_client=self._http,
+            )
             if not lookup.accepted:
                 self._log.info(
                     "[%s] Discarded (AcoustID score below threshold): %s",
@@ -403,6 +412,7 @@ class StreamRecorder:
                     artist=match.artist,
                     title=match.title,
                     score=match.score,
+                    http_client=self._http,
                 )
                 acoustid_tagged = True
             elif fallback is not None:

@@ -530,7 +530,7 @@ class TestAcoustidFinalize:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             return AcoustidLookup(accepted=True, match=AcoustidMatch("Adele", "Hello", 0.95))
 
         monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
@@ -559,7 +559,7 @@ class TestAcoustidFinalize:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             return AcoustidLookup(accepted=True, match=None)
 
         monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
@@ -587,7 +587,7 @@ class TestAcoustidFinalize:
         client = FakeHttpClient(stream)
         settings = _make_settings(tmp_path, min_file_size_bytes=1)
 
-        async def fake_lookup(path, api_key):
+        async def fake_lookup(path, api_key, **kwargs):
             return AcoustidLookup(accepted=False, match=None)
 
         monkeypatch.setattr("radio_ripper.services.stream.acoustid_lookup", fake_lookup)
