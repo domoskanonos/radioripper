@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from radio_ripper.infra.config import Settings
 from radio_ripper.infra.errors import InvalidUrlError, StreamConnectionError, StreamProtocolError
 from radio_ripper.infra.validation import validate_stream_url
+from radio_ripper.services.acoustid_queue import AcoustidQueue
 from radio_ripper.services.icy import AudioChunk, IcyParser, TitleChanged
 from radio_ripper.services.playlist import PlaylistResolver
 from radio_ripper.services.storage import (
@@ -35,7 +36,6 @@ from radio_ripper.services.storage import (
 
 if TYPE_CHECKING:
     from radio_ripper.infra.http import AsyncHttpClient
-    from radio_ripper.services.acoustid_queue import AcoustidQueue
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -259,7 +259,7 @@ class StreamRecorder:
         The ICY title is only used as a human-readable hint — the final filename
         will be determined by the AcoustID lookup.
         """
-        unchecked_dir = self.settings.work_dir / "unchecked_mp3"
+        unchecked_dir = self.settings.work_dir / AcoustidQueue.UNCHECKED_DIR_NAME
         unchecked_dir.mkdir(parents=True, exist_ok=True)
 
         safe_name = sanitize_filename(icy_title)

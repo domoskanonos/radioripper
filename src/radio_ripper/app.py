@@ -5,11 +5,12 @@ import contextlib
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 
 from radio_ripper.infra.config import LiveConfig, Settings, StreamConfig
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
-from radio_ripper.services.acoustid_queue import AcoustidQueue
+from radio_ripper.services.acoustid_queue import AcoustidQueue, cleanup_stale_parts
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver, load_local_m3u
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService, probe_icy
 from radio_ripper.services.storage import read_mp3_score
@@ -107,41 +108,52 @@ class RadioRipperApp:
             self.logger.info("Startup cancelled.")
             return
 
-        # ------------------------------------------------------------------
-        # AcoustID queue setup
-        # ------------------------------------------------------------------
-        if self._acoustid_api_key:
-            # Dedicated client with a small connection pool for AcoustID
-            self._acoustid_http = HttpxAsyncClient(
-                user_agent=self.settings.user_agent,
-                max_pool_size=4,
-                total_timeout=25.0,
-            )
-            self._acoustid_queue = AcoustidQueue(
-                settings=self.settings,
-                api_key=self._acoustid_api_key,
-                destination=self.settings.destination,
-                http_client=self._acoustid_http,
-                logger=self.logger,
-            )
-            self._acoustid_queue.start()
-            recovered = self._acoustid_queue.load_existing_unchecked()
-            if recovered:
-                self.logger.info("Recovered %d file(s) from previous run into AcoustID queue.", recovered)
-            # Migrate existing destination files that lack an ACOUSTID_SCORE tag
-            await self._migrate_unscored_files()
-        else:
+        # 0) Sofort aufräumen: .part-Reste aus einem abgebrochenen Lauf entfernen
+        cleanup_stale_parts(self.settings.work_dir)
+
+        # 1) Housekeeping läuft sofort (Config-Reload, Backpressure)
+        self._housekeeping_task = asyncio.create_task(self._run_housekeeping())
+
+        # 2) Sender zuerst — Discovery + Preflight ist der langsamste Teil.
+        #    Ohne erreichbare Sender wird das AcoustID-Setup komplett übersprungen.
+        stations = await self._resolve_stations()
+        if not stations:
+            return
+
+        # 3) Jetzt erst AcoustID-Pool + Queue einrichten
+        await self._setup_acoustid_queue()
+
+        # 4) Recorder starten
+        await self._start_recorders(stations)
+
+    async def _setup_acoustid_queue(self) -> None:
+        """Create the AcoustID HTTP client, queue and worker; recover pending files."""
+        if not self._acoustid_api_key:
             self.logger.warning(
                 "ACOUST_ID not set — AcoustID fingerprinting disabled. "
                 "Recordings stay in work/unchecked_mp3 and are not moved to destination."
             )
-
-        self._housekeeping_task = asyncio.create_task(self._run_housekeeping())
-
-        stations = await self._resolve_stations()
-        if not stations:
             return
-        await self._start_recorders(stations)
+
+        # Dedicated client with a small connection pool for AcoustID
+        self._acoustid_http = HttpxAsyncClient(
+            user_agent=self.settings.user_agent,
+            max_pool_size=4,
+            total_timeout=25.0,
+        )
+        self._acoustid_queue = AcoustidQueue(
+            settings=self.settings,
+            api_key=self._acoustid_api_key,
+            destination=self.settings.destination,
+            http_client=self._acoustid_http,
+            logger=self.logger,
+        )
+        self._acoustid_queue.start()
+        pending = self._acoustid_queue.load_existing_unchecked()
+        if pending:
+            self.logger.info("Found %d pending recording(s) in unchecked_mp3 from a previous run.", pending)
+        # Migrate existing destination files that lack an ACOUSTID_SCORE tag
+        await self._migrate_unscored_files()
 
     async def _migrate_unscored_files(self) -> None:
         """Move existing destination MP3s without ACOUSTID_SCORE tag to unchecked_mp3."""
@@ -156,9 +168,7 @@ class RadioRipperApp:
                     target = self._acoustid_queue.unchecked_dir / mp3.name
                     # Avoid clobbering if same name already in unchecked
                     if target.exists():
-                        import uuid as _uuid
-
-                        target = self._acoustid_queue.unchecked_dir / f"{mp3.stem}.{_uuid.uuid4().hex}.mp3"
+                        target = self._acoustid_queue.unchecked_dir / f"{mp3.stem}.{uuid.uuid4().hex}.mp3"
                     mp3.rename(target)
                     self._acoustid_queue.enqueue(target)
                     moved += 1
@@ -279,22 +289,6 @@ class RadioRipperApp:
         for rec in self._recorders:
             rec.resume()
 
-    def _count_inbox_files(self) -> int:
-        """Count MP3 files across destination and the unchecked staging dir.
-
-        The staging dir (work/unchecked_mp3) holds recordings waiting for the
-        rate-limited AcoustID queue. Counting both prevents the destination
-        limit from being silently bypassed while files pile up in staging.
-        """
-        count = 0
-        inbox = self.settings.destination
-        if inbox.is_dir():
-            count += sum(1 for _ in inbox.glob("*.mp3"))
-        staging = self.settings.work_dir / AcoustidQueue.UNCHECKED_DIR_NAME
-        if staging.is_dir():
-            count += sum(1 for _ in staging.glob("*.mp3"))
-        return count
-
     def _staging_usage(self) -> tuple[int, int]:
         """Return ``(file_count, total_bytes)`` in work/unchecked_mp3."""
         staging = self.settings.work_dir / AcoustidQueue.UNCHECKED_DIR_NAME
@@ -371,6 +365,9 @@ class RadioRipperApp:
             return
         # Update app.settings to the newly created Settings instance
         self.settings = lc.settings
+        # Keep the AcoustID queue on the live settings (rate limit, score, ...)
+        if self._acoustid_queue is not None:
+            self._acoustid_queue.update_settings(self.settings)
         self._apply_config_diff(diff)
         if _RELOAD_FIELDS.intersection(diff):
             await self._reload_after_config_change()

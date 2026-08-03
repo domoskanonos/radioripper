@@ -50,19 +50,47 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger("radio_ripper.acoustid_queue")
 
 
+def cleanup_stale_parts(work_dir: Path) -> int:
+    """Remove leftover ``.part`` files from a crashed/previous run.
+
+    ``.part`` files are incomplete recordings (the atomic rename to ``.mp3``
+    never happened). They are garbage and would never be processed, so they are
+    deleted. Returns the number of removed files.
+    """
+    staging = work_dir / AcoustidQueue.UNCHECKED_DIR_NAME
+    if not staging.is_dir():
+        return 0
+    parts = sorted(staging.glob("*.part"))
+    for part in parts:
+        with contextlib.suppress(OSError):
+            part.unlink(missing_ok=True)
+    if parts:
+        _LOGGER.info("Removed %d incomplete recording(s) (.part) from a previous run.", len(parts))
+    return len(parts)
+
+
 class _RateLimiter:
     """Evenly spaced rate limiter for AcoustID requests.
 
     A sliding-window limiter would permit a burst of ``rpm`` requests at the
     start of every minute. AcoustID documents a per-second limit, so requests
-    are deliberately spaced at a fixed interval instead.
+    are deliberately spaced at a fixed interval instead. The rate is read live
+    from the Settings object, so hot-reloading ``acoustid_requests_per_minute``
+    takes effect without a restart.
     """
 
-    def __init__(self, requests_per_minute: int) -> None:
-        self._rpm = max(1, requests_per_minute)
-        self._interval = 60.0 / self._rpm
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
         self._next_allowed = 0.0
         self._lock = asyncio.Lock()
+
+    def update(self, settings: Settings) -> None:
+        """Adopt a new Settings object so the rate can change live."""
+        self._settings = settings
+
+    @property
+    def _interval(self) -> float:
+        return 60.0 / max(1, self._settings.acoustid_requests_per_minute)
 
     async def acquire(self) -> None:
         """Block until we are allowed to make the next API request."""
@@ -103,7 +131,7 @@ class AcoustidQueue:
         self._http = http_client
         self._log = logger or _LOGGER
         self._unchecked_dir = settings.work_dir / self.UNCHECKED_DIR_NAME
-        self._rate_limiter = _RateLimiter(settings.acoustid_requests_per_minute)
+        self._rate_limiter = _RateLimiter(settings)
         self._worker_task: asyncio.Task[None] | None = None
         self._stopped = False
         self._wake_event = asyncio.Event()
@@ -118,6 +146,15 @@ class AcoustidQueue:
     @property
     def unchecked_dir(self) -> Path:
         return self._unchecked_dir
+
+    def update_settings(self, settings: Settings) -> None:
+        """Adopt a new Settings object (hot-reload).
+
+        The rate limiter, score threshold, API URL and retry/limit settings are
+        all read from the live Settings instance.
+        """
+        self._settings = settings
+        self._rate_limiter.update(settings)
 
     def start(self) -> None:
         """Launch background worker (must be called inside a running event loop)."""
@@ -163,12 +200,7 @@ class AcoustidQueue:
         so nothing needs to be re-queued. Returns the number of pending MP3s.
         """
         self._unchecked_dir.mkdir(parents=True, exist_ok=True)
-        stale_parts = sorted(self._unchecked_dir.glob("*.part"))
-        for part in stale_parts:
-            with contextlib.suppress(OSError):
-                part.unlink(missing_ok=True)
-        if stale_parts:
-            self._log.info("Removed %d incomplete recording(s) from previous run.", len(stale_parts))
+        cleanup_stale_parts(self._settings.work_dir)
         pending = sorted(self._unchecked_dir.glob("*.mp3"))
         if pending:
             self._log.info("Found %d pending recording(s) in unchecked_mp3.", len(pending))
@@ -257,13 +289,8 @@ class AcoustidQueue:
         )
 
         if result.outcome == "accepted":
-            if result.match is None:
-                self._log.error(
-                    "AcoustID accepted %s without metadata; retaining for retry.",
-                    path.name,
-                )
-                self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
-                return
+            # acoustid_lookup() already rejects matches without usable
+            # artist/title metadata, so a match is guaranteed here.
             committed = await self._commit(path, result)
             if committed:
                 self._retry_info.pop(path, None)
@@ -461,4 +488,4 @@ class AcoustidQueue:
         return True
 
 
-__all__ = ["AcoustidQueue"]
+__all__ = ["AcoustidQueue", "cleanup_stale_parts"]

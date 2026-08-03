@@ -301,36 +301,6 @@ class TestRadioRipperAppLifecycleMethods:
         app._pause_all()
         app._resume_all()
 
-    def test_count_inbox_files(self, tmp_path):
-        settings = _make_settings(tmp_path)
-        app = _make_app(settings)
-        count = app._count_inbox_files()
-        assert count == 0
-
-    def test_count_inbox_with_files(self, tmp_path):
-        inbox = tmp_path / "work" / "destination"
-        inbox.mkdir(parents=True)
-        (inbox / "song1.mp3").write_text("data")
-        (inbox / "song2.mp3").write_text("data")
-        settings = _make_settings(tmp_path)
-        app = _make_app(settings)
-        count = app._count_inbox_files()
-        assert count == 2
-
-    def test_count_inbox_includes_staging_dir(self, tmp_path):
-        # Recordings awaiting AcoustID live in work/unchecked_mp3 and must be
-        # counted so the inbox limit is not bypassed while the queue backs up.
-        inbox = tmp_path / "work" / "destination"
-        inbox.mkdir(parents=True)
-        (inbox / "song1.mp3").write_text("data")
-        staging = tmp_path / "work" / "unchecked_mp3"
-        staging.mkdir(parents=True)
-        (staging / "pending1.mp3").write_text("data")
-        (staging / "pending2.mp3").write_text("data")
-        settings = _make_settings(tmp_path)
-        app = _make_app(settings)
-        assert app._count_inbox_files() == 3
-
 
 class TestBackpressure:
     def test_no_backpressure_by_default(self, tmp_path):

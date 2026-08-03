@@ -15,7 +15,23 @@ from unittest.mock import patch
 import pytest
 
 from radio_ripper.infra.config import Settings
-from radio_ripper.services.acoustid_queue import AcoustidQueue
+from radio_ripper.services.acoustid_queue import AcoustidQueue, cleanup_stale_parts
+
+
+def test_cleanup_stale_parts_removes_only_part(tmp_path):
+    work = tmp_path / "work"
+    staging = work / "unchecked_mp3"
+    staging.mkdir(parents=True)
+    (staging / "crashed.part").write_bytes(b"x")
+    (staging / "finished.mp3").write_bytes(b"x")
+    removed = cleanup_stale_parts(work)
+    assert removed == 1
+    assert not (staging / "crashed.part").exists()
+    assert (staging / "finished.mp3").exists()
+
+
+def test_cleanup_stale_parts_missing_dir_returns_zero(tmp_path):
+    assert cleanup_stale_parts(tmp_path / "nope") == 0
 
 
 class _FakeHttp:
@@ -51,6 +67,21 @@ def _valid_mp3() -> bytes:
 
 
 class TestDirectoryAsQueue:
+    def test_rate_limiter_reads_live_rpm(self, tmp_path):
+        """Hot-reloading acoustid_requests_per_minute changes the interval live."""
+        settings = _make_settings(tmp_path, acoustid_requests_per_minute=60)
+        queue = AcoustidQueue(
+            settings=settings,
+            api_key="k",
+            destination=settings.destination,
+            http_client=_FakeHttp(),
+        )
+        assert queue._rate_limiter._interval == pytest.approx(1.0)  # 60 rpm -> 1 s
+
+        new_settings = _make_settings(tmp_path, acoustid_requests_per_minute=120)
+        queue.update_settings(new_settings)
+        assert queue._rate_limiter._interval == pytest.approx(0.5)  # 120 rpm -> 0.5 s
+
     def test_enqueue_never_deletes_file(self, tmp_path):
         settings = _make_settings(tmp_path, max_unchecked_files=100)
         queue = AcoustidQueue(
