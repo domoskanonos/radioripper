@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.10.0 (2026-08-03)
+
+### Features
+
+- Remove optional GitHub PAT from environment and update README for backpressure handling
+  ([`0fc53bd`](https://github.com/domoskanonos/radioripper/commit/0fc53bdf6a3623e029cae19f5e76749e0fd8dcb5))
+
+
 ## v2.9.0 (2026-08-03)
 
 ### Features
