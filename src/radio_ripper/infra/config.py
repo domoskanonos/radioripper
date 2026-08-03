@@ -117,8 +117,9 @@ class Settings(BaseModel):
     # AcoustID settings
     acoustid_min_score: float = Field(default=0.9, ge=0.0, le=1.0)
     acoustid_api_url: str = Field(default="https://api.acoustid.org/v2/lookup")
-    # Rate limit: AcoustID allows 3 req/s; 60/min is conservative and safe
-    acoustid_requests_per_minute: int = Field(default=60, ge=1, le=180)
+    # Rate limit: AcoustID allows max 3 req/s (= 180/min). 170/min keeps ~94 %
+    # of the ceiling with a small safety margin against network jitter.
+    acoustid_requests_per_minute: int = Field(default=170, ge=1, le=180)
     # Max retries for transient API errors (network, timeout) before giving up
     acoustid_retry_max_attempts: int = Field(default=5, ge=0)
     # Base delay for retry backoff (seconds)

@@ -103,9 +103,16 @@ Alle Felder sind optional – es gelten die gezeigten Defaults.
 | `user_agent` | string | `"Radio-Ripper/2.0"` | User-Agent für HTTP-Requests |
 | `no_icy_disable_after` | integer | `10` | Nach wie vielen ICY-freien Verbindungen ein Stream deaktiviert wird |
 | `ignore_title_patterns` | string[] | `[]` | Regex-Muster für zu ignorierende Songtitel (z. B. `["^Werbung"]`) |
-| `min_file_size_bytes` | integer | `1572864` | Aufnahmen kleiner als dieser Wert (1,5 MB) werden verworfen |
+| `min_file_size_bytes` | integer | `1572864` | Aufnahmen kleiner als dieser Wert (1,5 MB) werden verworfen |
 | `min_file_duration_s` | float | `90` | Mindestlaufzeit einer Aufnahme (Sekunden); erfordert `ffprobe` |
 | `max_files_inbox` | integer | `100000` | Max. Dateien im Zielverzeichnis; bei Erreichen pausieren alle Streams |
+| `acoustid_requests_per_minute` | integer | `170` | Max. AcoustID-API-Aufrufe pro Minute (Limit: 180 = 3 req/s) |
+| `acoustid_min_score` | float | `0.9` | Mindest-AcoustID-Score für behaltene Aufnahmen (0.0–1.0) |
+| `acoustid_retry_max_attempts` | integer | `5` | Wiederholungen bei transienten AcoustID-Fehlern |
+| `acoustid_retry_base_delay` | float | `30.0` | Start-Wartezeit vor Retry (Sekunden) |
+| `acoustid_retry_max_delay` | float | `3600.0` | Maximale Wartezeit zwischen Retries (Sekunden) |
+| `max_unchecked_files` | integer | `10000` | Datei-Obergrenze in `work/unchecked_mp3` |
+| `max_unchecked_bytes` | integer | `10737418240` | Größen-Obergrenze für `work/unchecked_mp3` (10 GB) |
 
 ### Live-Config (Hot-Reload)
 
