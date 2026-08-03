@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v2.6.0 (2026-08-03)
+
+### Features
+
+- Erweitere URL-Validierung und M3U-Parsing — implementiere Sicherheitsprüfungen und neue
+  Hilfsfunktionen
+  ([`e6a99b7`](https://github.com/domoskanonos/radioripper/commit/e6a99b74d787b1f1badefe7df54171bb16d7e0b2))
+
+
 ## v2.5.0 (2026-08-03)
 
 ### Features
