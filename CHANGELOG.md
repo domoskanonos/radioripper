@@ -2,6 +2,18 @@
 
 <!-- version list -->
 
+## v2.5.0 (2026-08-03)
+
+### Features
+
+- Erweitere AcoustID-Integration — füge Unterstützung für Metadatenverarbeitung und Staging-Dateien
+  hinzu
+  ([`e909931`](https://github.com/domoskanonos/radioripper/commit/e909931d5ed2d8532362b9981eced4bcdb1811aa))
+
+- Füge AcoustID-Integration hinzu — implementiere Lookup und Metadatenverarbeitung
+  ([`060e616`](https://github.com/domoskanonos/radioripper/commit/060e6168ab55d93259853acf1ab3e398cd91a8d7))
+
+
 ## v2.4.1 (2026-08-03)
 
 ### Bug Fixes

@@ -1,6 +1,6 @@
 [project]
 name = "radio-ripper-stream"
-version = "2.4.1"
+version = "2.5.0"
 description = "Webradio-Stream-Recorder — dauerhafte parallele Aufzeichnung von ICY-Streams"
 readme = "README.md"
 requires-python = ">=3.11"
