@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v2.9.0 (2026-08-03)
+
+### Features
+
+- Update AcoustID configuration and improve queue handling — change destination path, increase max
+  inbox files, and refactor queue setup for live settings updates
+  ([`4d046f2`](https://github.com/domoskanonos/radioripper/commit/4d046f289c698dcfd057cc263d32c9987100046e))
+
+
 ## v2.8.0 (2026-08-03)
 
 ### Features
