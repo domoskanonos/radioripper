@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v2.11.0 (2026-08-03)
+
+### Features
+
+- Implement move_across_devices function to handle cross-device file moves and update related
+  services
+  ([`f0e529f`](https://github.com/domoskanonos/radioripper/commit/f0e529ffb4aeeaf0386e63cba8083e7e707673e7))
+
+- Update docker-entrypoint.sh to dynamically build command and remove binary name from CMD in
+  Dockerfile
+  ([`31dd9df`](https://github.com/domoskanonos/radioripper/commit/31dd9df6dab032d060aff975e17189c56a2ce247))
+
+
 ## v2.10.0 (2026-08-03)
 
 ### Features
