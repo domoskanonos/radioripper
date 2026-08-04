@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.12.0 (2026-08-04)
+
+### Features
+
+- Remove upper limit for max_concurrent_streams and update related tests
+  ([`bfa29f8`](https://github.com/domoskanonos/radioripper/commit/bfa29f834838f7117992caa109a9455aca17cd7d))
+
+
 ## v2.11.0 (2026-08-03)
 
 ### Features
