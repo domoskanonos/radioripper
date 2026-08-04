@@ -5,7 +5,7 @@ Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwalt
 
 ## Features
 
-- **Parallel-Recording** – zeichnet bis zu 500 Streams gleichzeitig auf
+- **Parallel-Recording** – zeichnet die konfigurierte Anzahl an Streams gleichzeitig auf
 - **ICY-Metadaten** – erkennt Songtitel in Echtzeit, trennt Aufnahmen sauber an Songgrenzen
 - **Auto-Healing** – bei Verbindungsabbruch automatische Wiederverbindung mit exponentiellem Backoff
 - **Song-Titelerkennung** – benennt jede Aufnahme als `{Künstler} - {Titel}.mp3`
@@ -82,7 +82,7 @@ Alle Felder sind optional – es gelten die gezeigten Defaults.
 | `work_dir` | string | `./work` | Arbeitsverzeichnis für Logs, Caches und Playlists |
 | `destination` | string | `./destination` | Zielverzeichnis für fertige MP3-Aufnahmen |
 | `log_level` | string | `"INFO"` | Log-Level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `max_concurrent_streams` | integer | `400` | Maximale parallele Streams (1–500) |
+| `max_concurrent_streams` | integer | `400` | Maximale parallele Streams (mindestens 1) |
 | `stream_keywords` | string[] | `["rock","pop","top hits",…]` | Suchbegriffe für die automatische Sendersuche |
 | `discovery_enabled` | boolean | `true` | Automatische Sendersuche aktivieren |
 | `discovery_min_bitrate` | integer | `0` | Minimale Bitrate (kbps) für entdeckte Sender |

@@ -101,6 +101,11 @@ class TestStreamConfig:
 
 
 class TestSettingsProperties:
+    def test_max_concurrent_streams_has_no_500_upper_limit(self):
+        s = Settings.model_validate({**GOOD_BASE, "max_concurrent_streams": 501})
+
+        assert s.max_concurrent_streams == 501
+
     def test_stream_property(self):
         s = Settings.model_validate(GOOD_BASE)
         ss = s.stream

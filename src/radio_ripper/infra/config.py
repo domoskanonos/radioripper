@@ -35,7 +35,7 @@ class StreamConfig(BaseModel):
 
 
 class StreamSettings(BaseModel):
-    max_concurrent_streams: int = Field(default=400, ge=1, le=500)
+    max_concurrent_streams: int = Field(default=400, ge=1)
     user_agent: str = Field(default_factory=_default_user_agent)
     request_timeout: float = Field(default=30.0, ge=1.0)
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
@@ -104,7 +104,7 @@ class Settings(BaseModel):
     no_icy_disable_after: int = Field(default=10, ge=1)
     min_file_duration_s: float = Field(default=90, ge=0)
 
-    max_concurrent_streams: int = Field(default=400, ge=1, le=500)
+    max_concurrent_streams: int = Field(default=400, ge=1)
 
     # Discovery/Probing settings (previously hardcoded in app.py and playlist_discovery.py)
     probe_timeout: float = Field(default=8.0, ge=1.0)
