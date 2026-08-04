@@ -88,6 +88,12 @@ class TestDefaults:
         assert s.request_timeout == 30.0
         assert s.log_level == "INFO"
 
+    def test_http_pool_defaults(self):
+        s = Settings.model_validate(GOOD_BASE)
+        assert s.http_pool_size == 0
+        assert s.http_pool_timeout == 30.0
+        assert s.http_max_keepalive == 100
+
 
 class TestStreamConfig:
     def test_accepts_simple_name(self):

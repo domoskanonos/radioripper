@@ -44,16 +44,18 @@ class HttpxAsyncClient(AsyncHttpClient):
         verify: bool = True,
         connect_timeout: float = 10.0,
         total_timeout: float = 30.0,
+        pool_timeout: float = 30.0,
         max_pool_size: int = 400,
+        max_keepalive_connections: int = 100,
     ) -> None:
         self._client = httpx.AsyncClient(
             headers={"User-Agent": user_agent or f"Radio-Ripper/{__version__}"},
             verify=verify,
             follow_redirects=True,
-            timeout=httpx.Timeout(total_timeout, connect=connect_timeout),
+            timeout=httpx.Timeout(total_timeout, connect=connect_timeout, pool=pool_timeout),
             limits=httpx.Limits(
                 max_connections=max_pool_size,
-                max_keepalive_connections=max_pool_size,
+                max_keepalive_connections=min(max_keepalive_connections, max_pool_size),
             ),
         )
         self._last_headers: dict[str, str] = {}

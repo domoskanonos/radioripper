@@ -143,6 +143,16 @@ class Settings(BaseModel):
 
     max_concurrent_streams: int = Field(default=400, ge=1)
 
+    # HTTP connection pool for streaming. The pool must be at least as large as
+    # the number of concurrent streams, otherwise requests starve and raise
+    # PoolTimeout. 0 means "follow max_concurrent_streams".
+    http_pool_size: int = Field(default=0, ge=0)
+    # How long a connection waits for a free pool slot before raising PoolTimeout.
+    http_pool_timeout: float = Field(default=30.0, ge=1.0)
+    # Idle keepalive connections share the same pool slots; keep them well below
+    # the pool size so long-lived streams are not starved by idle sockets.
+    http_max_keepalive: int = Field(default=100, ge=0)
+
     # Discovery/Probing settings (previously hardcoded in app.py and playlist_discovery.py)
     probe_timeout: float = Field(default=8.0, ge=1.0)
     probe_concurrent: int = Field(default=20, ge=1, le=100)

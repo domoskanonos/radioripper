@@ -173,7 +173,10 @@ class StreamRecorder:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
                 delay = min(delay * 2.0, self.settings.reconnect_max_delay)
-                delay *= 1.0 + random.random() * 0.1  # noqa: S311  -- jitter, not cryptographic
+                # Spread reconnects (thundering-herd avoidance): with many stations
+                # failing together, synchronized retries would saturate the shared
+                # connection pool and trigger new PoolTimeouts.
+                delay *= 1.0 + random.random() * 0.5  # noqa: S311  -- jitter, not cryptographic
         self._log.info("Recorder '%s' stopped.", self.station_name)
 
     async def _run_once(self) -> bool:

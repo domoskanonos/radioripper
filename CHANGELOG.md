@@ -12,6 +12,25 @@
 
 ## Unreleased
 
+### Fixed
+
+- **PoolTimeout-Fehler bei sehr vielen parallelen Streams behoben:** Der gemeinsame
+  HTTP-Connection-Pool war hart auf 400 Verbindungen gedeckelt, während
+  `max_concurrent_streams` beliebig groß sein konnte. Dadurch verhungerten Stationen
+  jenseits der Pool-Größe beim Verbindungsaufbau und brachen mit `httpx.PoolTimeout`
+  ab.
+  - Der Pool skaliert jetzt automatisch mit `max_concurrent_streams` (überschreibbar
+    über `http_pool_size`; `0` = folgt `max_concurrent_streams`).
+  - `http_pool_timeout` (Standard 30 s statt httpx-Default 5 s) wartet länger auf
+    einen freien Slot, statt sofort zu scheitern.
+  - `http_max_keepalive` (Standard 100) begrenzt die Idle-Keepalive-Verbindungen,
+    damit ruhende Sockets keine aktiven Streams aus dem Pool verdrängen.
+- Reconnect-Jitter von ±10 % auf ±50 % erhöht, um die Retry-Wellen vieler
+  gleichzeitig ausfallender Stationen zu entzerren (Thundering-Herd).
+- `ulimit -n` wird in `run.sh` und `docker-entrypoint.sh` auf `8192` (via
+  `FD_LIMIT` überschreibbar) angehoben, damit >1000 parallele Streams genügend
+  File-Deskriptoren für ihre Sockets haben.
+
 ### Changed
 
 - Konfiguration von `config.json` auf kommentierbares `config.jsonc` umgestellt; aktive und Beispielkonfiguration enthalten alle änderbaren Felder mit Erläuterungen.

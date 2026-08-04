@@ -21,6 +21,23 @@ _LOGGER = logging.getLogger("radio_ripper.app")
 _RELOAD_FIELDS = frozenset(Settings.model_fields) - frozenset({"log_level", "max_files_inbox"})
 
 
+def _build_stream_client(settings: Settings) -> HttpxAsyncClient:
+    """Build the shared streaming HTTP client with a pool that fits the stream count.
+
+    All stream recorders share a single httpx client, so its connection pool must
+    be at least as large as ``max_concurrent_streams``. Otherwise recorders beyond
+    the pool size starve and fail with ``httpx.PoolTimeout``. ``http_pool_size``
+    overrides the pool size explicitly (0 = follow ``max_concurrent_streams``).
+    """
+    pool_size = settings.http_pool_size if settings.http_pool_size > 0 else settings.max_concurrent_streams
+    return HttpxAsyncClient(
+        user_agent=settings.user_agent,
+        max_pool_size=pool_size,
+        pool_timeout=settings.http_pool_timeout,
+        max_keepalive_connections=settings.http_max_keepalive,
+    )
+
+
 class RadioRipperApp:
     def __init__(
         self,
@@ -52,7 +69,7 @@ class RadioRipperApp:
     @classmethod
     def from_settings(cls, settings: Settings, *, logger: logging.Logger | None = None) -> RadioRipperApp:
         log = logger or _LOGGER
-        client = HttpxAsyncClient(user_agent=settings.user_agent)
+        client = _build_stream_client(settings)
         resolver = HttpPlaylistResolver(client, timeout=settings.request_timeout)
         acoustid_key = os.environ.get("ACOUST_ID", "").strip()
         return cls(
@@ -72,7 +89,7 @@ class RadioRipperApp:
         logger: logging.Logger | None = None,
     ) -> RadioRipperApp:
         log = logger or _LOGGER
-        client = HttpxAsyncClient(user_agent=settings.user_agent)
+        client = _build_stream_client(settings)
         resolver = HttpPlaylistResolver(client, timeout=settings.request_timeout)
         live_config = LiveConfig(config_path, settings)
         acoustid_key = os.environ.get("ACOUST_ID", "").strip()

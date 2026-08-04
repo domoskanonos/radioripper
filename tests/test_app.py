@@ -106,6 +106,20 @@ class TestRadioRipperAppStreamLimit:
         assert result == stations[:3]
 
 
+class TestRadioRipperAppStreamClient:
+    def test_pool_follows_max_concurrent_streams(self, tmp_path):
+        settings = _make_settings(tmp_path, max_concurrent_streams=2000)
+        app = RadioRipperApp.from_settings(settings)
+        pool = app.client._client._transport._pool
+        assert pool._max_connections == 2000
+        assert app.client._client._timeout.pool == 30.0
+
+    def test_pool_size_override(self, tmp_path):
+        settings = _make_settings(tmp_path, max_concurrent_streams=2000, http_pool_size=500)
+        app = RadioRipperApp.from_settings(settings)
+        assert app.client._client._transport._pool._max_connections == 500
+
+
 class TestRadioRipperAppPreflight:
     async def test_all_stations_reachable(self, tmp_path):
         with patch("radio_ripper.app.probe_icy", return_value={"icy": True, "error": None}):

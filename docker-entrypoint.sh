@@ -1,6 +1,10 @@
 #!/bin/sh
 set -e
 
+# Hohes File-Descriptor-Limit für >1000 parallele Streams (Standard je nach
+# Kernel/Host meist 1048576 hard — 8192 soft reicht für die Sockets).
+ulimit -n "${FD_LIMIT:-8192}" 2>/dev/null || true
+
 # Alte Image-CMD-Form (`CMD ["radio-ripper"]`): führenden Binärnamen entfernen –
 # der Befehl wird unten vollständig neu aufgebaut.
 if [ "$1" = "radio-ripper" ]; then

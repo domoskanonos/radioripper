@@ -59,6 +59,21 @@ class TestHttpxAsyncClient:
                 respx.get("https://example.com/foo").respond(text="hi")
                 assert await c.get_text("https://example.com/foo") == "hi"
 
+    def test_pool_limits_and_timeout_applied(self):
+        client = HttpxAsyncClient(
+            max_pool_size=50,
+            max_keepalive_connections=5,
+            pool_timeout=12.0,
+        )
+        pool = client._client._transport._pool
+        assert pool._max_connections == 50
+        assert pool._max_keepalive_connections == 5
+        assert client._client._timeout.pool == 12.0
+
+    def test_keepalive_never_exceeds_pool_size(self):
+        client = HttpxAsyncClient(max_pool_size=3, max_keepalive_connections=10)
+        assert client._client._transport._pool._max_keepalive_connections == 3
+
     async def test_get_text_raises_on_http_error(self, client: HttpxAsyncClient):
         with respx.mock:
             respx.get("https://example.com/err").respond(status_code=500)

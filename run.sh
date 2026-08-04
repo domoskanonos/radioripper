@@ -18,6 +18,10 @@ log()  { printf '\033[1;34m[stream]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[stream]\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m[stream]\033[0m %s\n' "$*" >&2; }
 
+# Hohes File-Descriptor-Limit: >1000 parallele Streams brauchen ebenso viele
+# offene Sockets. Über FD_LIMIT überschreibbar (z. B. FD_LIMIT=16384).
+ulimit -n "${FD_LIMIT:-8192}" 2>/dev/null || warn "Konnte ulimit -n nicht auf ${FD_LIMIT:-8192} erhöhen."
+
 _CLEANUP_RAN=0
 cleanup() {
   [[ "$_CLEANUP_RAN" -eq 1 ]] && return
