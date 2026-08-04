@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.13.2 (2026-08-04)
+
+### Bug Fixes
+
+- Derive HTTP connection pool from max_concurrent_streams
+  ([`20580d4`](https://github.com/domoskanonos/radioripper/commit/20580d4bde99b08b4a89e93061d54df98d23b650))
+
+
 ## v2.13.1 (2026-08-04)
 
 ### Bug Fixes
