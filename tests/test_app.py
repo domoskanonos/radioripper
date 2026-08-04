@@ -112,12 +112,14 @@ class TestRadioRipperAppStreamClient:
         app = RadioRipperApp.from_settings(settings)
         pool = app.client._client._transport._pool
         assert pool._max_connections == 2000
-        assert app.client._client._timeout.pool == 30.0
+        assert pool._max_keepalive_connections == 100
 
-    def test_pool_size_override(self, tmp_path):
-        settings = _make_settings(tmp_path, max_concurrent_streams=2000, http_pool_size=500)
+    def test_keepalive_never_exceeds_pool(self, tmp_path):
+        settings = _make_settings(tmp_path, max_concurrent_streams=50)
         app = RadioRipperApp.from_settings(settings)
-        assert app.client._client._transport._pool._max_connections == 500
+        pool = app.client._client._transport._pool
+        assert pool._max_connections == 50
+        assert pool._max_keepalive_connections == 50
 
 
 class TestRadioRipperAppPreflight:

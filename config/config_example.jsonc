@@ -9,9 +9,6 @@
   "discovery_enabled": true, // Enable automatic station discovery.
   "discovery_min_bitrate": 128, // Minimum bitrate in kbit/s. 0 = no minimum.
   "max_concurrent_streams": 200, // Maximum simultaneous recordings. Minimum: 1.
-  "http_pool_size": 0, // HTTP connection pool size; 0 = follow max_concurrent_streams.
-  "http_pool_timeout": 30, // Seconds a connection waits for a free pool slot.
-  "http_max_keepalive": 100, // Idle keepalive connections (kept below the pool size).
   "discovery_random_sample_size": 50000, // Random entries taken from the large community playlist.
 
   // Network and reconnect behavior.

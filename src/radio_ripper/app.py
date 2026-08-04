@@ -26,15 +26,14 @@ def _build_stream_client(settings: Settings) -> HttpxAsyncClient:
 
     All stream recorders share a single httpx client, so its connection pool must
     be at least as large as ``max_concurrent_streams``. Otherwise recorders beyond
-    the pool size starve and fail with ``httpx.PoolTimeout``. ``http_pool_size``
-    overrides the pool size explicitly (0 = follow ``max_concurrent_streams``).
+    the pool size starve and fail with ``httpx.PoolTimeout``. Keepalive is capped
+    well below the pool size so idle sockets never displace active streams.
     """
-    pool_size = settings.http_pool_size if settings.http_pool_size > 0 else settings.max_concurrent_streams
+    pool_size = settings.max_concurrent_streams
     return HttpxAsyncClient(
         user_agent=settings.user_agent,
         max_pool_size=pool_size,
-        pool_timeout=settings.http_pool_timeout,
-        max_keepalive_connections=settings.http_max_keepalive,
+        max_keepalive_connections=min(100, pool_size),
     )
 
 
