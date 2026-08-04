@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
-from pathlib import Path
-
-from pydantic import HttpUrl
-
-from radio_ripper.infra.config import StreamConfig
 
 
 @dataclass(frozen=True)
@@ -92,41 +86,8 @@ def parse_m3u_urls(text: str) -> list[str]:
     return urls
 
 
-def load_m3u_as_stream_configs(path: Path, source: str = "custom") -> list[StreamConfig]:
-    """
-    Load a local M3U file and convert to StreamConfig objects.
-
-    Args:
-        path: Path to the M3U file
-        source: Source identifier (default: "custom")
-
-    Returns:
-        List of StreamConfig objects, silently skipping invalid entries
-    """
-    if not path.is_file():
-        return []
-
-    text = path.read_text("utf-8")
-    entries = parse_m3u_entries(text, source=source)
-
-    configs: list[StreamConfig] = []
-    for entry in entries:
-        with contextlib.suppress(Exception):
-            configs.append(
-                StreamConfig(
-                    name=entry.name,
-                    url=HttpUrl(entry.url),
-                    enabled=True,
-                    source=entry.source,
-                )
-            )
-
-    return configs
-
-
 __all__ = [
     "M3uEntry",
-    "load_m3u_as_stream_configs",
     "parse_m3u_entries",
     "parse_m3u_urls",
 ]

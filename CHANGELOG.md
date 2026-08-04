@@ -2,13 +2,21 @@
 
 <!-- version list -->
 
+## Unreleased
+
+### Changed
+
+- Konfiguration von `config.json` auf kommentierbares `config.jsonc` umgestellt; aktive und Beispielkonfiguration enthalten alle änderbaren Felder mit Erläuterungen.
+- Discovery-only-Betrieb dokumentiert und die Zufallsstichprobe standardmäßig auf `50.000` Einträge erhöht.
+- `streams`- und `custom.m3u`-Konfigurationspfade sowie die zugehörige Auswahl- und Priorisierungslogik entfernt.
+- Die Obergrenze `500` für `max_concurrent_streams` entfernt; nur die Mindestgrenze `1` bleibt bestehen.
+
 ## v2.12.0 (2026-08-04)
 
 ### Features
 
 - Remove upper limit for max_concurrent_streams and update related tests
   ([`bfa29f8`](https://github.com/domoskanonos/radioripper/commit/bfa29f834838f7117992caa109a9455aca17cd7d))
-
 
 ## v2.11.0 (2026-08-03)
 
@@ -150,12 +158,12 @@
 - `RadioRipperApp.from_settings_with_live_config()` für integriertes Hot-Reload
 
 ### Changed
-- Config-Umzug: `config.json` → `config/config.json` (eigenes Unterverzeichnis für einfaches Mounten)
+- Config-Umzug: `config.json` → `config/config.jsonc` (eigenes Unterverzeichnis für einfaches Mounten)
 - `config.docker.json` entfernt – der Entrypoint erkennt Config automatisch
 - `rec/`-Verzeichnis entfernt – Discovery lädt die M3U selbstständig in `work_dir`
 - Tote Config-Felder entfernt: `destination`, `temp_directory`
 - Stream-Recorder verwendet `_paused`-Event statt `_inbox_full` für zentral gesteuerte Pausen
-- Docker-Entrypoint prüft auf `/app/config/config.json` und setzt `--config` automatisch
+- Docker-Entrypoint prüft auf `/app/config/config.jsonc` und setzt `--config` automatisch
 - Docker-Image-Benutzer korrigiert (uid 1000 statt 1001)
 
 ### Removed

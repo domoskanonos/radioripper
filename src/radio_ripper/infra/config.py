@@ -14,6 +14,45 @@ def _default_user_agent() -> str:
     return f"Radio-Ripper/{__version__}"
 
 
+def _strip_jsonc_comments(text: str) -> str:
+    """Remove JSONC comments while preserving comment markers inside strings."""
+    result: list[str] = []
+    i = 0
+    in_string = False
+    escaped = False
+    while i < len(text):
+        char = text[i]
+        if in_string:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            i += 1
+            continue
+        if char == '"':
+            in_string = True
+            result.append(char)
+            i += 1
+        elif text.startswith("//", i):
+            newline = text.find("\n", i)
+            if newline == -1:
+                break
+            result.append("\n")
+            i = newline + 1
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end == -1:
+                raise ValueError("unterminated JSONC block comment")
+            i = end + 2
+        else:
+            result.append(char)
+            i += 1
+    return "".join(result)
+
+
 class StreamConfig(BaseModel):
     model_config = {"frozen": True}
 
@@ -92,8 +131,6 @@ class Settings(BaseModel):
     discovery_enabled: bool = True
     discovery_min_bitrate: int = Field(default=0, ge=0)
 
-    streams: list[StreamConfig] = Field(default_factory=list, exclude=True)
-
     request_timeout: float = Field(default=30.0, ge=1.0)
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     reconnect_max_delay: float = Field(default=60.0, ge=1.0)
@@ -111,7 +148,7 @@ class Settings(BaseModel):
     probe_concurrent: int = Field(default=20, ge=1, le=100)
     discovery_probe_timeout: float = Field(default=8.0, ge=1.0)
     discovery_max_concurrent: int = Field(default=300, ge=1, le=500)
-    discovery_random_sample_size: int = Field(default=10000, ge=100)
+    discovery_random_sample_size: int = Field(default=50000, ge=100)
     discovery_work_station_count: int = Field(default=400, ge=1)
 
     # AcoustID settings
@@ -179,8 +216,9 @@ def load_settings(path: str | Path | None = None) -> Settings:
         if not cfg_path.is_file():
             raise ConfigurationError(f"config file not found: {cfg_path}")
         try:
-            raw = json.loads(cfg_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            text = cfg_path.read_text(encoding="utf-8")
+            raw = json.loads(_strip_jsonc_comments(text))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
             raise ConfigurationError(f"cannot read config {cfg_path}: {exc}") from exc
         try:
             return Settings.model_validate(raw)

@@ -11,7 +11,7 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
   set +a
 fi
 
-CONFIG="${CONFIG:-config/config.json}"
+CONFIG="${CONFIG:-config/config.jsonc}"
 PID_FILE="./radio_ripper_stream.pid"
 
 log()  { printf '\033[1;34m[stream]\033[0m %s\n' "$*"; }

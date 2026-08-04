@@ -7,7 +7,7 @@ if [ "$1" = "radio-ripper" ]; then
     shift
 fi
 
-CONFIG_PATH="${RADIO_RIPPER_CONFIG:-/app/config/config.json}"
+CONFIG_PATH="${RADIO_RIPPER_CONFIG:-/app/config/config.jsonc}"
 
 # Gemountete Config nur injizieren, wenn kein --config/-c explizit gesetzt wurde.
 config_set=0

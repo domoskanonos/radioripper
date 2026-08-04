@@ -11,7 +11,7 @@ from pathlib import Path
 from radio_ripper.infra.config import LiveConfig, Settings, StreamConfig
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.acoustid_queue import AcoustidQueue, cleanup_stale_parts
-from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver, load_local_m3u
+from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver
 from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService, probe_icy
 from radio_ripper.services.storage import move_across_devices, read_mp3_score
 from radio_ripper.services.stream import StreamRecorder
@@ -88,21 +88,6 @@ class RadioRipperApp:
     def recorders(self) -> list[StreamRecorder]:
         return list(self._recorders)
 
-    def _select_stations(self) -> list[StreamConfig]:
-        if self.settings.streams:
-            return list(self.settings.streams)
-
-        custom_path = self.settings.work_dir / "stations" / "custom.m3u"
-        custom_stations = load_local_m3u(custom_path) if custom_path.is_file() else []
-        if custom_stations:
-            self.logger.info("Loaded %d stations from custom.m3u.", len(custom_stations))
-        else:
-            custom_path.parent.mkdir(parents=True, exist_ok=True)
-            custom_path.write_text("#EXTM3U\n")
-            self.logger.info("Created empty custom.m3u at %s.", custom_path)
-
-        return list(custom_stations)
-
     async def start(self) -> None:
         if self._cancel_requested:
             self.logger.info("Startup cancelled.")
@@ -178,13 +163,8 @@ class RadioRipperApp:
             self.logger.info("Migrated %d unscored destination file(s) to unchecked_mp3.", moved)
 
     async def _resolve_stations(self, *, context: str | None = None) -> list[StreamConfig]:
-        stations = self._select_stations()
-        has_explicit = bool(self.settings.streams)
-
-        if not has_explicit:
-            discovered = await PlaylistDiscoveryService(self.settings).load_or_discover()
-            self.logger.info("Loaded %d stations via discovery.", len(discovered))
-            stations.extend(discovered)
+        stations = await PlaylistDiscoveryService(self.settings).load_or_discover()
+        self.logger.info("Loaded %d stations via discovery.", len(stations))
 
         if not stations:
             self.logger.error("No streams available.%s", f" {context}." if context else " Exiting.")
@@ -239,12 +219,7 @@ class RadioRipperApp:
         max_streams = self.settings.max_concurrent_streams
         if len(stations) <= max_streams:
             return stations
-        custom_path = self.settings.work_dir / "stations" / "custom.m3u"
-        custom_stations = load_local_m3u(custom_path) if custom_path.is_file() else []
-        custom_count = len(custom_stations)
-        if custom_count >= max_streams:
-            return stations[:max_streams]
-        return stations[:custom_count] + stations[custom_count:][: max_streams - custom_count]
+        return stations[:max_streams]
 
     async def _preflight_check(self, stations: list[StreamConfig]) -> list[StreamConfig]:
         enabled = [s for s in stations if s.enabled]

@@ -13,7 +13,7 @@ from radio_ripper.infra.errors import ConfigurationError
 
 
 def _write_config(tmp_path: Path, payload: dict | str) -> Path:
-    p = tmp_path / "config.json"
+    p = tmp_path / "config.jsonc"
     text = payload if isinstance(payload, str) else json.dumps(payload)
     p.write_text(text, encoding="utf-8")
     return p
@@ -21,27 +21,32 @@ def _write_config(tmp_path: Path, payload: dict | str) -> Path:
 
 GOOD_BASE = {
     "work_dir": "./recordings",
-    "streams": [{"name": "TopHits", "url": "http://tophits.radiomonster.fm/listen.m3u"}],
 }
 
 
 class TestLoadSettings:
+    def test_loads_jsonc_comments(self, tmp_path: Path):
+        path = _write_config(
+            tmp_path,
+            "{\n"
+            "  // Comment before a property\n"
+            '  "work_dir": "./recordings",\n'
+            '  "user_agent": "https://example.test//not-a-comment" /* inline comment */\n'
+            "}",
+        )
+
+        settings = load_settings(path)
+
+        assert settings.work_dir == Path("recordings")
+        assert settings.user_agent == "https://example.test//not-a-comment"
+
     def test_load_good_config(self, tmp_path: Path):
         path = _write_config(tmp_path, GOOD_BASE)
         s = load_settings(path)
         assert isinstance(s, Settings)
-        assert len(s.streams) == 1
-        assert str(s.streams[0].url).rstrip("/") == "http://tophits.radiomonster.fm/listen.m3u"
 
-    def test_missing_streams_defaults_to_empty(self, tmp_path: Path):
-        cfg = dict(GOOD_BASE)
-        del cfg["streams"]
-        path = _write_config(tmp_path, cfg)
-        s = load_settings(path)
-        assert s.streams == []
-
-    def test_no_keywords_and_no_streams_still_valid(self, tmp_path: Path):
-        """Empty streams + empty keywords is valid; discovery handles the rest."""
+    def test_no_keywords_still_valid(self, tmp_path: Path):
+        """Empty keywords is valid; discovery handles the station list."""
         cfg = {
             "work_dir": "./recordings",
             "stream_keywords": [],
@@ -49,7 +54,6 @@ class TestLoadSettings:
         }
         path = _write_config(tmp_path, cfg)
         s = load_settings(path)
-        assert s.streams == []
         assert s.stream_keywords == []
         assert s.discovery_enabled is False
 
@@ -68,7 +72,7 @@ class TestLoadSettings:
     def test_missing_file_with_path(self, tmp_path: Path):
         """Explicit --config for a non-existent file raises."""
         with pytest.raises(ConfigurationError):
-            load_settings(tmp_path / "nonexistent.json")
+            load_settings(tmp_path / "nonexistent.jsonc")
 
     def test_no_path_uses_defaults(self):
         """load_settings() without path returns default Settings."""

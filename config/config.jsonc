@@ -1,0 +1,49 @@
+{
+  // Base directories.
+  "work_dir": "./work", // Logs, caches, downloaded playlists and the AcoustID queue.
+  "destination": "/home/laptop/Musik", // Directory for completed, tagged MP3 files.
+  "log_level": "INFO", // DEBUG, INFO, WARNING, ERROR or CRITICAL.
+
+  // Discovery selects stations from the community playlist.
+  "stream_keywords": [], // Only station names containing one of these terms are selected. Empty = all.
+  "discovery_enabled": true, // Enable automatic station discovery.
+  "discovery_min_bitrate": 128, // Minimum discovered station bitrate in kbit/s. 0 = no minimum.
+  "max_concurrent_streams": 500, // Maximum number of stations recorded at the same time. Minimum: 1.
+  "discovery_random_sample_size": 50000, // Number of random entries taken from the large community playlist.
+
+  // Network and reconnect behavior.
+  "user_agent": "Radio-Ripper-Stream/2.0", // HTTP User-Agent sent to radio servers.
+  "request_timeout": 30, // Timeout for playlist and stream HTTP requests in seconds.
+  "reconnect_base_delay": 1.0, // Initial reconnect delay in seconds.
+  "reconnect_max_delay": 60.0, // Maximum reconnect backoff delay in seconds.
+  "no_icy_disable_after": 10, // Disable a station after this many connections without ICY metadata.
+  "ignore_title_patterns": [], // Regular expressions for song titles that should be ignored.
+
+  // Recording and storage limits.
+  "min_file_size_bytes": 1572864, // Delete recordings smaller than this size after a track ends.
+  "min_file_duration_s": 90, // Delete recordings shorter than this duration in seconds.
+  "max_files_inbox": 100000, // Pause all recorders when destination contains this many MP3 files.
+
+  // Preflight and discovery probing.
+  "probe_timeout": 8.0, // Timeout for startup reachability checks in seconds.
+  "probe_concurrent": 20, // Maximum simultaneous startup reachability checks.
+  "discovery_probe_timeout": 8.0, // Timeout for discovery station checks in seconds.
+  "discovery_max_concurrent": 300, // Maximum simultaneous discovery checks.
+  "discovery_work_station_count": 400, // Reserved discovery work pool size.
+
+  // AcoustID fingerprinting and API retries.
+  "acoustid_min_score": 0.9, // Minimum AcoustID match score for keeping a recording (0.0 to 1.0).
+  "acoustid_api_url": "https://api.acoustid.org/v2/lookup", // AcoustID lookup endpoint.
+  "acoustid_requests_per_minute": 170, // API request rate. AcoustID allows up to 180 per minute.
+  "acoustid_retry_max_attempts": 5, // Maximum retries for temporary AcoustID failures.
+  "acoustid_retry_base_delay": 30.0, // Initial retry backoff delay in seconds.
+  "acoustid_retry_max_delay": 3600.0, // Maximum retry backoff delay in seconds.
+
+  // Backpressure for work/unchecked_mp3. Reaching either limit pauses recorders.
+  "max_unchecked_files": 5000, // Maximum number of files waiting for AcoustID processing.
+  "max_unchecked_bytes": 10737418240, // Maximum queue size in bytes. Default: 10 GiB.
+
+  // Rotating application log.
+  "log_file_max_bytes": 5242880, // Maximum log file size before rotation. Default: 5 MiB.
+  "log_file_backup_count": 5 // Number of rotated log files to retain.
+}

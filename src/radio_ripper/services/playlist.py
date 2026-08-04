@@ -7,20 +7,9 @@ files or static configurations in tests and future use cases.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path
 
-from radio_ripper.infra.config import StreamConfig
 from radio_ripper.infra.http import AsyncHttpClient
-from radio_ripper.services.m3u_parser import load_m3u_as_stream_configs, parse_m3u_urls
-
-
-def load_local_m3u(path: Path) -> list[StreamConfig]:
-    """
-    Parse a local M3U file and return a list of stream configurations.
-
-    This is a convenience wrapper around load_m3u_as_stream_configs.
-    """
-    return load_m3u_as_stream_configs(path, source="custom")
+from radio_ripper.services.m3u_parser import parse_m3u_urls
 
 
 def parse_m3u(text: str) -> list[str]:
@@ -86,7 +75,6 @@ __all__ = [
     "HttpPlaylistResolver",
     "PlaylistResolver",
     "StaticPlaylistResolver",
-    "load_local_m3u",
     "parse_m3u",
     "parse_pls",
 ]

@@ -111,7 +111,7 @@ _CASES: list[tuple[int, bool, list[str], list[str]]] = [
 def test_entrypoint_builds_command(
     sandbox: dict[str, Path], tmp_path: Path, uid: int, config_present: bool, cmd_args: list[str], expected: list[str]
 ) -> None:
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.jsonc"
     if config_present:
         cfg.write_text("{}")
     expected = [str(cfg) if item == "CFG" else item for item in expected]

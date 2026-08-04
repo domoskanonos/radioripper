@@ -13,6 +13,7 @@ import pytest
 from radio_ripper.app import RadioRipperApp
 from radio_ripper.infra.config import Settings, StreamConfig
 from radio_ripper.services.playlist import StaticPlaylistResolver
+from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +27,7 @@ def _make_settings(tmp_path, **overrides) -> Settings:
     base = {
         "work_dir": str(tmp_path / "work"),
         "destination": str(tmp_path / "work" / "destination"),
-        "streams": [StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
+        "discovery_enabled": False,
     }
     base.update(overrides)
     return Settings.model_validate(base)
@@ -48,41 +49,20 @@ class TestRadioRipperApp:
     async def test_create_recorders_for_each_stream(self, tmp_path) -> None:
         settings = _make_settings(tmp_path)
         app = _make_app(settings)
-        assert len(app.recorders()) == 0
-        await app.start()
+        with patch.object(
+            PlaylistDiscoveryService,
+            "load_or_discover",
+            return_value=[StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
+        ):
+            await app.start()
         assert len(app.recorders()) == 1
-        await app.stop()
-
-    async def test_multiple_streams(self, tmp_path) -> None:
-        settings = Settings.model_validate(
-            {
-                "work_dir": str(tmp_path / "work"),
-                "destination": str(tmp_path / "work" / "destination"),
-                "streams": [
-                    {"name": "Station1", "url": "http://example.com/1.m3u"},
-                    {"name": "Station2", "url": "http://example.com/2.m3u"},
-                    {"name": "Station3", "url": "http://example.com/3.m3u"},
-                ],
-            }
-        )
-        client = AsyncMock()
-        client.aclose = AsyncMock()
-        app = RadioRipperApp(
-            settings=settings,
-            client=client,
-            playlist_resolver=StaticPlaylistResolver(["http://x"]),
-        )
-        await app.start()
-        assert len(app.recorders()) == 3
         await app.stop()
 
     async def test_no_streams_logs_error(self, tmp_path, caplog) -> None:
-        settings = _make_settings(tmp_path)
         settings = Settings.model_validate(
             {
                 "work_dir": str(tmp_path / "work"),
                 "destination": str(tmp_path / "work" / "destination"),
-                "streams": [{"name": "S1", "url": "http://example.com/1.m3u"}],
             }
         )
         client = AsyncMock()
@@ -91,8 +71,9 @@ class TestRadioRipperApp:
             client=client,
             playlist_resolver=StaticPlaylistResolver(["http://x"]),
         )
-        await app.start()
-        assert len(app.recorders()) == 1
+        with patch.object(PlaylistDiscoveryService, "load_or_discover", return_value=[]):
+            await app.start()
+        assert len(app.recorders()) == 0
         await app.stop()
 
     async def test_stop_closes_client(self, tmp_path) -> None:
@@ -109,35 +90,6 @@ class TestRadioRipperApp:
         client.aclose.assert_called_once()
 
 
-class TestRadioRipperAppSelectStations:
-    def test_returns_explicit_streams(self, tmp_path):
-        cfg = StreamConfig(name="S1", url="http://example.com/1.m3u")
-        settings = _make_settings(tmp_path, streams=[cfg])
-        app = _make_app(settings)
-        stations = app._select_stations()
-        assert stations == [cfg]
-
-    def test_returns_custom_m3u_when_no_streams(self, tmp_path):
-        custom_dir = tmp_path / "work" / "stations"
-        custom_dir.mkdir(parents=True)
-        (custom_dir / "custom.m3u").write_text("#EXTM3U\n#EXTINF:-1,S1\nhttp://example.com/1.m3u")
-        settings = _make_settings(tmp_path, streams=[])
-        app = _make_app(settings)
-        stations = app._select_stations()
-        assert len(stations) == 1
-        assert stations[0].name == "S1"
-
-    def test_creates_custom_m3u_when_missing(self, tmp_path, caplog):
-        caplog.set_level("INFO")
-        settings = _make_settings(tmp_path, streams=[])
-        app = _make_app(settings)
-        stations = app._select_stations()
-        assert stations == []
-        custom_file = tmp_path / "work" / "stations" / "custom.m3u"
-        assert custom_file.is_file()
-        assert custom_file.read_text() == "#EXTM3U\n"
-
-
 class TestRadioRipperAppStreamLimit:
     def test_no_limit_when_below_max(self, tmp_path):
         stations = [StreamConfig(name=f"S{i}", url=f"http://x/{i}") for i in range(3)]
@@ -147,39 +99,17 @@ class TestRadioRipperAppStreamLimit:
 
     def test_truncates_when_over_max_and_no_custom(self, tmp_path):
         stations = [StreamConfig(name=f"S{i}", url=f"http://x/{i}") for i in range(5)]
-        settings = _make_settings(tmp_path, max_concurrent_streams=3, streams=[])
+        settings = _make_settings(tmp_path, max_concurrent_streams=3)
         app = _make_app(settings)
         result = app._apply_stream_limit(stations)
         assert len(result) == 3
         assert result == stations[:3]
 
-    def test_prioritizes_custom_stations(self, tmp_path):
-        custom_dir = tmp_path / "work" / "stations"
-        custom_dir.mkdir(parents=True)
-        custom_m3u = custom_dir / "custom.m3u"
-        custom_m3u.write_text("#EXTM3U\n#EXTINF:-1,MyFav\nhttp://fav.example.com")
-        # _select_stations returns custom stations first, then discovered ones
-        stations = [
-            StreamConfig(name="MyFav", url="http://fav.example.com"),
-            StreamConfig(name="A", url="http://a"),
-            StreamConfig(name="B", url="http://b"),
-            StreamConfig(name="C", url="http://c"),
-        ]
-        settings = _make_settings(tmp_path, max_concurrent_streams=2, streams=[])
-        app = _make_app(settings)
-        result = app._apply_stream_limit(stations)
-        assert len(result) == 2
-        # MyFav (the custom station) should be preserved, plus one other
-        assert result[0].name == "MyFav"
-
 
 class TestRadioRipperAppPreflight:
     async def test_all_stations_reachable(self, tmp_path):
         with patch("radio_ripper.app.probe_icy", return_value={"icy": True, "error": None}):
-            settings = _make_settings(
-                tmp_path,
-                streams=[StreamConfig(name="S1", url="http://x"), StreamConfig(name="S2", url="http://y")],
-            )
+            settings = _make_settings(tmp_path)
             app = _make_app(settings)
             result = await app._preflight_check(
                 [StreamConfig(name="S1", url="http://x"), StreamConfig(name="S2", url="http://y")]
@@ -247,7 +177,7 @@ class TestRadioRipperAppFactoryMethods:
         import logging
 
         caplog.set_level(logging.INFO, logger="radio_ripper.app")
-        settings = _make_settings(tmp_path, streams=[], discovery_enabled=False)
+        settings = _make_settings(tmp_path, discovery_enabled=False)
         app = _make_app(settings)
         await app.start()
         assert "No streams available" in caplog.text
@@ -261,8 +191,6 @@ class TestRadioRipperAppFactoryMethods:
                 "discovery_enabled": True,
             }
         )
-        (tmp_path / "work" / "stations").mkdir(parents=True)
-        (tmp_path / "work" / "stations" / "custom.m3u").write_text("#EXTM3U\n")
         client = AsyncMock()
         client.aclose = AsyncMock()
         app = RadioRipperApp(
@@ -275,13 +203,7 @@ class TestRadioRipperAppFactoryMethods:
         await app.stop()
 
     async def test_start_skips_disabled_stream(self, tmp_path):
-        settings = _make_settings(
-            tmp_path,
-            streams=[
-                StreamConfig(name="Disabled", url="http://x", enabled=False),
-                StreamConfig(name="Enabled", url="http://y"),
-            ],
-        )
+        settings = _make_settings(tmp_path)
         client = AsyncMock()
         client.aclose = AsyncMock()
         app = RadioRipperApp(
@@ -289,7 +211,12 @@ class TestRadioRipperAppFactoryMethods:
             client=client,
             playlist_resolver=StaticPlaylistResolver(["http://x"]),
         )
-        await app.start()
+        with patch.object(
+            PlaylistDiscoveryService,
+            "load_or_discover",
+            return_value=[StreamConfig(name="Enabled", url="http://y")],
+        ):
+            await app.start()
         assert len(app.recorders()) == 1
         assert app.recorders()[0].station_name == "Enabled"
         await app.stop()
@@ -423,7 +350,6 @@ class TestConfigReload:
             "work_dir": str(tmp_path / "work"),
             "destination": str(tmp_path / "work" / "destination"),
             "log_level": "INFO",
-            "streams": [{"name": "TestStation", "url": "http://fake.example.com/listen.m3u"}],
         }
         base.update(overrides)
         config_path = tmp_path / "config.json"
@@ -448,7 +374,6 @@ class TestConfigReload:
         assert "max_concurrent_streams" in _RELOAD_FIELDS
         assert "stream_keywords" in _RELOAD_FIELDS
         assert "discovery_min_bitrate" in _RELOAD_FIELDS
-        assert "streams" in _RELOAD_FIELDS
         assert "work_dir" in _RELOAD_FIELDS
 
     async def test_process_config_reload_triggers_full_reload(self, tmp_path):
@@ -474,16 +399,21 @@ class TestConfigReload:
     async def test_reload_after_config_change_restarts_recorders(self, tmp_path):
         settings = _make_settings(tmp_path)
         app = _make_app(settings)
-        await app.start()
-        assert len(app.recorders()) == 1
-        old = app.recorders()[0]
+        with patch.object(
+            PlaylistDiscoveryService,
+            "load_or_discover",
+            return_value=[StreamConfig(name="TestStation", url="http://fake.example.com/listen.m3u")],
+        ):
+            await app.start()
+            assert len(app.recorders()) == 1
+            old = app.recorders()[0]
 
-        await app._reload_after_config_change()
+            await app._reload_after_config_change()
 
-        assert len(app.recorders()) == 1
-        new = app.recorders()[0]
-        assert new is not old
-        assert old._stop_event.is_set()
+            assert len(app.recorders()) == 1
+            new = app.recorders()[0]
+            assert new is not old
+            assert old._stop_event.is_set()
         await app.stop()
 
     async def test_reload_reruns_discovery_and_clears_stations(self, tmp_path):
@@ -494,8 +424,6 @@ class TestConfigReload:
                 "discovery_enabled": True,
             }
         )
-        (tmp_path / "work" / "stations").mkdir(parents=True)
-        (tmp_path / "work" / "stations" / "custom.m3u").write_text("#EXTM3U\n")
         client = AsyncMock()
         client.aclose = AsyncMock()
         app = RadioRipperApp(

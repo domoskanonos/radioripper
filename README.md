@@ -1,7 +1,7 @@
 # Radio-Ripper – Stream
 
 Dauerhafte parallele Aufnahme von Webradio-Streams mit ICY-Metadaten (Songtitel).
-Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwaltet hunderte parallele Streams und unterstützt die automatische Sendersuche via Community-Playlists.
+Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwaltet die konfigurierte Anzahl paralleler Streams und bezieht Sender ausschließlich über die automatische Discovery aus Community-Playlists.
 
 ## Features
 
@@ -13,7 +13,7 @@ Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwalt
 - **Datei-Validierung** – verwirft zu kurze (< 90 s), zu kleine (< 1,5 MB) oder ungültige MP3-Dateien
 - **AcoustID-Filterung** – behalte nur Aufnahmen, die einen bekannten AcoustID-Fingerprint-Score erreichen (konfigurierbar, Standard 0,9); erfordert `ACOUST_ID` API-Key und `fpcalc`
 - **Backpressure** – pausiert alle Streams bei vollem Zielverzeichnis oder überfüllter AcoustID-Queue (`work/unchecked_mp3`), setzt automatisch fort
-- **Hot-Reload** – Konfigurationsänderungen werden alle 60 s übernommen; nur die betroffenen Recorder werden neu gestartet, kein Container-Neustart nötig
+- **Hot-Reload** – Konfigurationsänderungen werden alle 60 s übernommen; relevante Änderungen lösen einen Neustart der Stream-Recorder aus, kein Container-Neustart nötig
 - **Auto-Discovery** – findet Sender automatisch aus Community-Playlists, filtert nach Keywords und Bitrate
 - **Preflight-Check** – prüft alle Stationen vor dem Start auf Erreichbarkeit, deaktiviert tote Stationen
 - **Pre-filtered Cache** – einmal geprüfte Stationen werden gecached für schnelle Neustarts
@@ -23,8 +23,9 @@ Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwalt
 
 ```bash
 # Konfiguration vorbereiten (optional – ohne Config gelten Defaults)
+# JSONC erlaubt Kommentare mit // und /* ... */.
 mkdir -p radio-ripper-config radio-ripper-mp3 radio-ripper-work
-cat > radio-ripper-config/config.json <<'EOF'
+cat > radio-ripper-config/config.jsonc <<'EOF'
 {
   "stream_keywords": ["rock", "pop", "jazz"],
   "max_concurrent_streams": 5
@@ -73,7 +74,7 @@ services:
 |---|---|---|
 | `ACOUST_ID` | **ja** | AcoustID API-Key. Ohne diesen Wert startet radio-ripper nicht. Kostenlos registrieren unter [acoustid.org/login](https://acoustid.org/login). |
 
-## Konfiguration (`config/config.json`)
+## Konfiguration (`config/config.jsonc`)
 
 Alle Felder sind optional – es gelten die gezeigten Defaults.
 
@@ -86,7 +87,6 @@ Alle Felder sind optional – es gelten die gezeigten Defaults.
 | `stream_keywords` | string[] | `["rock","pop","top hits",…]` | Suchbegriffe für die automatische Sendersuche |
 | `discovery_enabled` | boolean | `true` | Automatische Sendersuche aktivieren |
 | `discovery_min_bitrate` | integer | `0` | Minimale Bitrate (kbps) für entdeckte Sender |
-| `streams` | array | `[]` | Liste fester Sender (überspringt Discovery). Format: `[{"name":"…","url":"http://…"}]` |
 | `request_timeout` | number | `30.0` | Timeout für HTTP-Requests (Sekunden) |
 | `reconnect_base_delay` | number | `1.0` | Basisverzögerung vor Wiederverbindung (Sekunden) |
 | `reconnect_max_delay` | number | `60.0` | Maximale Wiederverbindungsverzögerung |
@@ -100,7 +100,8 @@ Alle Felder sind optional – es gelten die gezeigten Defaults.
 | `probe_concurrent` | integer | `20` | Parallele Preflight-Proben (max. 100) |
 | `discovery_probe_timeout` | number | `8.0` | Timeout der Discovery-ICY-Proben (Sekunden) |
 | `discovery_max_concurrent` | integer | `300` | Parallele Discovery-Proben (max. 500) |
-| `discovery_random_sample_size` | integer | `10000` | Zufallsstichprobe aus der Community-M3U beim Discovery |
+| `discovery_random_sample_size` | integer | `50000` | Zufallsstichprobe aus der Community-M3U beim Discovery |
+| `discovery_work_station_count` | integer | `400` | Reservierte Größe des Discovery-Arbeitspools |
 | `acoustid_api_url` | string | `https://api.acoustid.org/v2/lookup` | AcoustID-Lookup-URL |
 | `acoustid_requests_per_minute` | integer | `170` | Max. AcoustID-API-Aufrufe pro Minute (Limit: 180 = 3 req/s) |
 | `acoustid_min_score` | float | `0.9` | Mindest-AcoustID-Score für behaltene Aufnahmen (0.0–1.0) |
@@ -114,41 +115,28 @@ Alle Felder sind optional – es gelten die gezeigten Defaults.
 
 ### Live-Config (Hot-Reload)
 
-Die App prüft **alle 60 Sekunden**, ob `config.json` geändert wurde.
+Die App prüft **alle 60 Sekunden**, ob `config.jsonc` geändert wurde. JSONC-Kommentare werden beim Laden entfernt; Kommentarzeichen innerhalb von String-Werten bleiben erhalten.
 Erkannte Änderungen werden übernommen – ohne Neustart des Containers.
 
 - `log_level` – wird sofort gesetzt, ohne Neustart
 - `max_files_inbox` – neuer Schwellwert, wirkt beim nächsten Backpressure-Check (alle 30 s)
 - **Alle übrigen Felder** (u. a. `stream_keywords`, `discovery_enabled`, `request_timeout`,
   `reconnect_*`, `no_icy_disable_after`, `ignore_title_patterns`, `min_file_size_bytes`,
-  `min_file_duration_s`, `work_dir`, `destination`, `streams`, `user_agent`,
+  `min_file_duration_s`, `work_dir`, `destination`, `user_agent`,
   `max_concurrent_streams`, `acoustid_*`, `max_unchecked_*`) lösen einen **Neustart der
   Stream-Recorder** aus: Sie werden gestoppt, die Sender neu aufgelöst (inkl. Discovery /
   Preflight) und wieder gestartet.
 
-### Beispiel: Feste Sender + Discovery
+Die vollständige kommentierte Vorlage liegt unter [`config/config_example.jsonc`](/home/laptop/_dev/repositories/radioripper/config/config_example.jsonc). Die aktive lokale Konfiguration liegt unter [`config/config.jsonc`](/home/laptop/_dev/repositories/radioripper/config/config.jsonc).
+
+### Beispielkonfiguration
 
 ```json
 {
-  "streams": [
-    {"name": "Mein Radio", "url": "http://example.com/stream.mp3", "enabled": true, "bitrate": 128}
-  ],
   "stream_keywords": ["indie", "alternative"],
   "max_concurrent_streams": 8
 }
 ```
-
-### Stream-Konfiguration (pro Eintrag in `streams[]`)
-
-| Feld | Typ | Standard | Beschreibung |
-|---|---|---|---|
-| `name` | string | – | Name des Senders (Pflichtfeld, max. 64 Zeichen) |
-| `url` | string | – | Playlist-URL (M3U/PLS) oder direkte Stream-URL |
-| `enabled` | boolean | `true` | Sender aktivieren/deaktivieren |
-| `ignore_title_patterns` | string[] | `null` | Sendereigene Regex-Muster (überschreibt globale) |
-| `bitrate` | integer | `0` | Bekannte Bitrate in kbps (0 = unbekannt) |
-| `icy` | boolean | `true` | ICY-Metadaten erwartet |
-| `source` | string | `""` | Quelle (z. B. `"discovery"`, `"custom"`) |
 
 ## Architektur (arc42)
 
@@ -192,21 +180,24 @@ _run_forever()
 
 ```
 start()
-  ├─ _select_stations()
-  │   ├─ Explizite streams[] → direkt verwenden
-  │   └─ work/stations/custom.m3u laden → falls leer: leere Datei anlegen
   ├─ PlaylistDiscoveryService.load_or_discover()   # nur falls discovery_enabled
-  │   ├─ work_stations.m3u (Cache) gültig? → laden + auswählen
-  │   ├─ filtered_checked_stations.m3u gültig? → laden + auswählen
-  │   ├─ Sonst: Community-M3U von junguler/m3u-radio-music-playlists laden (Zufallsstichprobe)
-  │   ├─ Einträge mit ICY-Probe testen
+  │   ├─ work_stations.m3u gültig? → ausgewählte Sender laden
+  │   ├─ filtered_checked_stations.m3u gültig? → geprüfte Sender laden + auswählen
+  │   ├─ Sonst: Community-M3U laden und nach Namen deduplizieren
+  │   ├─ zufällig bis zu discovery_random_sample_size Einträge auswählen
+  │   ├─ Einträge mit ICY-Probe testen und optional nach Bitrate filtern
   │   ├─ Ergebnisse in filtered_checked_stations.m3u cachen
-  │   └─ Nach Keywords filtern oder zufällig auswählen
-  ├─ _apply_stream_limit()
-  │   └─ custom.m3u-Stationen priorisieren
+  │   └─ nach Keywords filtern oder die geprüfte Liste zufällig mischen
+  ├─ _apply_stream_limit()                         # höchstens max_concurrent_streams
   └─ _preflight_check()
       └─ Alle Stationen vor Start auf ICY-Erreichbarkeit prüfen (mit Fortschritts-Log alle 10 %)
 ```
+
+Die Discovery verwendet keine Sender aus `streams` oder `custom.m3u`; diese Konfigurationswege wurden entfernt. Die große Community-M3U wird zunächst dedupliziert. Standardmäßig werden daraus zufällig bis zu `50.000` Einträge in `work/random_stations.m3u` abgelegt. Diese Einträge werden geprüft und in `work/filtered_checked_stations.m3u` gecacht.
+
+Bei leeren `stream_keywords` wird die geprüfte Liste zufällig gemischt. Bei gesetzten Keywords werden passende Sender in der geprüften Reihenfolge verwendet, die nach Bitrate absteigend sortiert ist. In beiden Fällen werden anschließend höchstens `max_concurrent_streams` Sender gestartet. Die Auswahl wird in `work/work_stations.m3u` gecacht; eine Änderung von `stream_keywords` oder `max_concurrent_streams` invalidiert diesen Auswahl-Cache.
+
+`discovery_max_concurrent` begrenzt nur die parallelen Discovery-Probes. `probe_concurrent` begrenzt nur die Preflight-Prüfungen direkt vor dem Start. Beide Werte begrenzen nicht die Anzahl der laufenden Recorder. `discovery_work_station_count` ist ein reserviertes Konfigurationsfeld für die Discovery-Arbeitsmenge.
 
 ### Backpressure (volle Verzeichnisse / volle Queue)
 
@@ -239,7 +230,7 @@ So wird verhindert, dass bei vollen Verzeichnissen sinnlos Daten geschrieben wer
 
 Alle Images laufen unter einem unprivilegierten Benutzer (`ripper`, uid 1000).
 Der Container startet standardmäßig `radio-ripper`; du kannst Argumente wie `--log-level DEBUG`
-anhängen. Liegt `/app/config/config.json` vor, wird es automatisch per `--config` geladen.
+anhängen. Liegt `/app/config/config.jsonc` vor, wird es automatisch per `--config` geladen.
 
 ## Entwicklung
 
@@ -261,8 +252,8 @@ uv run mypy src/radio_ripper/
 # Tests
 uv run pytest
 
-# Manueller Start (Config liegt in config/config.json)
-ACOUST_ID=dein_api_key uv run radio-ripper --config config/config.json
+# Manueller Start (Config liegt in config/config.jsonc)
+ACOUST_ID=dein_api_key uv run radio-ripper --config config/config.jsonc
 ```
 
 ## Lizenz

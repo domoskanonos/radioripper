@@ -2,82 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from radio_ripper.infra.http import HttpxAsyncClient
 from radio_ripper.services.playlist import (
     HttpPlaylistResolver,
     StaticPlaylistResolver,
-    load_local_m3u,
     parse_m3u,
     parse_pls,
 )
-
-
-class TestLoadLocalM3u:
-    def test_not_a_file_returns_empty(self, tmp_path: Path):
-        assert load_local_m3u(tmp_path / "nonexistent.m3u") == []
-
-    def test_valid_m3u(self, tmp_path: Path):
-        p = tmp_path / "stations.m3u"
-        p.write_text(
-            "#EXTM3U\n"
-            "#EXTINF:-1,Station Alpha\n"
-            "http://alpha.example.com/stream\n"
-            "#EXTINF:-1,Station Beta\n"
-            "http://beta.example.com/audio\n"
-        )
-        result = load_local_m3u(p)
-        assert len(result) == 2
-        assert result[0].name == "Station Alpha"
-        assert str(result[0].url) == "http://alpha.example.com/stream"
-        assert result[1].name == "Station Beta"
-        assert str(result[1].url) == "http://beta.example.com/audio"
-
-    def test_skip_extinf_without_comma(self, tmp_path: Path):
-        p = tmp_path / "bad.m3u"
-        p.write_text("#EXTINF:-1\nhttp://example.com/s\n")
-        assert load_local_m3u(p) == []
-
-    def test_skip_url_without_preceding_name(self, tmp_path: Path):
-        p = tmp_path / "no_name.m3u"
-        p.write_text("http://example.com/s\n")
-        assert load_local_m3u(p) == []
-
-    def test_skip_url_without_scheme(self, tmp_path: Path):
-        p = tmp_path / "no_scheme.m3u"
-        p.write_text("#EXTINF:-1,Test\n//noscheme.com/s\n")
-        assert load_local_m3u(p) == []
-
-    def test_invalid_url_suppressed(self, tmp_path: Path):
-        p = tmp_path / "bad_url.m3u"
-        p.write_text("#EXTINF:-1,Test\nnot a url\n")
-        assert load_local_m3u(p) == []
-
-    def test_blank_lines_skipped(self, tmp_path: Path):
-        p = tmp_path / "blank.m3u"
-        p.write_text("\n\n#EXTINF:-1,Station\nhttp://example.com/s\n\n")
-        result = load_local_m3u(p)
-        assert len(result) == 1
-
-    def test_consecutive_urls_name_resets(self, tmp_path: Path):
-        p = tmp_path / "consecutive.m3u"
-        p.write_text("#EXTINF:-1,Only\nhttp://a.com/1\nhttp://a.com/2\n")
-        result = load_local_m3u(p)
-        # Second URL has no name (was reset after first), so only one station
-        assert len(result) == 1
-
-    def test_comment_lines_skipped(self, tmp_path: Path):
-        p = tmp_path / "comments.m3u"
-        p.write_text("#EXTM3U\n# comment\n#EXTINF:-1,S\n# another comment\nhttp://example.com/s\n")
-        result = load_local_m3u(p)
-        assert len(result) == 1
-
-    def test_empty_file(self, tmp_path: Path):
-        p = tmp_path / "empty.m3u"
-        p.write_text("")
-        assert load_local_m3u(p) == []
 
 
 class TestParseM3u:
