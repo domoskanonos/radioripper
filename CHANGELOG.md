@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.13.0 (2026-08-04)
+
+### Features
+
+- Switch to documented JSONC discovery config
+  ([`11e6bf6`](https://github.com/domoskanonos/radioripper/commit/11e6bf6e5341b673963f8cd4d7cada017b5fd53e))
+
+
 ## Unreleased
 
 ### Changed
