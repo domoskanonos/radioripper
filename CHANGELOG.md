@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.13.1 (2026-08-04)
+
+### Bug Fixes
+
+- Prevent PoolTimeout with many concurrent streams
+  ([`5551cc0`](https://github.com/domoskanonos/radioripper/commit/5551cc0c761ed93ed15edbaabb4c8386922fcafd))
+
+
 ## v2.13.0 (2026-08-04)
 
 ### Features
