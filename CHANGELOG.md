@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.13.3 (2026-08-09)
+
+### Bug Fixes
+
+- Update destination volume path to local music directory
+  ([`6dbae44`](https://github.com/domoskanonos/radioripper/commit/6dbae44a3f801c02665d822ecd47f97dd201be6e))
+
+
 ## v2.13.2 (2026-08-04)
 
 ### Bug Fixes
