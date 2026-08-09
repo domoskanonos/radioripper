@@ -13,7 +13,8 @@ Design goals
   first. ``enqueue()`` only wakes the worker; it never buffers.
 * **Strict fail-closed**: only a successful AcoustID lookup (score ≥ min_score
   *with* usable artist/title metadata) results in a kept file. Transient errors
-  are retried with exponential back-off; the file stays in ``unchecked_mp3``.
+  are retried with exponential back-off; once the retry budget is exhausted the
+  file is deleted (the track will be re-recorded on the next airplay).
 * **Rate-limited**: requests are evenly spaced to stay within
   ``acoustid_requests_per_minute`` (AcoustID hard limit: 180/min = 3 req/s).
 * **Atomic rename + collision handling**: the final destination write is
@@ -138,6 +139,18 @@ class AcoustidQueue:
         # path -> (next_retry_monotonic, attempts) for files in cooldown/back-off
         self._retry_info: dict[Path, tuple[float, int]] = {}
         self._idle_sleep = 2.0
+        # Incrementally-maintained view of unchecked_mp3 (count + bytes) so the
+        # hot enqueue path never has to rescan the whole directory. Seeded once
+        # at startup and kept in sync on every enqueue/delete/move.
+        self._tracked: dict[Path, int] = {}
+        self._usage_bytes = 0
+        self._usage_initialized = False
+        self._usage_synced_at = 0.0
+        self._usage_resync_interval = 30.0
+        # Cached oldest-first directory listing for _pick_next (short TTL).
+        self._pick_cache: list[tuple[Path, float]] = []
+        self._pick_cache_time = 0.0
+        self._pick_cache_ttl = 2.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -162,6 +175,7 @@ class AcoustidQueue:
             return
         self._stopped = False
         self._unchecked_dir.mkdir(parents=True, exist_ok=True)
+        self._init_usage()
         self._worker_task = asyncio.create_task(self._worker_loop(), name="AcoustidQueue-worker")
 
     async def stop(self) -> None:
@@ -189,9 +203,28 @@ class AcoustidQueue:
         """
         if self._stopped:
             return
-        if not self._check_unchecked_limits(path):
+        self._init_usage()
+        if path not in self._tracked:
+            size = 0
+            with contextlib.suppress(OSError):
+                size = path.stat().st_size
+            self._tracked[path] = size
+            self._usage_bytes += size
+        if not self._check_unchecked_limits():
             self._log.warning("Unchecked directory over limit — retaining %s", path.name)
         self._wake_event.set()
+
+    def usage(self) -> tuple[int, int]:
+        """Return ``(file_count, total_bytes)`` in unchecked_mp3.
+
+        Reads the incrementally-maintained cache; a full directory re-scan
+        happens only at startup or after ``_usage_resync_interval`` seconds —
+        never inside the hot enqueue path.
+        """
+        self._init_usage()
+        if time.monotonic() - self._usage_synced_at >= self._usage_resync_interval:
+            self._resync_usage()
+        return len(self._tracked), self._usage_bytes
 
     def load_existing_unchecked(self) -> int:
         """Clean stale ``.part`` files and report pending recordings.
@@ -239,16 +272,34 @@ class AcoustidQueue:
         for p in [p for p in self._retry_info if not p.exists()]:
             self._retry_info.pop(p, None)
         now = time.monotonic()
-        try:
-            files = sorted(self._unchecked_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
-        except OSError:
-            return None
-        for f in files:
-            info = self._retry_info.get(f)
+        for path, _mtime in self._cached_pick_entries(now):
+            if not path.exists():
+                continue
+            info = self._retry_info.get(path)
             if info is not None and info[0] > now:
                 continue
-            return f
+            return path
         return None
+
+    def _cached_pick_entries(self, now: float) -> list[tuple[Path, float]]:
+        """Oldest-first directory listing, re-scanned at most once per TTL.
+
+        Avoids the O(n log n) sort + n*stat on every worker iteration: the
+        listing is amortised across iterations and only refreshed when it has
+        gone stale. Removed files are skipped lazily via ``exists()``.
+        """
+        if now - self._pick_cache_time >= self._pick_cache_ttl:
+            entries: list[tuple[Path, float]] = []
+            try:
+                for p in self._unchecked_dir.glob("*.mp3"):
+                    with contextlib.suppress(OSError):
+                        entries.append((p, p.stat().st_mtime))
+            except OSError:
+                pass
+            entries.sort(key=lambda entry: entry[1])
+            self._pick_cache = entries
+            self._pick_cache_time = now
+        return self._pick_cache
 
     def _cooldown_wait(self) -> float:
         """Seconds to sleep until the earliest pending retry (or idle poll)."""
@@ -268,6 +319,7 @@ class AcoustidQueue:
         """Run the full AcoustID pipeline for a single file (one attempt)."""
         if not path.exists():
             self._retry_info.pop(path, None)
+            self._remove_tracked(path)
             return
 
         local_result = await self._validate_local_file(path)
@@ -294,12 +346,14 @@ class AcoustidQueue:
             committed = await self._commit(path, result)
             if committed:
                 self._retry_info.pop(path, None)
+                self._remove_tracked(path)
             else:
                 self._schedule_retry(path, self._settings.acoustid_retry_max_delay)
             return
 
         if result.outcome == "rejected":
-            # Score too low or no match in AcoustID database — discard
+            # Score too low, no match in the AcoustID database, or the file
+            # could not be decoded by fpcalc — discard for good.
             self._log.info(
                 "AcoustID rejected %s (%s) — deleting.",
                 path.name,
@@ -308,6 +362,7 @@ class AcoustidQueue:
             with contextlib.suppress(OSError):
                 path.unlink(missing_ok=True)
             self._retry_info.pop(path, None)
+            self._remove_tracked(path)
             return
 
         # outcome == "error" — transient failure, retry later
@@ -327,7 +382,9 @@ class AcoustidQueue:
         try:
             if path.stat().st_size < self._settings.min_file_size_bytes:
                 self._log.info("AcoustID queue discarded too-small file: %s", path.name)
-                path.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                self._remove_tracked(path)
                 return False
         except OSError as exc:
             self._log.warning("Could not stat %s: %s", path.name, exc)
@@ -337,6 +394,7 @@ class AcoustidQueue:
             self._log.info("AcoustID queue discarded invalid MP3: %s", path.name)
             with contextlib.suppress(OSError):
                 path.unlink(missing_ok=True)
+            self._remove_tracked(path)
             return False
 
         if self._settings.min_file_duration_s > 0:
@@ -356,6 +414,7 @@ class AcoustidQueue:
                 )
                 with contextlib.suppress(OSError):
                     path.unlink(missing_ok=True)
+                self._remove_tracked(path)
                 return False
         return True
 
@@ -364,7 +423,8 @@ class AcoustidQueue:
 
         The retry is enforced by ``_pick_next`` skipping files whose cooldown
         has not elapsed. Once ``acoustid_retry_max_attempts`` is exhausted the
-        file simply stays in ``unchecked_mp3`` for the next restart.
+        file is deleted — the track will be re-recorded on the next airplay,
+        and a permanently broken file must not stay in the queue forever.
         """
         if self._stopped or not path.exists():
             return
@@ -372,40 +432,61 @@ class AcoustidQueue:
         max_attempts = max(1, self._settings.acoustid_retry_max_attempts + 1)
         if attempts >= max_attempts:
             self._log.error(
-                "AcoustID gave up on %s after %d attempt(s); file stays in unchecked_mp3 for next restart.",
+                "AcoustID gave up on %s after %d attempt(s); deleting the file.",
                 path.name,
                 max_attempts,
             )
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
             self._retry_info.pop(path, None)
+            self._remove_tracked(path)
             return
         attempts += 1
         backoff = min(base_delay * (2 ** (attempts - 1)), self._settings.acoustid_retry_max_delay)
         self._retry_info[path] = (time.monotonic() + backoff, attempts)
         self._log.info("Retrying %s in %.0f s (attempt %d/%d).", path.name, backoff, attempts, max_attempts)
 
-    def _check_unchecked_limits(self, incoming: Path) -> bool:
-        """Return True if limits are not exceeded, False if we should drop."""
+    def _check_unchecked_limits(self) -> bool:
+        """Return True if limits are not exceeded, False if we should drop.
+
+        Reads the incrementally-maintained usage cache instead of scanning the
+        directory, so the enqueue hot path stays O(1) regardless of queue size.
+        """
         max_files = self._settings.max_unchecked_files
         max_bytes = self._settings.max_unchecked_bytes
         if max_files <= 0 and max_bytes <= 0:
             return True
-        try:
-            existing = list(self._unchecked_dir.glob("*.mp3"))
-        except OSError:
-            return True
-        if max_files > 0 and len(existing) >= max_files:
-            return False
-        if max_bytes > 0:
-            total = 0
-            for file in existing:
+        self._init_usage()
+        over_files = max_files > 0 and len(self._tracked) >= max_files
+        over_bytes = max_bytes > 0 and self._usage_bytes >= max_bytes
+        return not (over_files or over_bytes)
+
+    def _init_usage(self) -> None:
+        """Scan unchecked_mp3 once at startup to seed the usage cache."""
+        if not self._usage_initialized:
+            self._resync_usage()
+            self._usage_initialized = True
+
+    def _resync_usage(self) -> None:
+        """Rebuild the usage cache from the actual directory contents."""
+        tracked: dict[Path, int] = {}
+        total = 0
+        with contextlib.suppress(OSError):
+            for p in self._unchecked_dir.glob("*.mp3"):
+                size = 0
                 with contextlib.suppress(OSError):
-                    total += file.stat().st_size
-            if incoming not in existing:
-                with contextlib.suppress(OSError):
-                    total += incoming.stat().st_size
-            if total >= max_bytes:
-                return False
-        return True
+                    size = p.stat().st_size
+                tracked[p] = size
+                total += size
+        self._tracked = tracked
+        self._usage_bytes = total
+        self._usage_synced_at = time.monotonic()
+
+    def _remove_tracked(self, path: Path) -> None:
+        """Drop *path* from the usage cache (file was deleted or moved away)."""
+        size = self._tracked.pop(path, None)
+        if size is not None:
+            self._usage_bytes = max(0, self._usage_bytes - size)
 
     async def _commit(self, path: Path, result: AcoustidLookup) -> bool:
         """Write ID3 tags, build target name, handle collision, atomic move."""

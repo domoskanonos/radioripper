@@ -281,7 +281,13 @@ class RadioRipperApp:
             rec.resume()
 
     def _staging_usage(self) -> tuple[int, int]:
-        """Return ``(file_count, total_bytes)`` in work/unchecked_mp3."""
+        """Return ``(file_count, total_bytes)`` in work/unchecked_mp3.
+
+        Delegates to the AcoustID queue's incrementally-maintained cache when
+        the queue exists, so housekeeping never triggers a full directory scan.
+        """
+        if self._acoustid_queue is not None:
+            return self._acoustid_queue.usage()
         staging = self.settings.work_dir / AcoustidQueue.UNCHECKED_DIR_NAME
         if not staging.is_dir():
             return 0, 0
@@ -335,17 +341,26 @@ class RadioRipperApp:
 
         while not self._cancel_requested:
             now = time.monotonic()
+            try:
+                if now >= next_config:
+                    await self._process_config_reload()
+                    next_config = now + config_interval
 
-            if now >= next_config:
-                await self._process_config_reload()
-                next_config = now + config_interval
+                if now >= next_backpressure:
+                    await self._check_backpressure()
+                    next_backpressure = now + backpressure_interval
 
-            if now >= next_backpressure:
-                await self._check_backpressure()
-                next_backpressure = now + backpressure_interval
-
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._sleep_until(next_config, next_backpressure), timeout=5.0)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._sleep_until(next_config, next_backpressure), timeout=5.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A single failing cycle must not kill housekeeping forever:
+                # backpressure and config reload would both be dead until the
+                # container restarts. Log and reschedule for the next cycle.
+                self.logger.exception("Housekeeping error — retrying next cycle.")
+                next_config = time.monotonic() + config_interval
+                next_backpressure = time.monotonic() + backpressure_interval
 
     async def _process_config_reload(self) -> None:
         lc = self._live_config

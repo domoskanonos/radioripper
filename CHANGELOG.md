@@ -38,6 +38,24 @@
 
 ### Fixed
 
+- **AcoustID-Queue kollabiert nach ~1 Tag Laufzeit nicht mehr:** Der O(n)-Vollscan im
+  heißen Enqueue-Pfad (Limit-Check + `_pick_next`-Sortierung bei jeder Datei) ist durch
+  einen inkrementell gepflegten Usage-Cache (Anzahl + Bytes) und eine gecachte, kurz
+  getaktete „älteste zuerst"-Liste ersetzt worden. Der Enqueue-Pfad ist jetzt O(1);
+  `_staging_usage()` nutzt denselben Cache statt selbst zu scannen.
+- **Unlesbare/defekte MP3s werden endgültig verworfen:** Wenn `fpcalc` mit Exit-Code ≠ 0
+  endet (Dekodierfehler der Eingabedatei), liefert `acoustid_lookup()` jetzt
+  `outcome="rejected"` und der Worker löscht die Datei. Nur echte transiente Fälle
+  (Spawn-Exception, Timeout, leere stdout bei Exit 0) bleiben `outcome="error"`.
+- **„Gave up"-Pfad löscht die Datei:** Nach `acoustid_retry_max_attempts` wird die
+  Aufnahme aus `unchecked_mp3` entfernt statt ewig im Retry-Zyklus zu hängen (die Spur
+  wird ohnehin neu aufgenommen).
+- **Recorder pausieren jetzt wirklich innerhalb einer Spur:** `_stream_with_meta()`
+  prüft `self._paused` am Anfang des Chunk-Loops (in-flight Writer wird verworfen, die
+  Stream-Session endet) und vor dem Anlegen eines neuen `TrackWriter`, sodass
+  Backpressure die Aufnahme sofort stoppt statt erst am Ende der Session.
+- **`_run_housekeeping()` ist gegen einzelne Fehler abgesichert** — ein Fehler beendet
+  Housekeeping nicht mehr dauerhaft (Backpressure + Config-Reload bleiben am Leben).
 - **PoolTimeout-Fehler bei sehr vielen parallelen Streams behoben:** Der gemeinsame
   HTTP-Connection-Pool war hart auf 400 Verbindungen gedeckelt, während
   `max_concurrent_streams` beliebig groß sein konnte. Dadurch verhungerten Stationen

@@ -414,6 +414,26 @@ class TestDiscardSmallFile:
         assert not any("Too Small" in f.name for f in files)
 
 
+class _InfiniteStreamClient(FakeHttpClient):
+    """A stream that never ends so a pause can interrupt it mid-recording."""
+
+    def __init__(self) -> None:
+        super().__init__(b"")
+        self._headers = {"icy-metaint": str(METADATA_INTERVAL)}
+
+    async def stream_binary(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> AsyncGenerator[bytes, None]:
+        self._last_headers = dict(self._headers)
+        while True:
+            yield _make_stream_bytes(["Artist A - Song A", "Artist B - Song B"], audio_per_song=METADATA_INTERVAL)
+            await asyncio.sleep(0.01)
+
+
 class TestStreamPauseResume:
     async def test_pause_and_resume(self, tmp_path):
         stream = _make_stream_bytes(["A - B", "C - D", "E - F"])
@@ -426,6 +446,36 @@ class TestStreamPauseResume:
         await asyncio.sleep(0.2)
         rec.stop()
         await asyncio.wait_for(rec.join(), timeout=3)
+
+    async def test_pause_stops_recording_mid_stream(self, tmp_path, caplog):
+        """Backpressure pause ends the running recording within the track."""
+        import logging
+
+        caplog.set_level(logging.INFO, logger="radio_ripper")
+        settings = _make_settings(tmp_path, min_file_size_bytes=1)
+        rec = _make_recorder(settings=settings, http_client=_InfiniteStreamClient())
+        stream_dir = settings.work_dir / "unchecked_mp3"
+        task = rec.start()
+
+        # Let the recorder settle into an active recording
+        await asyncio.sleep(0.4)
+        files_before = set(f.name for f in stream_dir.glob("*.mp3")) if stream_dir.is_dir() else set()
+        assert len(files_before) >= 1
+
+        rec.pause()
+        await asyncio.sleep(0.2)
+
+        # The in-flight song must be discarded, not left as a .part
+        assert not list(stream_dir.glob("*.part")) if stream_dir.is_dir() else True
+
+        # No new recordings may start while paused
+        await asyncio.sleep(0.3)
+        files_after = set(f.name for f in stream_dir.glob("*.mp3")) if stream_dir.is_dir() else set()
+        assert files_after <= files_before
+
+        rec.stop()
+        await asyncio.wait_for(task, timeout=5)
+        assert "Paused — discarding in-flight song and ending stream session." in caplog.text
 
 
 class TestStreamEdgeCases:

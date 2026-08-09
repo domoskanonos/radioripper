@@ -311,6 +311,17 @@ class StreamRecorder:
                     if writer is not None:
                         writer.discard()
                     return True
+                if self._paused.is_set():
+                    # Backpressure reached mid-song: discard the in-flight
+                    # recording and end the stream session so _run_forever()
+                    # enters the pause state immediately (within the track).
+                    self._log.info(
+                        "[%s] Paused — discarding in-flight song and ending stream session.",
+                        self.station_name,
+                    )
+                    if writer is not None:
+                        writer.discard()
+                    return True
                 if not chunk:
                     continue
                 parser.feed(chunk)
@@ -337,6 +348,10 @@ class StreamRecorder:
                             writer = None
                             recording = False
                         current_title = new_title
+                        if self._paused.is_set():
+                            # Never start a new recording while paused; the next
+                            # title boundary after resume starts a fresh one.
+                            continue
                         if not self._should_record_title(new_title):
                             continue
                         writer = self._make_writer(new_title.strip())

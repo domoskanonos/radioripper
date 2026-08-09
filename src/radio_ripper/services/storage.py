@@ -49,9 +49,11 @@ class AcoustidLookup:
 
     ``outcome`` is one of:
     - ``"accepted"``  — API answered, score >= min_score, match may carry metadata.
-    - ``"rejected"``  — API answered, no result reached min_score (file should be deleted).
-    - ``"error"``     — Transient failure (fpcalc crash, network error, timeout).
-                        The caller should retry later.
+    - ``"rejected"``  — Permanent rejection: API answered with no qualifying
+                        result, or fpcalc could not decode the file. The file
+                        should be deleted.
+    - ``"error"``     — Transient failure (fpcalc spawn/parse problem, network
+                        error, timeout). The caller should retry later.
 
     ``match`` is only set when ``outcome == "accepted"`` *and* the API returned
     usable artist/title metadata.  A file with ``outcome="accepted"`` and
@@ -224,12 +226,13 @@ async def acoustid_lookup(
     --------
     ``"accepted"``  — API answered, best score >= *min_score*.
                       ``match`` may carry artist/title metadata.
-    ``"rejected"``  — API answered successfully but no result reached *min_score*,
-                      or the API returned 0 results.  The caller should delete
+    ``"rejected"``  — Permanent: API answered but no result reached *min_score*,
+                      the API returned 0 results, or fpcalc could not decode the
+                      input file (non-zero exit code). The caller should delete
                       the file.
-    ``"error"``     — Transient failure: fpcalc missing/crashed, network error,
-                      timeout, unexpected response shape.  The caller should
-                      retry later.  The file must *not* be deleted.
+    ``"error"``     — Transient: fpcalc missing, spawn/timeout/parse failure,
+                      network error, unexpected response shape. The caller
+                      should retry later. The file must *not* be deleted.
 
     Steps
     -----
@@ -251,11 +254,23 @@ async def acoustid_lookup(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
     except Exception as exc:
         detail = f"fpcalc crashed: {exc}"
         _LOGGER.warning("fpcalc failed for %s: %s", path.name, exc)
         return AcoustidLookup(outcome="error", error_detail=detail)
+
+    if proc.returncode:
+        # Non-zero exit => fpcalc could not decode the input. The file is
+        # unreadable garbage (e.g. a truncated/corrupt recording) and will
+        # never fingerprint; classify it as a permanent rejection so the
+        # worker deletes it instead of retrying it forever.
+        err_text = stderr.decode(errors="replace").strip() if stderr else ""
+        detail = f"fpcalc could not decode the audio (exit {proc.returncode})"
+        if err_text:
+            detail = f"{detail}: {err_text[:200]}"
+        _LOGGER.warning("AcoustID rejected %s: %s", path.name, detail)
+        return AcoustidLookup(outcome="rejected", reject_reason=detail)
 
     try:
         fp_data = json.loads(stdout.decode())

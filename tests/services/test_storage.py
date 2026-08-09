@@ -282,6 +282,7 @@ class TestAcoustidLookupMetadataRegression:
         ).encode()
 
         proc = AsyncMock()
+        proc.returncode = 0
         proc.communicate.return_value = (fp, b"")
         urlopen = Mock()
         urlopen.return_value.read.return_value = api
@@ -306,6 +307,7 @@ class TestAcoustidLookupMetadataRegression:
         api = json.dumps({"status": "ok", "results": [{"id": "r", "score": 0.95}]}).encode()
 
         proc = AsyncMock()
+        proc.returncode = 0
         proc.communicate.return_value = (fp, b"")
         urlopen = Mock()
         urlopen.return_value.read.return_value = api
@@ -331,6 +333,7 @@ class TestAcoustidLookupMetadataRegression:
         ).encode()
 
         proc = AsyncMock()
+        proc.returncode = 0
         proc.communicate.return_value = (fp, b"")
         urlopen = Mock()
         urlopen.return_value.read.return_value = api
@@ -344,6 +347,48 @@ class TestAcoustidLookupMetadataRegression:
         assert result.accepted is False
         assert result.match is None
 
+    async def test_fpcalc_decode_error_is_rejected(self, tmp_path):
+        """A non-zero fpcalc exit code (undecodable input) must be rejected.
+
+        Corrupt/truncated files never fingerprint, so they must be classified as
+        a permanent rejection (worker deletes them) instead of a transient
+        error that would retry forever.
+        """
+        from radio_ripper.services.storage import acoustid_lookup
+
+        path = tmp_path / "corrupt.mp3"
+        path.write_bytes(b"\x00garbage\x00")
+        proc = AsyncMock()
+        proc.returncode = 2
+        proc.communicate.return_value = (b"", b"Error reading from the audio source")
+        with (
+            patch("radio_ripper.services.storage.shutil.which", return_value="/usr/bin/fpcalc"),
+            patch("radio_ripper.services.storage.asyncio.create_subprocess_exec", return_value=proc),
+        ):
+            result = await acoustid_lookup(path, "key")
+
+        assert result.outcome == "rejected"
+        assert result.match is None
+        assert result.error_detail is None
+        assert "exit 2" in (result.reject_reason or "")
+
+    async def test_fpcalc_timeout_is_error(self, tmp_path):
+        """A fpcalc timeout stays a transient error — the file must not be deleted."""
+        from radio_ripper.services.storage import acoustid_lookup
+
+        path = tmp_path / "song.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+        proc = AsyncMock()
+        proc.returncode = 0
+        proc.communicate.side_effect = TimeoutError("fpcalc hung")
+        with (
+            patch("radio_ripper.services.storage.shutil.which", return_value="/usr/bin/fpcalc"),
+            patch("radio_ripper.services.storage.asyncio.create_subprocess_exec", return_value=proc),
+        ):
+            result = await acoustid_lookup(path, "key")
+
+        assert result.outcome == "error"
+
     async def test_non_dict_response_is_error(self, tmp_path):
         """A malformed API response must return outcome='error' (strict fail-closed)."""
         from radio_ripper.services.storage import acoustid_lookup
@@ -353,6 +398,7 @@ class TestAcoustidLookupMetadataRegression:
         fp = json.dumps({"fingerprint": "fp", "duration": 120.0}).encode()
 
         proc = AsyncMock()
+        proc.returncode = 0
         proc.communicate.return_value = (fp, b"")
         urlopen = Mock()
         urlopen.return_value.read.return_value = b"[1, 2, 3]"

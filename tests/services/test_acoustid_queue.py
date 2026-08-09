@@ -103,6 +103,92 @@ class TestDirectoryAsQueue:
         # The file must never be deleted, only reported over-limit
         assert overflow.exists()
 
+    def test_enqueue_does_not_full_scan(self, tmp_path):
+        """enqueue() must not rescan the whole directory (O(n) hot path)."""
+        queue = _make_queue(tmp_path)
+        staging = queue.unchecked_dir
+        staging.mkdir(parents=True)
+        for i in range(200):
+            (staging / f"f{i}.mp3").write_bytes(b"x" * 100)
+        queue._init_usage()  # initial scan only at startup
+
+        new_file = staging / "new.mp3"
+        new_file.write_bytes(b"y" * 10)
+
+        glob_calls = 0
+        original_glob = Path.glob
+
+        def patched_glob(self, pattern):
+            nonlocal glob_calls
+            glob_calls += 1
+            return original_glob(self, pattern)
+
+        with patch.object(Path, "glob", patched_glob):
+            queue.enqueue(new_file)
+
+        assert glob_calls == 0
+        # The new file is now reflected in the cached usage
+        assert queue.usage() == (201, 200 * 100 + 10)
+
+    def test_usage_cache_tracks_enqueue_and_removal(self, tmp_path):
+        """The usage cache stays in sync with enqueue and delete/move."""
+        queue = _make_queue(tmp_path)
+        staging = queue.unchecked_dir
+        staging.mkdir(parents=True)
+        a = staging / "a.mp3"
+        b = staging / "b.mp3"
+        a.write_bytes(b"x" * 10)
+        b.write_bytes(b"x" * 20)
+
+        queue._init_usage()
+        assert queue.usage() == (2, 30)
+
+        # Re-enqueue of an already-tracked file must not double-count
+        queue.enqueue(a)
+        assert queue.usage() == (2, 30)
+
+        # A fresh enqueue is added to the cache without a scan
+        c = staging / "c.mp3"
+        c.write_bytes(b"x" * 5)
+        queue.enqueue(c)
+        assert queue.usage() == (3, 35)
+
+        # Removals (rejected/committed/give-up) are decremented
+        queue._remove_tracked(a)
+        queue._remove_tracked(b)
+        queue._remove_tracked(c)
+        assert queue.usage() == (0, 0)
+
+    def test_check_unchecked_limits_uses_cache(self, tmp_path):
+        """Over-limit detection uses the incremental cache, not a directory scan."""
+        settings = _make_settings(tmp_path, max_unchecked_files=100)
+        queue = AcoustidQueue(
+            settings=settings,
+            api_key="k",
+            destination=settings.destination,
+            http_client=_FakeHttp(),
+        )
+        staging = queue.unchecked_dir
+        staging.mkdir(parents=True)
+        for i in range(100):
+            (staging / f"f{i}.mp3").write_bytes(b"x")
+        queue._init_usage()
+
+        overflow = staging / "overflow.mp3"
+        overflow.write_bytes(b"x")
+
+        glob_calls = 0
+        original_glob = Path.glob
+
+        def patched_glob(self, pattern):
+            nonlocal glob_calls
+            glob_calls += 1
+            return original_glob(self, pattern)
+
+        with patch.object(Path, "glob", patched_glob):
+            assert queue._check_unchecked_limits() is False
+        assert glob_calls == 0
+
     def test_pick_next_returns_oldest_first(self, tmp_path):
         queue = _make_queue(tmp_path)
         staging = queue.unchecked_dir
@@ -181,6 +267,66 @@ class TestDirectoryAsQueue:
         # Transient error -> file must be kept for a later retry
         assert f.exists()
         assert f in queue._retry_info
+
+    def test_schedule_retry_give_up_deletes_file(self, tmp_path):
+        """Once the retry budget is exhausted the file is removed for good."""
+        settings = _make_settings(tmp_path, acoustid_retry_max_attempts=2)
+        queue = AcoustidQueue(
+            settings=settings,
+            api_key="k",
+            destination=settings.destination,
+            http_client=_FakeHttp(),
+        )
+        staging = queue.unchecked_dir
+        staging.mkdir(parents=True)
+        f = staging / "broken.mp3"
+        f.write_bytes(b"x")
+        queue._init_usage()
+        assert queue.usage() == (1, 1)
+
+        # max_attempts=2 -> max_attempts window is 3, give-up on the 4th call
+        queue._schedule_retry(f, 1.0)
+        queue._schedule_retry(f, 1.0)
+        assert f.exists()
+        queue._schedule_retry(f, 1.0)
+        queue._schedule_retry(f, 1.0)
+        assert not f.exists()
+        assert f not in queue._retry_info
+        assert queue.usage() == (0, 0)
+
+    @pytest.mark.asyncio
+    async def test_worker_deletes_file_after_max_retries(self, tmp_path):
+        """Persistent transient errors must end with the file being deleted."""
+        from radio_ripper.services.storage import AcoustidLookup
+
+        settings = _make_settings(
+            tmp_path,
+            acoustid_retry_max_attempts=0,
+            acoustid_retry_base_delay=1.0,
+            acoustid_requests_per_minute=180,
+        )
+        queue = AcoustidQueue(
+            settings=settings,
+            api_key="k",
+            destination=settings.destination,
+            http_client=_FakeHttp(),
+        )
+        staging = queue.unchecked_dir
+        staging.mkdir(parents=True)
+        f = staging / "song.mp3"
+        f.write_bytes(_valid_mp3())
+
+        async def fake_lookup(path, api_key, **kwargs):
+            return AcoustidLookup(outcome="error", error_detail="timeout")
+
+        with patch("radio_ripper.services.acoustid_queue.acoustid_lookup", side_effect=fake_lookup):
+            queue.start()
+            try:
+                await asyncio.sleep(2.5)
+            finally:
+                await queue.stop()
+        assert not f.exists()
+        assert f not in queue._retry_info
 
 
 class TestCommitCrossDevice:
