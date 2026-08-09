@@ -9,4 +9,4 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ./work:/app/work
-      - ../recordings:/app/destination
+      - /home/laptop/Musik:/app/destination
