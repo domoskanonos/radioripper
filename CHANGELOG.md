@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.13.4 (2026-08-09)
+
+### Bug Fixes
+
+- Prevent AcoustID queue collapse after extended runtime
+  ([`5b4a84e`](https://github.com/domoskanonos/radioripper/commit/5b4a84e8027571a422556456815fb3f4461eca6d))
+
+
 ## v2.13.3 (2026-08-09)
 
 ### Bug Fixes
