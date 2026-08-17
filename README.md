@@ -13,7 +13,9 @@ standardmäßige Ordnerstruktur verschoben.
 - **Auto-Reconnect** – bei Verbindungsabbruch automatische Wiederverbindung mit exponentiellem Backoff + Jitter
 - **Datei-Validierung** – verwirft zu kurze (< `min_file_duration_s`) und zu kleine (< `min_file_size_bytes`) Dateien
 - **AcoustID-Identifikation** – Fingerprint + Lookup; nur Treffer ≥ `acoustid_min_score` (Standard 0.9) werden behalten
-- **ID3-Tagging** – Artist, Title, Album, Jahr, Tracknummer, MusicBrainz-IDs, Score
+- **MusicBrainz-Anreicherung** – Genre-Tags, Cover-Art und Artist-Foto aus MusicBrainz/Cover-Art-Archive/Wikimedia
+- **Lyrics** – synced Karaoke-Lyrics (SYLT) aus LRCLib, Plaintext (USLT) als Fallback
+- **ID3-Tagging** – Artist, Title, Album, Jahr, Tracknummer, Genre, Cover, Artist-Bild, Lyrics, MusicBrainz-IDs, Score
 - **Ordnerstruktur** – `Artist/Album/Artist - Title.mp3`
 - **Kollisions-Handling** – bei gleichem Dateinamen gewinnt der höhere AcoustID-Score
 - **Graceful Shutdown** – stoppt alle Recorder parallel, beendet den AcoustID-Worker und schließt den ThreadPool sauber

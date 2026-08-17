@@ -62,6 +62,15 @@ warn_return_any = true
 disallow_untyped_defs = true
 disallow_untyped_calls = true
 
+[[tool.mypy.overrides]]
+module = "mutagen.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.test_acoustid"
+disallow_untyped_calls = false
+warn_return_any = false
+
 [tool.semantic_release]
 branch = "main"
 tag_format = "v{version}"

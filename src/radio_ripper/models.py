@@ -29,6 +29,7 @@ class AcoustidMatch:
     confirmations: int = 0
     recording_id: str = ""
     releasegroup_id: str = ""
+    artist_id: str = ""
 
 
 class StreamConfig(BaseModel):

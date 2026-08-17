@@ -613,3 +613,179 @@ async def test_worker_pending(tmp_path: Path) -> None:
     worker.enqueue(p)
     assert worker.pending == 1
     await worker.stop()
+
+
+# ---------------------------------------------------------------------------
+# MusicBrainz-Anreicherung
+# ---------------------------------------------------------------------------
+
+
+def test_mb_enrichment_defaults() -> None:
+    from radio_ripper.acoustid import MusicBrainzEnrichment
+
+    e = MusicBrainzEnrichment(genres=["rock"], cover_data=None, artist_image=None)
+    assert e.genres == ["rock"]
+    assert e.cover_data is None
+    assert e.lyrics == ""
+    assert e.synced_lyrics == ""
+
+
+@pytest.mark.asyncio
+async def test_fetch_genres(tmp_path: Path) -> None:
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_genres
+
+    async with httpx.AsyncClient() as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/release-group/rg-1").mock(
+                return_value=httpx.Response(200, json={"genres": [{"name": "rock"}, {"name": "pop"}]})
+            )
+            assert await _fetch_genres(client, "rg-1") == ["rock", "pop"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_genres_empty_id(tmp_path: Path) -> None:
+    import httpx
+
+    from radio_ripper.acoustid import _fetch_genres
+
+    async with httpx.AsyncClient() as client:
+        assert await _fetch_genres(client, "") == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_cover_art(tmp_path: Path) -> None:
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_cover_art
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://coverartarchive.org/release-group/rg-1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"images": [{"front": True, "thumbnails": {"500": "https://example/img500.jpg"}}]},
+                )
+            )
+            respx.get("https://example/img500.jpg").mock(return_value=httpx.Response(200, content=b"JPEGDATA"))
+            assert await _fetch_cover_art(client, "rg-1") == b"JPEGDATA"
+
+
+@pytest.mark.asyncio
+async def test_fetch_cover_art_no_front(tmp_path: Path) -> None:
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_cover_art
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://coverartarchive.org/release-group/rg-1").mock(
+                return_value=httpx.Response(200, json={"images": [{"front": False}]})
+            )
+            assert await _fetch_cover_art(client, "rg-1") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_lyrics_synced(tmp_path: Path) -> None:
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_lyrics
+
+    async with httpx.AsyncClient() as client:
+        with respx.mock:
+            respx.get("https://lrclib.net/api/search").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[{"plainLyrics": "text", "syncedLyrics": "[00:00.15] line"}],
+                )
+            )
+            plain, synced = await _fetch_lyrics(client, "Queen", "Bo Rhap")
+    assert plain == "text"
+    assert synced == "[00:00.15] line"
+
+
+@pytest.mark.asyncio
+async def test_fetch_lyrics_empty(tmp_path: Path) -> None:
+    import httpx
+
+    from radio_ripper.acoustid import _fetch_lyrics
+
+    async with httpx.AsyncClient() as client:
+        assert await _fetch_lyrics(client, "", "") == ("", "")
+        assert await _fetch_lyrics(client, "X", "") == ("", "")
+
+
+@pytest.mark.asyncio
+async def test_enrich_musicbrainz(tmp_path: Path) -> None:
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import enrich_musicbrainz
+    from radio_ripper.models import AcoustidMatch
+
+    match = AcoustidMatch(artist="Queen", title="Bo Rhap", releasegroup_id="rg-1", artist_id="ar-1")
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/release-group/rg-1").mock(
+                return_value=httpx.Response(200, json={"genres": [{"name": "rock"}]})
+            )
+            respx.get("https://coverartarchive.org/release-group/rg-1").mock(
+                return_value=httpx.Response(200, json={"images": []})
+            )
+            respx.get("https://musicbrainz.org/ws/2/artist/ar-1").mock(
+                return_value=httpx.Response(200, json={"relations": []})
+            )
+            respx.get("https://lrclib.net/api/search").mock(
+                return_value=httpx.Response(200, json=[{"plainLyrics": "l", "syncedLyrics": ""}])
+            )
+            e = await enrich_musicbrainz(match, client)
+    assert e.genres == ["rock"]
+    assert e.lyrics == "l"
+
+
+def test_add_synced_lyrics(tmp_path: Path) -> None:
+    from mutagen.id3 import ID3, SYLT, ID3NoHeaderError
+
+    from radio_ripper.acoustid import _add_synced_lyrics
+
+    mp3 = tmp_path / "lyrics.mp3"
+    mp3.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    try:
+        audio = ID3(mp3)
+    except ID3NoHeaderError:
+        audio = ID3()
+    _add_synced_lyrics(audio, "[00:00.15] line one\n[00:05.00] line two\n")
+    audio.save(mp3)
+    saved = ID3(mp3)
+    sylt = [f for f in saved.values() if isinstance(f, SYLT)]
+    assert len(sylt) == 1
+    assert len(sylt[0].text) == 2  # type: ignore[attr-defined]
+
+
+def test_write_mp3_tags_with_enrichment(tmp_path: Path) -> None:
+    """Genre, Cover, Artist-Bild und Lyrics werden geschrieben."""
+    from mutagen.id3 import ID3
+
+    mp3 = tmp_path / "tag.mp3"
+    mp3.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    write_mp3_tags(
+        mp3,
+        artist="Artist",
+        title="Title",
+        album="Album",
+        score=0.95,
+        genres=["Rock", "Pop"],
+        cover_data=b"\xff\xd8\xff\xe0" + b"\x00" * 20,  # JPEG-Header
+        artist_image=b"\xff\xd8\xff\xe0" + b"\x00" * 10,
+        lyrics="plain lyrics text",
+    )
+    tags = ID3(mp3)
+    assert tags.getall("TCON")
+    assert tags.getall("APIC")
+    assert tags.getall("USLT")
+    assert read_mp3_score(mp3) == pytest.approx(0.95)
