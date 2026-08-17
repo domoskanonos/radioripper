@@ -12,7 +12,7 @@ from radio_ripper.infra.config import LiveConfig, Settings, StreamConfig
 from radio_ripper.infra.http import AsyncHttpClient, HttpxAsyncClient
 from radio_ripper.services.acoustid_queue import AcoustidQueue, cleanup_stale_parts
 from radio_ripper.services.playlist import HttpPlaylistResolver, PlaylistResolver
-from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService, probe_icy
+from radio_ripper.services.playlist_discovery import PlaylistDiscoveryService
 from radio_ripper.services.storage import move_across_devices, read_mp3_score
 from radio_ripper.services.stream import StreamRecorder
 
@@ -187,10 +187,6 @@ class RadioRipperApp:
             return []
 
         stations = self._apply_stream_limit(stations)
-
-        stations = await self._preflight_check(stations)
-        if not stations:
-            self.logger.error("No reachable streams.%s", f" {context}." if context else " Exiting.")
         return stations
 
     async def _start_recorders(self, stations: list[StreamConfig]) -> None:
@@ -236,39 +232,6 @@ class RadioRipperApp:
         if len(stations) <= max_streams:
             return stations
         return stations[:max_streams]
-
-    async def _preflight_check(self, stations: list[StreamConfig]) -> list[StreamConfig]:
-        enabled = [s for s in stations if s.enabled]
-        self.logger.info("Verifying reachability of %d station(s)...", len(enabled))
-        sem = asyncio.Semaphore(self.settings.probe_concurrent)
-        probe_count = 0
-
-        async def _check(s: StreamConfig) -> StreamConfig | None:
-            nonlocal probe_count
-            async with sem:
-                probe_count += 1
-                pct = probe_count * 100 // len(enabled)
-                prev_pct = (probe_count - 1) * 100 // len(enabled)
-                if pct != prev_pct and pct % 10 == 0:
-                    self.logger.info("Probe progress: %d%% (%d/%d)", pct, probe_count, len(enabled))
-                result = await probe_icy(str(s.url), timeout=self.settings.probe_timeout)
-                if result.get("icy") and not result.get("error"):
-                    return s
-                reason = result.get("error") or "no ICY metadata"
-                self.logger.error("[%s] Station unreachable: %s", s.name, reason)
-                return None
-
-        checked = await asyncio.gather(*[_check(s) for s in enabled])
-        reachable = [s for s in checked if s is not None]
-        unreachable = len(enabled) - len(reachable)
-        if unreachable:
-            self.logger.error(
-                "%d of %d station(s) unreachable at startup, skipped.",
-                unreachable,
-                len(enabled),
-            )
-        disabled = [s for s in stations if not s.enabled]
-        return disabled + reachable
 
     # ------------------------------------------------------------------ pause / resume
 

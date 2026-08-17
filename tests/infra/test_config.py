@@ -46,16 +46,13 @@ class TestLoadSettings:
         assert isinstance(s, Settings)
 
     def test_no_keywords_still_valid(self, tmp_path: Path):
-        """Empty keywords is valid; discovery handles the station list."""
+        """Config without old discovery settings still loads."""
         cfg = {
             "work_dir": "./recordings",
-            "stream_keywords": [],
-            "discovery_enabled": False,
         }
         path = _write_config(tmp_path, cfg)
         s = load_settings(path)
-        assert s.stream_keywords == []
-        assert s.discovery_enabled is False
+        assert s.work_dir == Path("recordings")
 
     def test_invalid_log_level(self, tmp_path: Path):
         cfg = dict(GOOD_BASE)
@@ -115,12 +112,6 @@ class TestSettingsProperties:
         ss = s.stream
         assert ss.max_concurrent_streams == 400
         assert ss.user_agent == f"Radio-Ripper/{__version__}"
-
-    def test_discovery_property(self):
-        s = Settings.model_validate(GOOD_BASE)
-        ds = s.discovery
-        assert ds.discovery_enabled is True
-        assert ds.stream_keywords != []
 
     def test_log_level_critical_valid(self):
         s = Settings.model_validate({**GOOD_BASE, "log_level": "CRITICAL"})

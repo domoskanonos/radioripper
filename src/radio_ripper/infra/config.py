@@ -86,50 +86,12 @@ class StreamSettings(BaseModel):
     min_file_duration_s: float = Field(default=90, ge=0)
 
 
-class DiscoverySettings(BaseModel):
-    discovery_enabled: bool = True
-    stream_keywords: list[str] = Field(
-        default_factory=lambda: [
-            "rock",
-            "50",
-            "60",
-            "70",
-            "80",
-            "90",
-            "10",
-            "dance",
-            "pop",
-            "top hits",
-            "charts",
-        ]
-    )
-    discovery_min_bitrate: int = Field(default=0, ge=0)
-
-
 class Settings(BaseModel):
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
     work_dir: Path = Field(default=Path("./work"))
     destination: Path = Field(default=Path("./destination"))
     log_level: str = "INFO"
-
-    stream_keywords: list[str] = Field(
-        default_factory=lambda: [
-            "rock",
-            "50",
-            "60",
-            "70",
-            "80",
-            "90",
-            "10",
-            "dance",
-            "pop",
-            "top hits",
-            "charts",
-        ]
-    )
-    discovery_enabled: bool = True
-    discovery_min_bitrate: int = Field(default=0, ge=0)
 
     request_timeout: float = Field(default=30.0, ge=1.0)
     reconnect_base_delay: float = Field(default=1.0, ge=0.1)
@@ -143,25 +105,12 @@ class Settings(BaseModel):
 
     max_concurrent_streams: int = Field(default=400, ge=1)
 
-    # Discovery/Probing settings (previously hardcoded in app.py and playlist_discovery.py)
-    probe_timeout: float = Field(default=8.0, ge=1.0)
-    probe_concurrent: int = Field(default=20, ge=1, le=100)
-    discovery_probe_timeout: float = Field(default=8.0, ge=1.0)
-    discovery_max_concurrent: int = Field(default=300, ge=1, le=500)
-    discovery_random_sample_size: int = Field(default=50000, ge=100)
-    discovery_work_station_count: int = Field(default=400, ge=1)
-
     # AcoustID settings
     acoustid_min_score: float = Field(default=0.9, ge=0.0, le=1.0)
     acoustid_api_url: str = Field(default="https://api.acoustid.org/v2/lookup")
-    # Rate limit: AcoustID allows max 3 req/s (= 180/min). 170/min keeps ~94 %
-    # of the ceiling with a small safety margin against network jitter.
     acoustid_requests_per_minute: int = Field(default=170, ge=1, le=180)
-    # Max retries for transient API errors (network, timeout) before giving up
     acoustid_retry_max_attempts: int = Field(default=5, ge=0)
-    # Base delay for retry backoff (seconds)
     acoustid_retry_base_delay: float = Field(default=30.0, ge=1.0)
-    # Max retry delay cap (seconds)
     acoustid_retry_max_delay: float = Field(default=3600.0, ge=60.0)
 
     # work_dir/unchecked_mp3 IS the AcoustID queue. These are its limits; when
@@ -169,7 +118,7 @@ class Settings(BaseModel):
     max_unchecked_files: int = Field(default=5000, ge=100)
     max_unchecked_bytes: int = Field(default=10 * 1024 * 1024 * 1024, ge=0)  # 10 GB
 
-    # Logging settings (previously hardcoded in logging.py)
+    # Logging settings
     log_file_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)  # 5 MB
     log_file_backup_count: int = Field(default=5, ge=0)
 
@@ -199,14 +148,6 @@ class Settings(BaseModel):
             min_file_size_bytes=self.min_file_size_bytes,
             max_files_inbox=self.max_files_inbox,
             min_file_duration_s=self.min_file_duration_s,
-        )
-
-    @property
-    def discovery(self) -> DiscoverySettings:
-        return DiscoverySettings(
-            discovery_enabled=self.discovery_enabled,
-            stream_keywords=self.stream_keywords,
-            discovery_min_bitrate=self.discovery_min_bitrate,
         )
 
 
@@ -282,7 +223,6 @@ class LiveConfig:
 
 
 __all__ = [
-    "DiscoverySettings",
     "LiveConfig",
     "Settings",
     "StreamConfig",
