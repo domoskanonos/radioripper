@@ -1,0 +1,37 @@
+@startuml bausteine
+!theme plain
+title Radio-Ripper — Bausteinansicht (Komponentendiagramm)
+
+package "radio_ripper" {
+    [workflow.py] as workflow
+    [config.py] as config
+    [logging_setup.py] as logging
+    [models.py] as models
+    [m3u.py] as m3u
+    [icy.py] as icy
+    [writer.py] as writer
+    [http_client.py] as http
+    [validation.py] as validation
+    [acoustid.py] as acoustid
+    [recorder.py] as recorder
+}
+
+workflow --> recorder
+workflow --> m3u
+workflow --> acoustid
+workflow --> http
+recorder --> icy
+recorder --> writer
+recorder --> validation
+recorder --> http
+recorder --> acoustid
+acoustid --> models
+acoustid --> writer
+m3u --> models
+m3u --> config
+validation --> config
+
+note right of acoustid : AcoustID-Pipeline\n+ Singleton-Worker
+note right of recorder : Aufnahme-Schleife\n+ Reconnect
+
+@enduml

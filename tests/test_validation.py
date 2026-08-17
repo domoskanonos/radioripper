@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from radio_ripper.config import Settings
-from radio_ripper.validation import _get_duration, validate_file
+from radio_ripper.validation import _ffprobe_duration_sync, _get_duration, validate_file
 
 
 @pytest.mark.asyncio
@@ -62,8 +62,56 @@ async def test_min_duration_accepts_long(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_duration_missing_ffprobe(tmp_path: Path) -> None:
-    """Wenn ffprobe fehlt, wird None geliefert statt eines Fehlers."""
-    from radio_ripper.validation import _ffprobe_duration_sync
+async def test_min_duration_zero_disabled(tmp_path: Path) -> None:
+    """min_file_duration_s=0 deaktiviert den Dauer-Check."""
+    settings = Settings(min_file_duration_s=0, min_file_size_bytes=0)
+    f = tmp_path / "any.mp3"
+    f.write_bytes(b"x")
+    assert await validate_file(f, settings, ThreadPoolExecutor(1)) is True
 
-    assert _ffprobe_duration_sync(tmp_path / "nonexistent.mp3") is None
+
+@pytest.mark.asyncio
+async def test_get_duration_runs_in_executor(tmp_path: Path) -> None:
+    """_get_duration führt ffprobe im Executor aus."""
+    f = tmp_path / "x.mp3"
+    f.write_bytes(b"x")
+    with patch("radio_ripper.validation._ffprobe_duration_sync", return_value=99.5) as mock_sync:
+        result = await _get_duration(f, ThreadPoolExecutor(2))
+    mock_sync.assert_called_once_with(f)
+    assert result == 99.5
+
+
+def test_ffprobe_duration_sync_missing_ffprobe(tmp_path: Path) -> None:
+    """Wenn ffprobe fehlt, wird None geliefert."""
+    with patch("radio_ripper.validation.shutil.which", return_value=None):
+        assert _ffprobe_duration_sync(tmp_path / "x.mp3") is None
+
+
+def test_ffprobe_duration_sync_error(tmp_path: Path) -> None:
+    """Wenn ffprobe einen Fehler liefert, wird None zurückgegeben."""
+    f = tmp_path / "x.mp3"
+    f.write_bytes(b"x")
+    with (
+        patch("radio_ripper.validation.shutil.which", return_value="/usr/bin/ffprobe"),
+        patch(
+            "radio_ripper.validation.subprocess.run",
+            side_effect=Exception("boom"),
+        ),
+    ):
+        assert _ffprobe_duration_sync(f) is None
+
+
+def test_ffprobe_duration_sync_parses(tmp_path: Path) -> None:
+    """Korrekte ffprobe-Ausgabe wird als float geparst."""
+    f = tmp_path / "x.mp3"
+    f.write_bytes(b"x")
+
+    class _Proc:
+        returncode = 0
+        stdout = b"123.45\n"
+
+    with (
+        patch("radio_ripper.validation.shutil.which", return_value="/usr/bin/ffprobe"),
+        patch("radio_ripper.validation.subprocess.run", return_value=_Proc()),
+    ):
+        assert _ffprobe_duration_sync(f) == 123.45

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+
+from pydantic import HttpUrl
 
 from radio_ripper.config import Settings
 from radio_ripper.models import M3uEntry, StreamConfig
@@ -49,7 +50,7 @@ async def load_stations(settings: Settings) -> list[StreamConfig]:
     stations: list[StreamConfig] = []
     for e in entries:
         try:
-            stations.append(StreamConfig(name=e.name[:64], url=e.url))
+            stations.append(StreamConfig(name=e.name[:64], url=HttpUrl(e.url)))
         except Exception as exc:
             _LOGGER.warning("Ungültiger Eintrag %s: %s", e.name, exc)
 

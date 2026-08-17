@@ -17,7 +17,9 @@ def test_defaults() -> None:
 
 
 def test_invalid_log_level() -> None:
-    with pytest.raises(Exception):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
         Settings(log_level="BOGUS")
 
 
@@ -28,13 +30,7 @@ def test_extra_fields_ignored() -> None:
 
 def test_load_settings_jsonc_comments(tmp_path: Path) -> None:
     cfg = tmp_path / "config.jsonc"
-    cfg.write_text(
-        '{\n'
-        '  // Kommentar\n'
-        '  "work_dir": "./rec",\n'
-        '  "acoustid_min_score": 0.8 /* inline */\n'
-        '}'
-    )
+    cfg.write_text('{\n  // Kommentar\n  "work_dir": "./rec",\n  "acoustid_min_score": 0.8 /* inline */\n}')
     s = load_settings(cfg)
     assert s.work_dir == Path("./rec")
     assert s.acoustid_min_score == 0.8

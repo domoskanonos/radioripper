@@ -1,0 +1,28 @@
+@startuml deployment
+!theme plain
+title Radio-Ripper — Docker-Deployment
+
+node "Docker Container" {
+    component "radio-ripper (CLI)" as cli
+    component "fpcalc" as fpcalc
+    component "ffprobe" as ffprobe
+
+    database "/app/config" as cfg
+    database "/app/work" as work
+    database "/app/destination" as dest
+}
+
+cloud "Extern" {
+    "Radio-Streams" as radio
+    "AcoustID API" as api
+}
+
+cli --> fpcalc
+cli --> ffprobe
+cli --> cfg
+cli --> work
+cli --> dest
+cli --> radio
+cli --> api
+
+@enduml

@@ -60,7 +60,7 @@ class HttpxClient:
 
 
 async def resolve_playlist(
-    client: "HttpxClient",
+    client: HttpxClient,
     playlist_url: str,
     *,
     timeout: float = 30.0,

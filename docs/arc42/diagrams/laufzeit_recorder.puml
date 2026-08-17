@@ -1,0 +1,32 @@
+@startuml laufzeit_recorder
+!theme plain
+title Radio-Ripper — Track-Verarbeitung (Sequence)
+
+participant "Recorder" as rec
+participant "Validation" as val
+participant "AcoustidWorker" as worker
+participant "AcoustID API" as api
+participant "Destination" as dest
+
+rec -> rec : ICY-Titelwechsel
+rec -> rec : TrackWriter (recordings/)
+rec -> rec : nächster Titelwechsel
+rec -> val : commit() + validate()
+alt Größe < min ODER Dauer < min
+    val --> rec : verworfen (gelöscht)
+else gültig
+    rec -> worker : enqueue(path)
+    worker -> worker : fpcalc (Fingerprint)
+    worker -> api : Lookup (duration, fingerprint)
+    alt kein Treffer ≥ min_score
+        worker --> worker : Datei löschen
+    else Treffer
+        worker -> worker : ID3-Tags schreiben
+        worker -> dest : verschieben (Artist/Album/Title.mp3)
+        alt Kollision
+            worker --> dest : höherer Score gewinnt
+        end
+    end
+end
+
+@enduml

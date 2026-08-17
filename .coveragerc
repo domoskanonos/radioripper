@@ -1,0 +1,12 @@
+[run]
+source = radio_ripper
+omit = src/radio_ripper/__main__.py
+
+[report]
+fail_under = 90
+show_missing = true
+skip_covered = true
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError

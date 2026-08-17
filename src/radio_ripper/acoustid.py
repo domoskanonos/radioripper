@@ -9,16 +9,26 @@ import logging
 import os
 import shutil
 import subprocess
-import urllib.parse
-import urllib.request
+import threading
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from radio_ripper.config import Settings
 from radio_ripper.models import AcoustidMatch
 from radio_ripper.writer import sanitize_filename
 
 _LOGGER = logging.getLogger("radio_ripper.acoustid")
+
+_ACOUSTID_API_URL = "https://api.acoustid.org/v2/lookup"
+_EXDEV = 18  # errno.EXDEV — Cross-Device-Link
+_STOP_SENTINEL = Path("__stop__")
+_ACOUSTID_SCORE_TAG = "ACOUSTID_SCORE"
+
+# Serialisiert die Kollisionsprüfung + Verschieben, damit parallele Worker
+# nie gleichzeitig auf dasselbe Ziel schreiben.
+_FINALIZE_LOCK = threading.Lock()
 
 
 def _fpcalc_sync(path: Path) -> dict[str, Any] | None:
@@ -28,7 +38,7 @@ def _fpcalc_sync(path: Path) -> dict[str, Any] | None:
         _LOGGER.warning("fpcalc nicht gefunden — AcoustID-Fingerprint nicht möglich.")
         return None
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603  -- Pfad kommt aus shutil.which, kein untrusted Input
             [fpcalc, "-json", str(path)],
             capture_output=True,
             timeout=30,
@@ -40,13 +50,16 @@ def _fpcalc_sync(path: Path) -> dict[str, Any] | None:
         _LOGGER.warning("fpcalc konnte %s nicht dekodieren (exit %d)", path.name, proc.returncode)
         return None
     try:
-        return json.loads(proc.stdout.decode())
+        data = json.loads(proc.stdout.decode())
+        if not isinstance(data, dict):
+            raise ValueError("fpcalc-Ausgabe ist kein Objekt")
+        return data
     except Exception as exc:
         _LOGGER.warning("fpcalc-Ausgabe nicht lesbar für %s: %s", path.name, exc)
         return None
 
 
-def acoustid_lookup(
+async def acoustid_lookup(
     path: Path,
     *,
     api_key: str,
@@ -65,21 +78,19 @@ def acoustid_lookup(
         return None, "error"
 
     duration = int(float(fp.get("duration", 0)))
-
-    params = urllib.parse.urlencode(
-        {
-            "client": api_key,
-            "format": "json",
-            "meta": "recordings+releasegroups",
-            "duration": duration,
-            "fingerprint": fp.get("fingerprint", ""),
-        }
-    )
-    url = f"https://api.acoustid.org/v2/lookup?{params}"
+    params = {
+        "client": api_key,
+        "format": "json",
+        "meta": "recordings+releasegroups",
+        "duration": duration,
+        "fingerprint": fp.get("fingerprint", ""),
+    }
 
     try:
-        resp = urllib.request.urlopen(url, timeout=15)
-        api = json.loads(resp.read().decode())
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(_ACOUSTID_API_URL, params=params)
+            resp.raise_for_status()
+            api = resp.json()
     except Exception as exc:
         _LOGGER.warning("AcoustID-API-Fehler für %s: %s", path.name, exc)
         return None, "error"
@@ -180,7 +191,7 @@ def write_mp3_tags(
             audio.add(TRCK(encoding=3, text=[str(track_number)]))  # type: ignore[no-untyped-call]
         if year:
             audio.add(TDRC(encoding=3, text=[str(year)]))  # type: ignore[no-untyped-call]
-        audio.add(TXXX(encoding=3, desc="ACOUSTID_SCORE", text=[f"{score:.6f}"]))  # type: ignore[no-untyped-call]
+        audio.add(TXXX(encoding=3, desc=_ACOUSTID_SCORE_TAG, text=[f"{score:.6f}"]))  # type: ignore[no-untyped-call]
         if confirmations:
             audio.add(TXXX(encoding=3, desc="ACOUSTID_CONFIRMATIONS", text=[str(confirmations)]))  # type: ignore[no-untyped-call]
         if recording_id:
@@ -225,7 +236,7 @@ def read_mp3_score(path: Path) -> float | None:
 
         tags = ID3(path)  # type: ignore[no-untyped-call]
         for frame in tags.values():  # type: ignore[no-untyped-call]
-            if isinstance(frame, TXXX) and frame.desc == "ACOUSTID_SCORE":  # type: ignore[attr-defined]
+            if isinstance(frame, TXXX) and frame.desc == _ACOUSTID_SCORE_TAG:  # type: ignore[attr-defined]
                 return float(frame.text[0])  # type: ignore[attr-defined]
     except Exception:
         return None
@@ -238,14 +249,14 @@ def move_to_destination(path: Path, target: Path) -> None:
         os.replace(str(path), str(target))
         return
     except OSError as exc:
-        if exc.errno != 18:  # EXDEV
+        if exc.errno != _EXDEV:
             raise
     shutil.copy2(path, target)
     with contextlib.suppress(OSError):
         path.unlink(missing_ok=True)
 
 
-def finalize_acoustid(final_path: Path, settings: Settings) -> None:
+async def finalize_acoustid(final_path: Path, settings: Settings) -> None:
     """Läuft nach der Validierung: AcoustID-Lookup, Tagging, Verschieben.
 
     - Treffer ≥ min_score: Tags schreiben, nach destination/ verschieben
@@ -260,7 +271,7 @@ def finalize_acoustid(final_path: Path, settings: Settings) -> None:
         )
         return
 
-    match, status = acoustid_lookup(
+    match, status = await acoustid_lookup(
         final_path,
         api_key=settings.acoustid_api_key,
         min_score=settings.acoustid_min_score,
@@ -298,40 +309,43 @@ def finalize_acoustid(final_path: Path, settings: Settings) -> None:
         releasegroup_id=match.releasegroup_id,
     )
 
-    # Kollision: bestehende Datei mit höherem/gleichem Score behalten
-    if target.exists():
-        existing_score = read_mp3_score(target)
-        if existing_score is not None and existing_score >= match.score:
-            _LOGGER.info(
-                "[acoustid] Kollision: %s behalten (Score %.2f >= %.2f) — verwerfe %s",
-                target.name,
-                existing_score,
-                match.score,
-                final_path.name,
-            )
-            with contextlib.suppress(OSError):
-                final_path.unlink(missing_ok=True)
-            return
-        if existing_score is not None:
-            _LOGGER.info(
-                "[acoustid] Kollision: ersetze %s (Score %.2f < %.2f)",
-                target.name,
-                existing_score,
-                match.score,
-            )
-        else:
-            _LOGGER.info(
-                "[acoustid] Kollision: bestehende %s ohne Score — ersetze (Score %.2f)",
-                target.name,
-                match.score,
-            )
+    # Kollision: bestehende Datei mit höherem/gleichem Score behalten.
+    # Die Prüfung + Verschiebung ist durch _FINALIZE_LOCK geschützt, damit
+    # parallele Worker nie gleichzeitig auf dasselbe Ziel zugreifen.
+    with _FINALIZE_LOCK:
+        if target.exists():
+            existing_score = read_mp3_score(target)
+            if existing_score is not None and existing_score >= match.score:
+                _LOGGER.info(
+                    "[acoustid] Kollision: %s behalten (Score %.2f >= %.2f) — verwerfe %s",
+                    target.name,
+                    existing_score,
+                    match.score,
+                    final_path.name,
+                )
+                with contextlib.suppress(OSError):
+                    final_path.unlink(missing_ok=True)
+                return
+            if existing_score is not None:
+                _LOGGER.info(
+                    "[acoustid] Kollision: ersetze %s (Score %.2f < %.2f)",
+                    target.name,
+                    existing_score,
+                    match.score,
+                )
+            else:
+                _LOGGER.info(
+                    "[acoustid] Kollision: bestehende %s ohne Score — ersetze (Score %.2f)",
+                    target.name,
+                    match.score,
+                )
 
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        move_to_destination(final_path, target)
-    except OSError as exc:
-        _LOGGER.error("[acoustid] Verschieben fehlgeschlagen für %s: %s", final_path.name, exc)
-        return
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            move_to_destination(final_path, target)
+        except OSError as exc:
+            _LOGGER.error("[acoustid] Verschieben fehlgeschlagen für %s: %s", final_path.name, exc)
+            return
 
     _LOGGER.info(
         "[acoustid] Accepted: %s (score=%.2f)",
@@ -372,7 +386,7 @@ class AcoustidWorker:
     async def stop(self) -> None:
         """Stoppt den Worker nach dem Abarbeiten der Reste der Queue."""
         self._stopped = True
-        self._queue.put_nowait(Path("__stop__"))
+        self._queue.put_nowait(_STOP_SENTINEL)
         if self._task is not None:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await asyncio.wait_for(self._task, timeout=30.0)
@@ -385,9 +399,9 @@ class AcoustidWorker:
     async def _run(self) -> None:
         while True:
             path = await self._queue.get()
-            if path.name == "__stop__":
+            if path.name == _STOP_SENTINEL.name:
                 break
             try:
-                await asyncio.to_thread(finalize_acoustid, path, self._settings)
+                await finalize_acoustid(path, self._settings)
             except Exception:
                 _LOGGER.exception("AcoustidWorker: unerwarteter Fehler für %s", path.name)

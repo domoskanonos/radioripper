@@ -1,261 +1,120 @@
 # Radio-Ripper – Stream
 
 Dauerhafte parallele Aufnahme von Webradio-Streams mit ICY-Metadaten (Songtitel).
-Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, verwaltet die konfigurierte Anzahl paralleler Streams und bezieht Sender ausschließlich über die automatische Discovery aus Community-Playlists.
+Erkennt und parst ICY-Stream-Metadaten, trennt Aufnahmen an Songgrenzen, validiert
+jede Aufnahme (Größe + Dauer) und identifiziert sie anschließend über **AcoustID**.
+Erfolgreich identifizierte Songs werden mit ID3-Tags angereichert und in eine
+standardmäßige Ordnerstruktur verschoben.
 
 ## Features
 
-- **Parallel-Recording** – zeichnet die konfigurierte Anzahl an Streams gleichzeitig auf
+- **Parallel-Recording** – nimmt die konfigurierte Anzahl Streams gleichzeitig auf
 - **ICY-Metadaten** – erkennt Songtitel in Echtzeit, trennt Aufnahmen sauber an Songgrenzen
-- **Auto-Healing** – bei Verbindungsabbruch automatische Wiederverbindung mit exponentiellem Backoff
-- **Song-Titelerkennung** – benennt jede Aufnahme als `{Künstler} - {Titel}.mp3`
-- **Werbefilter** – überspringt Titel per Regex-Muster (z. B. `["^Werbung", "^Advertisement$"]`)
-- **Datei-Validierung** – verwirft zu kurze (< 90 s), zu kleine (< 1,5 MB) oder ungültige MP3-Dateien
-- **AcoustID-Filterung** – behalte nur Aufnahmen, die einen bekannten AcoustID-Fingerprint-Score erreichen (konfigurierbar, Standard 0,9); erfordert `ACOUST_ID` API-Key und `fpcalc`
-- **Backpressure** – pausiert alle Streams bei vollem Zielverzeichnis oder überfüllter AcoustID-Queue (`work/unchecked_mp3`), setzt automatisch fort
-- **Hot-Reload** – Konfigurationsänderungen werden alle 60 s übernommen; relevante Änderungen lösen einen Neustart der Stream-Recorder aus, kein Container-Neustart nötig
-- **Auto-Discovery** – findet Sender automatisch aus Community-Playlists, filtert nach Keywords und Bitrate
-- **Preflight-Check** – prüft alle Stationen vor dem Start auf Erreichbarkeit, deaktiviert tote Stationen
-- **Pre-filtered Cache** – einmal geprüfte Stationen werden gecached für schnelle Neustarts
-- **Graceful Shutdown** – beendet alle Recorder parallel, schließt HTTP-Clients und AcoustID-Queue (< 15 s)
+- **Auto-Reconnect** – bei Verbindungsabbruch automatische Wiederverbindung mit exponentiellem Backoff + Jitter
+- **Werbefilter** – überspringt Titel per Regex-Muster (`ignore_title_patterns`)
+- **Datei-Validierung** – verwirft zu kurze (< `min_file_duration_s`) und zu kleine (< `min_file_size_bytes`) Dateien
+- **AcoustID-Identifikation** – Fingerprint + Lookup; nur Treffer ≥ `acoustid_min_score` (Standard 0.9) werden behalten
+- **ID3-Tagging** – Artist, Title, Album, Jahr, Tracknummer, MusicBrainz-IDs, Score
+- **Ordnerstruktur** – `Artist/Album/Artist - Title.mp3`
+- **Kollisions-Handling** – bei gleichem Dateinamen gewinnt der höhere AcoustID-Score
+- **Graceful Shutdown** – stoppt alle Recorder parallel, beendet den AcoustID-Worker und schließt den ThreadPool sauber
 
-## Schnellstart (Docker)
+## Voraussetzungen
+
+- **Python ≥ 3.11** mit [uv](https://docs.astral.sh/uv/)
+- **ffprobe** (Teil von ffmpeg) für die Dauer-Validierung
+- **fpcalc** (Chromaprint) für den AcoustID-Fingerprint
+- **AcoustID-API-Key** (`ACOUST_ID`)
 
 ```bash
-# Konfiguration vorbereiten (optional – ohne Config gelten Defaults)
-# JSONC erlaubt Kommentare mit // und /* ... */.
-mkdir -p radio-ripper-config radio-ripper-mp3 radio-ripper-work
-cat > radio-ripper-config/config.jsonc <<'EOF'
-{
-  "stream_keywords": ["rock", "pop", "jazz"],
-  "max_concurrent_streams": 5
-}
-EOF
+# Debian/Ubuntu
+sudo apt install ffmpeg libchromaprint-tools
+```
 
-# Container starten (ACOUST_ID ist Pflicht)
+## Schnellstart
+
+```bash
+# Abhängigkeiten installieren
+uv sync
+
+# Config anlegen (optional – ohne Config gelten Defaults)
+cp config/config_example.jsonc config/config.jsonc
+# → ggf. destination/ und werkverzeichnis anpassen
+
+# Senderliste bearbeiten
+# work/stations/custom.m3u im M3U-Format:
+#   #EXTINF:-1,Sender Name
+#   http://stream.example.de/live.mp3
+
+# Starten (ACOUST_ID ist Pflicht für Identifikation)
+ACOUST_ID=<dein_key> uv run radio-ripper -c config/config.jsonc
+```
+
+Alternativ mit eingebautem `.env`:
+
+```bash
+echo 'ACOUST_ID=<dein_key>' > .env
+uv run radio-ripper -c config/config.jsonc
+```
+
+## Konfiguration
+
+| Feld | Default | Bedeutung |
+|------|---------|-----------|
+| `work_dir` | `./work` | Staging: `recordings/`, `stations/` |
+| `destination` | `./destination` | Ziel für fertige, getaggte MP3s |
+| `log_level` | `INFO` | Log-Level |
+| `max_concurrent_streams` | `500` | Maximale gleichzeitige Aufnahmen |
+| `user_agent` | `VLC/3.0.18 LibVLC/3.0.18` | HTTP User-Agent |
+| `request_timeout` | `30` | HTTP-Timeout (s) |
+| `reconnect_base_delay` | `1.0` | Initiale Reconnect-Verzögerung (s) |
+| `reconnect_max_delay` | `60.0` | Maximale Reconnect-Verzögerung (s) |
+| `no_icy_disable_after` | `10` | Sender ohne ICY deaktivieren nach N Verbindungen |
+| `ignore_title_patterns` | `[]` | Regex-Muster für zu überspringende Titel |
+| `min_file_size_bytes` | `1572864` | Mindestgröße einer Aufnahme (1.5 MB) |
+| `min_file_duration_s` | `90` | Mindestdauer einer Aufnahme (s) |
+| `acoustid_min_score` | `0.9` | Mindest-Score für AcoustID-Treffer |
+
+Der AcoustID-API-Key wird aus der Umgebungsvariable `ACOUST_ID` gelesen.
+
+## Ablauf
+
+```
+Recorder → TrackWriter (recordings/) → commit → Validierung (Größe + Dauer)
+        → AcoustID-Worker (sequenziell)
+            → fpcalc (Fingerprint) → Lookup
+            → kein Treffer ≥ Score → löschen
+            → Treffer → ID3-Tags → destination/Artist/Album/Artist - Title.mp3
+```
+
+## Docker
+
+```bash
 docker run --rm \
-  -e ACOUST_ID=dein_acoustid_api_key \
-  -v "$PWD/radio-ripper-config:/app/config:ro" \
-  -v "$PWD/radio-ripper-mp3:/app/destination" \
-  -v "$PWD/radio-ripper-work:/app/work" \
-  domoskanonos/radio-ripper-stream:latest
+  -e ACOUST_ID=<dein_key> \
+  -v "$PWD/config:/app/config:ro" \
+  -v "$PWD/work:/app/work" \
+  -v "$PWD/destination:/app/destination" \
+  domoskanonos/radio-ripper-stream
 ```
-
-**Volume-Berechtigungen**: Der Container läuft als unprivilegierter User (`ripper`, uid 1000).
-Der Entrypoint korrigiert automatisch die Besitzer der gemounteten Verzeichnisse.
-Sollten dennoch Permission-Fehler auftreten, einmalig ausführen:
-
-```bash
-chown -R 1000:1000 radio-ripper-mp3 radio-ripper-work radio-ripper-config
-```
-
-### docker compose
-
-```yaml
-services:
-  radioripper:
-    image: domoskanonos/radio-ripper-stream:latest
-    container_name: radio-ripper
-    environment:
-      # AcoustID API-Key – PFLICHTFELD (https://acoustid.org/login)
-      ACOUST_ID: "dein_acoustid_api_key"
-    volumes:
-      # Konfiguration (read-only)
-      - ./radio-ripper-config:/app/config:ro
-      # Zielverzeichnis für MP3-Aufnahmen
-      - ./radio-ripper-mp3:/app/destination
-      # Arbeitsverzeichnis (Cache, Logs)
-      - ./radio-ripper-work:/app/work
-```
-
-## Umgebungsvariablen
-
-| Variable | Pflicht | Beschreibung |
-|---|---|---|
-| `ACOUST_ID` | **ja** | AcoustID API-Key. Ohne diesen Wert startet radio-ripper nicht. Kostenlos registrieren unter [acoustid.org/login](https://acoustid.org/login). |
-
-## Konfiguration (`config/config.jsonc`)
-
-Alle Felder sind optional – es gelten die gezeigten Defaults.
-
-| Feld | Typ | Standard | Beschreibung |
-|---|---|---|---|
-| `work_dir` | string | `./work` | Arbeitsverzeichnis für Logs, Caches und Playlists |
-| `destination` | string | `./destination` | Zielverzeichnis für fertige MP3-Aufnahmen |
-| `log_level` | string | `"INFO"` | Log-Level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `max_concurrent_streams` | integer | `400` | Maximale parallele Streams (mindestens 1) |
-| `stream_keywords` | string[] | `["rock","pop","top hits",…]` | Suchbegriffe für die automatische Sendersuche |
-| `discovery_enabled` | boolean | `true` | Automatische Sendersuche aktivieren |
-| `discovery_min_bitrate` | integer | `0` | Minimale Bitrate (kbps) für entdeckte Sender |
-| `request_timeout` | number | `30.0` | Timeout für HTTP-Requests (Sekunden) |
-| `reconnect_base_delay` | number | `1.0` | Basisverzögerung vor Wiederverbindung (Sekunden) |
-| `reconnect_max_delay` | number | `60.0` | Maximale Wiederverbindungsverzögerung |
-| `user_agent` | string | `Radio-Ripper/<Version>` | User-Agent für HTTP-Requests |
-| `no_icy_disable_after` | integer | `10` | Nach wie vielen ICY-freien Verbindungen ein Stream deaktiviert wird |
-| `ignore_title_patterns` | string[] | `[]` | Regex-Muster für zu ignorierende Songtitel (z. B. `["^Werbung"]`) |
-| `min_file_size_bytes` | integer | `1572864` | Aufnahmen kleiner als dieser Wert (1,5 MB) werden verworfen |
-| `min_file_duration_s` | float | `90` | Mindestlaufzeit einer Aufnahme (Sekunden); erfordert `ffprobe` |
-| `max_files_inbox` | integer | `100000` | Max. Dateien im Zielverzeichnis; bei Erreichen pausieren alle Streams |
-| `probe_timeout` | number | `8.0` | Timeout der ICY-Probe beim Preflight-Check (Sekunden) |
-| `probe_concurrent` | integer | `20` | Parallele Preflight-Proben (max. 100) |
-| `discovery_probe_timeout` | number | `8.0` | Timeout der Discovery-ICY-Proben (Sekunden) |
-| `discovery_max_concurrent` | integer | `300` | Parallele Discovery-Proben (max. 500) |
-| `discovery_random_sample_size` | integer | `50000` | Zufallsstichprobe aus der Community-M3U beim Discovery |
-| `discovery_work_station_count` | integer | `400` | Reservierte Größe des Discovery-Arbeitspools |
-| `acoustid_api_url` | string | `https://api.acoustid.org/v2/lookup` | AcoustID-Lookup-URL |
-| `acoustid_requests_per_minute` | integer | `170` | Max. AcoustID-API-Aufrufe pro Minute (Limit: 180 = 3 req/s) |
-| `acoustid_min_score` | float | `0.9` | Mindest-AcoustID-Score für behaltene Aufnahmen (0.0–1.0) |
-| `acoustid_retry_max_attempts` | integer | `5` | Wiederholungen bei transienten AcoustID-Fehlern |
-| `acoustid_retry_base_delay` | float | `30.0` | Start-Wartezeit vor Retry (Sekunden) |
-| `acoustid_retry_max_delay` | float | `3600.0` | Maximale Wartezeit zwischen Retries (Sekunden) |
-| `max_unchecked_files` | integer | `5000` | Queue-Limit: max. Dateien in `work/unchecked_mp3` (ist die AcoustID-Queue); bei Überschreitung pausieren alle Streams |
-| `max_unchecked_bytes` | integer | `10737418240` | Queue-Limit: max. Größe von `work/unchecked_mp3` (10 GB) |
-| `log_file_max_bytes` | integer | `5242880` | Max. Größe der Logdatei (5 MB), danach Rotation |
-| `log_file_backup_count` | integer | `5` | Anzahl aufbewahrter Logdateien |
-
-### Live-Config (Hot-Reload)
-
-Die App prüft **alle 60 Sekunden**, ob `config.jsonc` geändert wurde. JSONC-Kommentare werden beim Laden entfernt; Kommentarzeichen innerhalb von String-Werten bleiben erhalten.
-Erkannte Änderungen werden übernommen – ohne Neustart des Containers.
-
-- `log_level` – wird sofort gesetzt, ohne Neustart
-- `max_files_inbox` – neuer Schwellwert, wirkt beim nächsten Backpressure-Check (alle 30 s)
-- **Alle übrigen Felder** (u. a. `stream_keywords`, `discovery_enabled`, `request_timeout`,
-  `reconnect_*`, `no_icy_disable_after`, `ignore_title_patterns`, `min_file_size_bytes`,
-  `min_file_duration_s`, `work_dir`, `destination`, `user_agent`,
-  `max_concurrent_streams`, `acoustid_*`, `max_unchecked_*`) lösen einen **Neustart der
-  Stream-Recorder** aus: Sie werden gestoppt, die Sender neu aufgelöst (inkl. Discovery /
-  Preflight) und wieder gestartet.
-
-Die vollständige kommentierte Vorlage liegt unter [`config/config_example.jsonc`](/home/laptop/_dev/repositories/radioripper/config/config_example.jsonc). Die aktive lokale Konfiguration liegt unter [`config/config.jsonc`](/home/laptop/_dev/repositories/radioripper/config/config.jsonc).
-
-### Beispielkonfiguration
-
-```json
-{
-  "stream_keywords": ["indie", "alternative"],
-  "max_concurrent_streams": 8
-}
-```
-
-## Architektur (arc42)
-
-### Aufbau der Aufnahmen
-
-Jede Aufnahme durchläuft folgenden Lebenszyklus:
-
-1. **TCP-Verbindung** zum Stream-Server (mit `Icy-MetaData: 1` Header)
-2. **Metadaten-Parsing**: Der `IcyParser` extrahiert `StreamTitle` aus dem Datenstrom
-3. **Song-Erkennung**: Bei Titelwechsel wird die vorherige Aufnahme abgeschlossen und eine neue gestartet
-4. **Staging**: Die Aufnahme wird als `.part`-Datei in `work/unchecked_mp3/` geschrieben – das ist die AcoustID-Queue (durabel, überlebt Neustarts)
-5. **Commit**: Bei Titelwechsel wird die `.part`-Datei atomar zu `.mp3` committet und an die AcoustID-Queue übergeben
-6. **Validierung**: Größe, Dauer und MP3-Gültigkeit werden geprüft – zu kleine, zu kurze oder ungültige Dateien werden automatisch gelöscht
-7. **AcoustID-Fingerprint**: Chromaprint (`fpcalc`) prüft per AcoustID, ob der Track einem bekannten Song entspricht (Score ≥ `acoustid_min_score`, Standard 0,9). Nur Treffer mit nutzbaren Künstler-/Titel-Metadaten werden behalten, mit ID3-Tags versehen, als `{Künstler} - {Titel}.mp3` benannt und ins Zielverzeichnis verschoben. Aufnahmen ohne ausreichenden Match werden verworfen.
-
-### Stream-Recorder Lebenszyklus
-
-Jeder Stream wird von einem eigenen `StreamRecorder` verwaltet:
-
-```
-_run_forever()
-  ├─ pause() / resume()           # Backpressure (Zielverzeichnis voll / Queue-Limits)
-  ├─ _run_once()
-  │   ├─ Playlist auflösen (M3U/PLS → Stream-URL)
-  │   ├─ _connect_stream()
-  │   │   ├─ HTTP-GET mit Icy-MetaData: 1
-  │   │   └─ ICY-Metaint parsen
-  │   └─ _stream_with_meta()
-  │       ├─ async for chunk: Parser füttern
-  │       ├─ TitleChanged → Aufnahme committen (.part → .mp3), neue starten
-  │       └─ Verbindungsabbruch → _run_once returned False
-  └─ Reconnect mit exponentiellem Backoff + Jitter
-```
-
-**Fehlertoleranz**:
-- Bei Verbindungsabbruch bis zu `no_icy_disable_after`× wiederholen
-- Nach `no_icy_disable_after` ICY-freien Streams wird der Sender deaktiviert
-- Bei generischen Fehlern wird der Reconnect-Backoff verdoppelt (max. `reconnect_max_delay`)
-
-### Auto-Discovery Pipeline
-
-```
-start()
-  ├─ PlaylistDiscoveryService.load_or_discover()   # nur falls discovery_enabled
-  │   ├─ work_stations.m3u gültig? → ausgewählte Sender laden
-  │   ├─ filtered_checked_stations.m3u gültig? → geprüfte Sender laden + auswählen
-  │   ├─ Sonst: Community-M3U laden und nach Namen deduplizieren
-  │   ├─ zufällig bis zu discovery_random_sample_size Einträge auswählen
-  │   ├─ Einträge mit ICY-Probe testen und optional nach Bitrate filtern
-  │   ├─ Ergebnisse in filtered_checked_stations.m3u cachen
-  │   └─ nach Keywords filtern oder die geprüfte Liste zufällig mischen
-  ├─ _apply_stream_limit()                         # höchstens max_concurrent_streams
-  └─ _preflight_check()
-      └─ Alle Stationen vor Start auf ICY-Erreichbarkeit prüfen (mit Fortschritts-Log alle 10 %)
-```
-
-Die Discovery verwendet keine Sender aus `streams` oder `custom.m3u`; diese Konfigurationswege wurden entfernt. Die große Community-M3U wird zunächst dedupliziert. Standardmäßig werden daraus zufällig bis zu `50.000` Einträge in `work/random_stations.m3u` abgelegt. Diese Einträge werden geprüft und in `work/filtered_checked_stations.m3u` gecacht.
-
-Bei leeren `stream_keywords` wird die geprüfte Liste zufällig gemischt. Bei gesetzten Keywords werden passende Sender in der geprüften Reihenfolge verwendet, die nach Bitrate absteigend sortiert ist. In beiden Fällen werden anschließend höchstens `max_concurrent_streams` Sender gestartet. Die Auswahl wird in `work/work_stations.m3u` gecacht; eine Änderung von `stream_keywords` oder `max_concurrent_streams` invalidiert diesen Auswahl-Cache.
-
-`discovery_max_concurrent` begrenzt nur die parallelen Discovery-Probes. `probe_concurrent` begrenzt nur die Preflight-Prüfungen direkt vor dem Start. Beide Werte begrenzen nicht die Anzahl der laufenden Recorder. `discovery_work_station_count` ist ein reserviertes Konfigurationsfeld für die Discovery-Arbeitsmenge.
-
-### Backpressure (volle Verzeichnisse / volle Queue)
-
-Sobald eines der folgenden Limits erreicht ist, **pausieren alle Streams**
-(der aktuell laufende Song wird noch fertig geschrieben):
-
-1. Anzahl `.mp3`-Dateien im Zielverzeichnis ≥ `max_files_inbox`
-2. Anzahl Dateien in `work/unchecked_mp3` ≥ `max_unchecked_files`
-3. Gesamtgröße von `work/unchecked_mp3` ≥ `max_unchecked_bytes`
-
-Alle **30 Sekunden** wird geprüft, ob die Limits wieder unterschritten sind.
-**Automatisch weiter** geht es, sobald alle Werte auf ≤ 80 % des jeweiligen Limits gefallen sind.
-
-So wird verhindert, dass bei vollen Verzeichnissen sinnlos Daten geschrieben werden.
-
-### Signal- und Shutdown-Verhalten
-
-| Signal | Verhalten |
-|---|---|
-| `SIGINT` / `SIGTERM` | Alle Recorder stoppen, HTTP-Client schließen, parallel joinen (< 15 s) |
-| `KeyboardInterrupt` | Graceful Shutdown via `asyncio.run()` |
-
-## Image-Tags
-
-| Tag | Beschreibung |
-|---|---|
-| `latest` | Neuester Stand des `main`-Branches |
-| `2.x` | Semantische Versions-Tags |
-| `YYYYMMDD-<sha>` | Tägliche SHA-basierte Tags |
-
-Alle Images laufen unter einem unprivilegierten Benutzer (`ripper`, uid 1000).
-Der Container startet standardmäßig `radio-ripper`; du kannst Argumente wie `--log-level DEBUG`
-anhängen. Liegt `/app/config/config.jsonc` vor, wird es automatisch per `--config` geladen.
 
 ## Entwicklung
 
 ```bash
-# Systemabhängigkeiten (Ubuntu/Debian)
-sudo apt-get install ffmpeg libchromaprint-tools   # fpcalc für AcoustID-Fingerprinting
+uv sync --group dev
 
-# macOS
-brew install ffmpeg chromaprint
-
-# Abhängigkeiten installieren
-uv sync
-
-# Linting & Typ-Prüfung
+# Lint & Format
 uv run ruff check src/radio_ripper/ tests/
 uv run ruff format --check src/radio_ripper/ tests/
+
+# Typprüfung
 uv run mypy src/radio_ripper/
 
-# Tests
-uv run pytest
-
-# Manueller Start (Config liegt in config/config.jsonc)
-ACOUST_ID=dein_api_key uv run radio-ripper --config config/config.jsonc
+# Tests mit Abdeckung (Ziel ≥ 90 %)
+uv run pytest tests/ --cov=radio_ripper --cov-fail-under=90
 ```
 
-## Lizenz
+## Dokumentation
 
-MIT
+Die Systemdokumentation nach arc42 liegt unter [`docs/arc42/`](docs/arc42/README.md)
+(inkl. PlantUML-Diagrammen unter `docs/arc42/diagrams/`).

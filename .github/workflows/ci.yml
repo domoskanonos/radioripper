@@ -38,7 +38,7 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: pytest
-        run: uv run pytest tests/ -q
+        run: uv run pytest tests/ -q --cov=radio_ripper --cov-fail-under=90
       - name: Upload coverage
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4

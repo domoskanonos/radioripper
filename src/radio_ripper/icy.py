@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-
 _STREAMTITLE_RE = re.compile(r"StreamTitle='(.*?)';", re.DOTALL)
 
 

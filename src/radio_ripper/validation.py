@@ -23,7 +23,7 @@ def _ffprobe_duration_sync(path: Path) -> float | None:
         return None
 
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603  -- Pfad kommt aus shutil.which, kein untrusted Input
             [
                 ffprobe,
                 "-v",

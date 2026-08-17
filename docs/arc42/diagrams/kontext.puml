@@ -1,0 +1,30 @@
+@startuml kontext
+!theme plain
+title Radio-Ripper — Systemkontext
+
+left to right direction
+
+actor "Endnutzer" as user
+actor "Betreiber (Docker)" as op
+
+rectangle "Radio-Ripper" {
+    rectangle "Recorder" as rec
+    rectangle "AcoustID-Worker" as worker
+}
+
+rectangle "Externe Systeme" {
+    "Radio-Streams (HTTP/ICY)" as radio
+    "AcoustID API" as acoustid
+    "fpcalc (lokal)" as fpcalc
+    "ffprobe (lokal)" as ffprobe
+}
+
+user --> rec : custom.m3u, Config
+op --> rec : start/stop (Signale)
+rec --> radio : Stream + ICY-Metadaten
+rec --> worker : validierte Aufnahme
+worker --> fpcalc : Fingerprint
+worker --> acoustid : Lookup
+rec --> ffprobe : Dauer-Check
+
+@enduml

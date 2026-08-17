@@ -9,6 +9,9 @@ import random
 import re
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import httpx
 
 from radio_ripper.acoustid import AcoustidWorker
 from radio_ripper.config import Settings
@@ -21,15 +24,12 @@ from radio_ripper.writer import TrackWriter, sanitize_filename
 _LOGGER = logging.getLogger("radio_ripper.recorder")
 
 
-def cleanup_stale_parts(work_dir: object) -> int:
+def cleanup_stale_parts(work_dir: Path) -> int:
     """Entfernt übrig gebliebene ``.part``-Dateien aus abgebrochenen Läufen.
 
     ``.part``-Dateien sind unvollständige Aufnahmen (der atomare Rename zu
     ``.mp3`` fand nie statt) und werden nie weiterverarbeitet.
     """
-    from pathlib import Path
-
-    work_dir = Path(work_dir)
     staging = work_dir / "recordings"
     if not staging.is_dir():
         return 0
@@ -104,8 +104,7 @@ class StreamRecorder:
                 break
             if self._no_icy_failures >= self.settings.no_icy_disable_after:
                 self._log.error(
-                    "[%s] Deaktiviert: kein ICY-Metadaten nach %d Versuchen. "
-                    "Stream unterstützt vermutlich kein ICY.",
+                    "[%s] Deaktiviert: kein ICY-Metadaten nach %d Versuchen. Stream unterstützt vermutlich kein ICY.",
                     self.station.name,
                     self._no_icy_failures,
                 )
@@ -152,11 +151,11 @@ class StreamRecorder:
             ok = await self._stream_with_meta(stream_url)
             self._connect_failures = 0
             return ok
-        except TimeoutError:
+        except httpx.TimeoutException:
             self._log.error("[%s] Timeout beim Verbinden.", self.station.name)
             self._connect_failures += 1
             return False
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             self._log.error("[%s] HTTP-Fehler: %s", self.station.name, exc)
             self._connect_failures += 1
             return False
