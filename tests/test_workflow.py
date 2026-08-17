@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -40,7 +42,7 @@ async def test_run_stations_starts_and_stops(tmp_path: Path) -> None:
 
     fake = _FakeRecorder()
 
-    async def _fake_start_recorders(*args, **kwargs):
+    async def _fake_start_recorders(*args: Any, **kwargs: Any) -> list[object]:
         return [fake]
 
     # run_stations starten; nach kurzer Zeit wird der Event-Loop gezwungen,
@@ -67,7 +69,7 @@ async def test_start_recorders_creates_recorder_per_station(tmp_path: Path) -> N
     settings = _make_settings(tmp_path)
 
     client = AsyncMock()
-    executor = object()
+    executor = ThreadPoolExecutor(1)
 
     with patch("radio_ripper.workflow.StreamRecorder") as mock_recorder:
         recorders = await _start_recorders(settings, client, executor)
@@ -145,7 +147,7 @@ async def test_run_stations_signal_stops(tmp_path: Path) -> None:
 
     fake = _FakeRecorder()
 
-    async def _fake_start_recorders(*args, **kwargs):
+    async def _fake_start_recorders(*args: Any, **kwargs: Any) -> list[object]:
         return [fake]
 
     with (
@@ -174,7 +176,7 @@ async def test_start_recorders_all_stations(tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
 
     client = AsyncMock()
-    executor = object()
+    executor = ThreadPoolExecutor(1)
 
     with patch("radio_ripper.workflow.StreamRecorder") as mock_recorder:
         recorders = await _start_recorders(settings, client, executor)

@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Protocol
 
 import httpx
+
+
+class PlaylistTextClient(Protocol):
+    """Minimales Interface für Playlist-Auflösung (nur ``get_text``)."""
+
+    async def get_text(self, url: str, *, timeout: float | None = None) -> str: ...
 
 
 class HttpxClient:
@@ -60,7 +67,7 @@ class HttpxClient:
 
 
 async def resolve_playlist(
-    client: HttpxClient,
+    client: PlaylistTextClient,
     playlist_url: str,
     *,
     timeout: float = 30.0,

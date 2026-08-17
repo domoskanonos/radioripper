@@ -335,7 +335,7 @@ async def test_worker_processes_sequentially(tmp_path: Path) -> None:
 
     processed = []
 
-    async def fake_finalize(path, settings):
+    async def fake_finalize(path: Path, settings: Settings) -> None:
         processed.append(path.name)
 
     with patch("radio_ripper.acoustid.finalize_acoustid", side_effect=fake_finalize):
@@ -486,7 +486,7 @@ def test_move_to_destination_exdev_fallback(tmp_path: Path) -> None:
     sub.mkdir()
     dst = sub / "dst.mp3"
 
-    def _raise_exdev(*args, **kwargs):
+    def _raise_exdev(*args: object, **kwargs: object) -> None:
         raise OSError(errno.EXDEV, "cross-device link")
 
     with patch("os.replace", side_effect=_raise_exdev):

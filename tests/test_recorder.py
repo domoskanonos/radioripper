@@ -12,8 +12,9 @@ import pytest
 from pydantic import HttpUrl
 
 from radio_ripper.config import Settings
-from radio_ripper.recorder import StreamRecorder, cleanup_stale_parts
 from radio_ripper.models import StreamConfig
+from radio_ripper.recorder import StreamRecorder, cleanup_stale_parts
+from radio_ripper.writer import TrackWriter
 
 
 def _make_settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -26,9 +27,7 @@ def _make_settings(tmp_path: Path, **overrides: Any) -> Settings:
     return Settings(**base)
 
 
-def _make_recorder(
-    tmp_path: Path, settings: Settings | None = None, client: Any = None
-) -> StreamRecorder:
+def _make_recorder(tmp_path: Path, settings: Settings | None = None, client: Any = None) -> StreamRecorder:
     settings = settings or _make_settings(tmp_path)
     station = StreamConfig(name="Test", url=HttpUrl("http://x.example/stream.mp3"))
     return StreamRecorder(
@@ -218,8 +217,8 @@ async def test_stream_meta_title_boundaries(tmp_path: Path) -> None:
     # _finalize_writer mocken, um nur die Aufnahme-Logik zu testen
     finalized = []
 
-    async def fake_finalize(writer: object) -> None:
-        finalized.append(getattr(writer, "final_path").name)  # type: ignore[attr-defined]
+    async def fake_finalize(writer: TrackWriter) -> None:
+        finalized.append(writer.final_path.name)
 
     with patch.object(rec, "_finalize_writer", side_effect=fake_finalize):
         ok = await rec._stream_with_meta("http://x.example/stream")
@@ -436,8 +435,8 @@ async def test_stream_meta_first_title_skipped(tmp_path: Path) -> None:
 
     writers = []
 
-    async def fake_finalize(writer: object) -> None:
-        writers.append(getattr(writer, "final_path").name)  # type: ignore[attr-defined]
+    async def fake_finalize(writer: TrackWriter) -> None:
+        writers.append(writer.final_path.name)
 
     with patch.object(rec, "_finalize_writer", side_effect=fake_finalize):
         ok = await rec._stream_with_meta("http://x.example/stream")

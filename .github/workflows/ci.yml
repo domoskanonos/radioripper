@@ -20,7 +20,7 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check src/radio_ripper/ tests/
       - name: mypy
-        run: uv run mypy src/radio_ripper/
+        run: uv run mypy src/radio_ripper/ tests/
 
   test:
     runs-on: ubuntu-latest
