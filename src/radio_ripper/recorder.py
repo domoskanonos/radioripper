@@ -16,11 +16,9 @@ from radio_ripper.acoustid import AcoustidWorker
 from radio_ripper.config import Settings
 from radio_ripper.http_client import HttpxClient, resolve_playlist
 from radio_ripper.icy import AudioChunk, IcyParser, TitleChanged
-from radio_ripper.live_rms import LiveRmsSource
 from radio_ripper.models import StreamConfig
-from radio_ripper.silence import RmsTracker
 from radio_ripper.validation import validate_file
-from radio_ripper.writer import sanitize_filename
+from radio_ripper.writer import TrackWriter, sanitize_filename
 
 _LOGGER = logging.getLogger("radio_ripper.recorder")
 
@@ -29,9 +27,6 @@ _RECONNECT_MAX_DELAY = 60.0
 _REQUEST_TIMEOUT = 30.0
 _USER_AGENT = "VLC/3.0.18 LibVLC/3.0.18"
 _NO_ICY_DISABLE_AFTER = 10
-
-# Ring-Puffer: max 5 Minuten Audio (128kbps ≈ 4.8 MB) pro Sender
-_RING_BUFFER_MAX_BYTES = 5 * 60 * 16_000
 
 
 def cleanup_stale_parts(work_dir: Path) -> int:
@@ -50,55 +45,6 @@ def cleanup_stale_parts(work_dir: Path) -> int:
     if parts:
         _LOGGER.info("Entfernt %d unvollständige Aufnahme(n) (.part) aus einem früheren Lauf.", len(parts))
     return len(parts)
-
-
-class _SongBuffer:
-    """Ring-Puffer für Audio-Bytes mit Byte-granularer Grenz-Suche.
-
-    Der Stream schreibt fortlaufend in diesen Puffer. Die RmsTracker-Grenzen
-    sind mit Byte-Offsets assoziiert (über die geschriebenen Bytes), sodass
-    beim ICY-Wechsel der Song ab der letzten Grenze geschnitten werden kann —
-    auch wenn der ICY-Titel verspätet kommt.
-    """
-
-    def __init__(self, max_bytes: int = _RING_BUFFER_MAX_BYTES) -> None:
-        self._max_bytes = max_bytes
-        self._data = bytearray()
-        # Karte: Byte-Offset → (ist Grenze?)
-        self._boundary_offsets: set[int] = set()
-
-    def write(self, data: bytes) -> None:
-        self._data.extend(data)
-        if len(self._data) > self._max_bytes:
-            # Älteste Bytes verwerfen; Boundary-Offsets anpassen
-            overflow = len(self._data) - self._max_bytes
-            del self._data[:overflow]
-            self._boundary_offsets = {max(0, off - overflow) for off in self._boundary_offsets if off >= overflow}
-
-    def mark_boundary(self, byte_offset: int) -> None:
-        if 0 <= byte_offset <= len(self._data):
-            self._boundary_offsets.add(byte_offset)
-
-    def slice_from_last_boundary(self) -> bytes:
-        """Gibt die Bytes ab der letzten Grenze zurück (oder den ganzen Puffer)."""
-        if not self._boundary_offsets:
-            return bytes(self._data)
-        last = max(self._boundary_offsets)
-        return bytes(self._data[last:])
-
-    def slice_to(self, byte_offset: int) -> bytes:
-        """Gibt die Bytes bis *byte_offset* ab der vorletzten Grenze zurück."""
-        sorted_offs = sorted(o for o in self._boundary_offsets if o < byte_offset)
-        start = sorted_offs[-1] if sorted_offs else 0
-        return bytes(self._data[start:byte_offset])
-
-    def clear(self) -> None:
-        self._data.clear()
-        self._boundary_offsets.clear()
-
-    @property
-    def size(self) -> int:
-        return len(self._data)
 
 
 class StreamRecorder:
@@ -260,6 +206,26 @@ class StreamRecorder:
         parser.feed(first_chunk or b"")
         return agen, parser
 
+    def _make_writer(self, icy_title: str) -> TrackWriter | None:
+        """Erstellt einen TrackWriter im work_dir/recordings."""
+        recordings_dir = self.settings.work_dir / "recordings"
+        recordings_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = sanitize_filename(icy_title)
+        if not safe_name:
+            self._log.error("[%s] Kein Dateiname für Titel=%r", self.station.name, icy_title)
+            return None
+
+        file_path = recordings_dir / f"{safe_name}.mp3"
+        try:
+            return TrackWriter(file_path)
+        except OSError as exc:
+            self._log.error("[%s] Konnte %s nicht öffnen: %s", self.station.name, file_path, exc)
+            return None
+
+    def _should_record_title(self, title: str) -> bool:
+        return bool(title.strip())
+
     # ------------------------------------------------------------------ main stream loop
 
     async def _stream_with_meta(self, stream_url: str) -> bool:
@@ -268,49 +234,24 @@ class StreamRecorder:
             return False
         agen, parser = connected
 
-        # Live-RMS-Erkennung (echte PCM-Werte über separaten ffmpeg-Prozess)
-        tracker = RmsTracker()
-        rms_source = LiveRmsSource(
-            stream_url,
-            tracker,
-            user_agent=_USER_AGENT,
-            request_timeout=_REQUEST_TIMEOUT,
-        )
-        rms_source.start()
-        try:
-            return await self._stream_loop(agen, parser, tracker)
-        finally:
-            await rms_source.stop()
-
-    async def _stream_loop(
-        self,
-        agen: AsyncGenerator[bytes, None],
-        parser: IcyParser,
-        tracker: RmsTracker,
-    ) -> bool:
-        import time as _time
-
-        buffer = _SongBuffer()
         first_title_seen: str | None = None
         current_title: str | None = None
+        writer: TrackWriter | None = None
         recording = False
-        pending_title: str | None = None  # Titel des aktuell aufzubauenden Songs
-        start_mono = _time.monotonic()
 
         try:
             async for chunk in agen:
                 if self._stop_event.is_set():
+                    if writer is not None:
+                        writer.discard()
                     return True
                 if not chunk:
                     continue
                 parser.feed(chunk)
                 for event in parser.events():
                     if isinstance(event, AudioChunk):
-                        buffer.write(event.data)
-                        # Grenze aus RMS-Tracker an Byte-Position markieren
-                        self._sync_boundaries(buffer, tracker, start_mono)
-                        if recording and pending_title:
-                            pass  # Audio wird beim ICY-Wechsel aus dem Puffer geschnitten
+                        if recording and writer is not None:
+                            writer.write(event.data)
                     elif isinstance(event, TitleChanged):
                         new_title = event.title
                         if first_title_seen is None:
@@ -324,74 +265,60 @@ class StreamRecorder:
                             continue
                         if new_title == current_title:
                             continue
-                        # Neuer Titel: vorherigen Song aus Puffer schneiden + committen
-                        if pending_title:
-                            await self._commit_buffered_song(buffer, pending_title)
+                        if recording and writer is not None:
+                            await self._finalize_writer(writer)
+                            writer = None
+                            recording = False
                         current_title = new_title
-                        pending_title = new_title.strip()
-                        recording = True
-                        self._log.info("[%s] Songwechsel -> %s", self.station.name, new_title)
+                        if not self._should_record_title(new_title):
+                            continue
+                        writer = self._make_writer(new_title.strip())
+                        if writer is not None:
+                            recording = True
+                            self._log.info(
+                                "[%s] Aufnahme -> %s",
+                                self.station.name,
+                                writer.final_path.name,
+                            )
+                        else:
+                            recording = False
             self._log.info("[%s] Stream beendet (EOF).", self.station.name)
-            if pending_title:
-                await self._commit_buffered_song(buffer, pending_title)
+            if writer is not None:
+                writer.discard()
             return True
         except Exception as exc:
             self._log.warning("[%s] Stream unterbrochen: %s", self.station.name, exc)
+            if writer is not None:
+                writer.discard()
             return False
         finally:
             with contextlib.suppress(Exception):
                 await agen.aclose()
 
-    def _sync_boundaries(self, buffer: _SongBuffer, tracker: RmsTracker, start_mono: float) -> None:
-        """Markiert neue Grenzen im Puffer (Zeit → Byte-Position)."""
-        import time as _time
-
-        elapsed = _time.monotonic() - start_mono
-        # Bits/s des Streams: aus 128kbps Standard schätzen (16 KB/s)
-        bps = 16_000
-        byte_pos = int(elapsed * bps)
-        for b in tracker.boundaries:
-            # Letzte erkannte Grenze (im Tracker nach Zeit)
-            b_pos = int(b.time * bps)
-            if b_pos <= byte_pos:
-                buffer.mark_boundary(b_pos)
-        # Nur die letzte Grenze zählt für den Songstart — wir halten alle
-
-    async def _commit_buffered_song(self, buffer: _SongBuffer, title: str) -> None:
-        """Schneidet den aktuellen Song ab der letzten Grenze, committet ihn."""
-        data = buffer.slice_from_last_boundary()
-        if not data:
-            self._log.info("[%s] Kein Audio für '%s'", self.station.name, title)
-            return
-        safe_name = sanitize_filename(title)
-        if not safe_name:
-            self._log.error("[%s] Kein Dateiname für Titel=%r", self.station.name, title)
-            return
-        recordings_dir = self.settings.work_dir / "recordings"
-        recordings_dir.mkdir(parents=True, exist_ok=True)
-        final_path = recordings_dir / f"{safe_name}.mp3"
-        try:
-            with open(final_path, "xb") as fh:
-                fh.write(data)
-        except FileExistsError:
-            # Kollision: UUID anhängen
-            import uuid
-
-            final_path = recordings_dir / f"{safe_name}.{uuid.uuid4().hex}.mp3"
-            with open(final_path, "xb") as fh:
-                fh.write(data)
-        except OSError as exc:
-            self._log.error("[%s] Konnte %s nicht schreiben: %s", self.station.name, final_path, exc)
+    async def _finalize_writer(self, writer: TrackWriter) -> None:
+        """Committet den Track und führt beide Validierungs-Tests aus."""
+        committed = writer.commit()
+        if not committed:
             return
 
+        final_path = writer.final_path
         ok = await validate_file(final_path, self.settings, self._executor)
         if not ok:
             return
+
         self._log.info(
-            "[%s] Song '%s' gespeichert (%d bytes)",
+            "[%s] Fertig (beide Tests bestanden): %s (%d bytes)",
             self.station.name,
-            title,
+            final_path.name,
             final_path.stat().st_size,
         )
+
+        # AcoustID-Verarbeitung an den Singleton-Worker abgeben (blockiert nie)
         if self._acoustid_worker is not None:
             self._acoustid_worker.enqueue(final_path)
+        else:
+            self._log.info(
+                "[%s] Kein AcoustID-Worker — Datei bleibt in recordings/: %s",
+                self.station.name,
+                final_path.name,
+            )

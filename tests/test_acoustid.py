@@ -55,14 +55,15 @@ def test_write_and_read_mp3_tags(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_finalize_acoustid_no_match_deletes(tmp_path: Path) -> None:
+async def test_finalize_acoustid_no_match_moves_to_unmatched(tmp_path: Path) -> None:
     mp3 = tmp_path / "rec.mp3"
     mp3.write_bytes(b"x" * 100)
     settings = Settings(work_dir=tmp_path, destination=tmp_path / "dest", acoustid_api_key="KEY")
 
     with patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(None, "ok"))):
         await finalize_acoustid(mp3, settings)
-    assert not mp3.exists(), "Kein Treffer → Datei gelöscht"
+    assert not mp3.exists(), "Kein Treffer → Datei aus recordings/ verschoben"
+    assert (tmp_path / "recordings" / "unmatched" / "rec.mp3").exists()
 
 
 @pytest.mark.asyncio

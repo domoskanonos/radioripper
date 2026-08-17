@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -81,94 +82,93 @@ async def acoustid_lookup(
     if fp is None:
         return None, "error"
 
-    base_duration = int(float(fp.get("duration", 0)))
-    # Radio-Edits sind kürzer als die Album-Version. AcoustID filtert über
-    # duration, daher probieren wir mehrere Kandidaten (Aufnahme + bis +120s).
-    durations = sorted({base_duration, *range(base_duration + 15, base_duration + 121, 15)})
+    # Genau ein Request mit der tatsächlich gemessenen Dauer. Ein
+    # Dauer-Toleranz-Loop (mehrere duration-Werte) wäre bei vielen Sendern
+    # reine API-Verschwendung — AcoustID matcht Stream-Aufnahmen ohnehin selten.
+    duration = int(float(fp.get("duration", 0)))
 
     best: AcoustidMatch | None = None
     api_answered = False
 
-    for duration in durations:
-        params = {
-            "client": api_key,
-            "format": "json",
-            "meta": "recordings+releasegroups",
-            "duration": duration,
-            "fingerprint": fp.get("fingerprint", ""),
-        }
+    params = {
+        "client": api_key,
+        "format": "json",
+        "meta": "recordings+releasegroups",
+        "duration": duration,
+        "fingerprint": fp.get("fingerprint", ""),
+    }
 
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(_ACOUSTID_API_URL, params=params)
+            resp.raise_for_status()
+            api = resp.json()
+    except Exception as exc:
+        _LOGGER.warning("AcoustID-API-Fehler für %s (duration=%d): %s", path.name, duration, exc)
+        return None, "error"
+    if not isinstance(api, dict) or api.get("status") != "ok":
+        _LOGGER.warning("AcoustID unerwartete Antwort für %s (duration=%d)", path.name, duration)
+        return None, "error"
+    api_answered = True
+
+    for result in api.get("results") or []:
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(_ACOUSTID_API_URL, params=params)
-                resp.raise_for_status()
-                api = resp.json()
-        except Exception as exc:
-            _LOGGER.warning("AcoustID-API-Fehler für %s (duration=%d): %s", path.name, duration, exc)
+            score = float(result.get("score", 0.0))
+        except (TypeError, ValueError):
             continue
-        if not isinstance(api, dict) or api.get("status") != "ok":
-            _LOGGER.warning("AcoustID unerwartete Antwort für %s (duration=%d)", path.name, duration)
+        if score < min_score:
             continue
-        api_answered = True
-
-        for result in api.get("results") or []:
+        for recording in result.get("recordings") or []:
+            raw_artists = recording.get("artists") or []
+            artists = [a.get("name", "").strip() for a in raw_artists if a.get("name")]
+            artist = ", ".join(artists)
+            artist_id = ""
+            for a in raw_artists:
+                if a.get("id"):
+                    artist_id = str(a.get("id", "")).strip()
+                    break
+            title = (recording.get("title") or "").strip()
+            if not artist or not title:
+                continue
+            recording_id = (recording.get("id") or "").strip()
+            # Bevorzugt das erste Releasegroup als Album (single → ohne Album)
+            album = ""
+            year: int | None = None
+            releasegroup_id = ""
+            for rg in recording.get("releasegroups") or []:
+                rg_title = (rg.get("title") or "").strip()
+                if not album and rg_title:
+                    album = rg_title
+                if not releasegroup_id:
+                    releasegroup_id = (rg.get("id") or "").strip()
+                if year is None:
+                    date = (rg.get("firstreleasedate") or "").strip()
+                    if date[:4].isdigit():
+                        year = int(date[:4])
             try:
-                score = float(result.get("score", 0.0))
+                confirmations = int(recording.get("confirmations", 0) or 0)
             except (TypeError, ValueError):
-                continue
-            if score < min_score:
-                continue
-            for recording in result.get("recordings") or []:
-                raw_artists = recording.get("artists") or []
-                artists = [a.get("name", "").strip() for a in raw_artists if a.get("name")]
-                artist = ", ".join(artists)
-                artist_id = ""
-                for a in raw_artists:
-                    if a.get("id"):
-                        artist_id = str(a.get("id", "")).strip()
-                        break
-                title = (recording.get("title") or "").strip()
-                if not artist or not title:
-                    continue
-                recording_id = (recording.get("id") or "").strip()
-                # Bevorzugt das erste Releasegroup als Album (single → ohne Album)
-                album = ""
-                year: int | None = None
-                releasegroup_id = ""
-                for rg in recording.get("releasegroups") or []:
-                    rg_title = (rg.get("title") or "").strip()
-                    if not album and rg_title:
-                        album = rg_title
-                    if not releasegroup_id:
-                        releasegroup_id = (rg.get("id") or "").strip()
-                    if year is None:
-                        date = (rg.get("firstreleasedate") or "").strip()
-                        if date[:4].isdigit():
-                            year = int(date[:4])
-                try:
-                    confirmations = int(recording.get("confirmations", 0) or 0)
-                except (TypeError, ValueError):
-                    confirmations = 0
-                try:
-                    track_number = int(recording.get("track_number") or 0) or None
-                except (TypeError, ValueError):
-                    track_number = None
+                confirmations = 0
+            try:
+                track_number = int(recording.get("track_number") or 0) or None
+            except (TypeError, ValueError):
+                track_number = None
 
-                match = AcoustidMatch(
-                    artist=artist,
-                    title=title,
-                    album=album,
-                    track_number=track_number,
-                    year=year,
-                    score=score,
-                    confirmations=confirmations,
-                    recording_id=recording_id,
-                    releasegroup_id=releasegroup_id,
-                    artist_id=artist_id,
-                )
-                # Besserer Score gewinnt; bei Gleichstand mehr Bestätigungen
-                if best is None or (score, confirmations) > (best.score, best.confirmations):
-                    best = match
+            match = AcoustidMatch(
+                artist=artist,
+                title=title,
+                album=album,
+                track_number=track_number,
+                year=year,
+                score=score,
+                confirmations=confirmations,
+                recording_id=recording_id,
+                releasegroup_id=releasegroup_id,
+                artist_id=artist_id,
+            )
+            # Besserer Score gewinnt; bei Gleichstand mehr Bestätigungen
+            if best is None or (score, confirmations) > (best.score, best.confirmations):
+                best = match
 
     if best is None:
         if not api_answered:
@@ -489,12 +489,24 @@ def move_to_destination(path: Path, target: Path) -> None:
         path.unlink(missing_ok=True)
 
 
+def _move_to_unmatched(final_path: Path, work_dir: Path) -> None:
+    """Verschiebt eine nicht erkannte Datei nach work_dir/recordings/unmatched/."""
+    unmatched_dir = work_dir / "recordings" / "unmatched"
+    with contextlib.suppress(OSError):
+        unmatched_dir.mkdir(parents=True, exist_ok=True)
+        target = unmatched_dir / final_path.name
+        if target.exists():
+            target = unmatched_dir / f"{final_path.stem}.{uuid.uuid4().hex[:8]}.mp3"
+        shutil.move(str(final_path), str(target))
+
+
 async def finalize_acoustid(final_path: Path, settings: Settings) -> None:
     """Läuft nach der Validierung: AcoustID-Lookup, Tagging, Verschieben.
 
     - Treffer ≥ min_score: Tags schreiben, nach destination/ verschieben
       (Ordnerstruktur Artist/Album/), bei Kollision gewinnt der höhere Score.
-    - Kein Treffer: Datei löschen.
+    - Kein Treffer: Datei nach recordings/unmatched/ verschieben (bleibt zum
+      manuellen Anhören erhalten).
     - Fehler: Datei bleibt in recordings/ liegen.
     """
     if not settings.acoustid_api_key:
@@ -516,9 +528,8 @@ async def finalize_acoustid(final_path: Path, settings: Settings) -> None:
         )
         return
     if match is None:
-        _LOGGER.info("[acoustid] Kein Treffer — lösche: %s", final_path.name)
-        with contextlib.suppress(OSError):
-            final_path.unlink(missing_ok=True)
+        _LOGGER.info("[acoustid] Kein Treffer — verschiebe nach unmatched/: %s", final_path.name)
+        _move_to_unmatched(final_path, settings.work_dir)
         return
 
     target = build_target_path(
