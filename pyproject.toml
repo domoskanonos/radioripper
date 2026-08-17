@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-radio-ripper = "radio_ripper.streaming:main"
+radio-ripper = "radio_ripper.workflow:main"
 
 [build-system]
 requires = ["setuptools>=83.0"]
@@ -37,8 +37,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# Tests sind direkt in streaming.py eingebaut (STREAMING_TEST=1)
-testpaths = []
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
