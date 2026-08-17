@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.14.0 (2026-08-17)
+
+### Features
+
+- Add standalone streaming/recording module for radio-ripper
+  ([`13dcd70`](https://github.com/domoskanonos/radioripper/commit/13dcd70441037cd56f217c905e6b3d2ef1b058ff))
+
+
 ## v2.13.4 (2026-08-09)
 
 ### Bug Fixes
