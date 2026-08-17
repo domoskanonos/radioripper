@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.16.1 (2026-08-17)
+
+### Bug Fixes
+
+- AcoustID meta=recordings + Schwelle 0.85 + Anreicherung erst nach Übernahme
+  ([`2955f0c`](https://github.com/domoskanonos/radioripper/commit/2955f0c363072a40418e0c96c7627b0be0f4ea0c))
+
+
 ## v2.16.0 (2026-08-17)
 
 
