@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import os
@@ -93,7 +94,7 @@ async def acoustid_lookup(
     params = {
         "client": api_key,
         "format": "json",
-        "meta": "recordings+releasegroups",
+        "meta": "recordings",
         "duration": duration,
         "fingerprint": fp.get("fingerprint", ""),
     }
@@ -191,9 +192,21 @@ class MusicBrainzEnrichment:
     - ``artist_image``  — Artist-Foto als Bild-Bytes (Wikimedia, wenn verfügbar)
     - ``lyrics``        — Plain-Text-Lyrics (USLT)
     - ``synced_lyrics`` — Synced-LRC-Lyrics mit Zeitstempeln (SYLT, Karaoke)
+    - ``album``         — Album-Name (aus MusicBrainz, falls aufgelöst)
+    - ``year``          — Erscheinungsjahr (aus MusicBrainz, falls aufgelöst)
+    - ``releasegroup_id`` — MusicBrainz-Releasegroup-ID (falls aufgelöst)
     """
 
-    __slots__ = ("artist_image", "cover_data", "genres", "lyrics", "synced_lyrics")
+    __slots__ = (
+        "album",
+        "artist_image",
+        "cover_data",
+        "genres",
+        "lyrics",
+        "releasegroup_id",
+        "synced_lyrics",
+        "year",
+    )
 
     def __init__(
         self,
@@ -202,12 +215,18 @@ class MusicBrainzEnrichment:
         artist_image: bytes | None,
         lyrics: str = "",
         synced_lyrics: str = "",
+        album: str = "",
+        year: int | None = None,
+        releasegroup_id: str = "",
     ) -> None:
         self.genres = genres
         self.cover_data = cover_data
         self.artist_image = artist_image
         self.lyrics = lyrics
         self.synced_lyrics = synced_lyrics
+        self.album = album
+        self.year = year
+        self.releasegroup_id = releasegroup_id
 
 
 async def _fetch_lyrics(client: httpx.AsyncClient, artist: str, title: str) -> tuple[str, str]:
@@ -328,10 +347,61 @@ async def _fetch_artist_image(client: httpx.AsyncClient, artist_id: str) -> byte
     return None
 
 
+async def _fetch_releasegroup(client: httpx.AsyncClient, recording_id: str) -> tuple[str, str, int | None]:
+    """Lädt Album + Jahr eines Recordings aus MusicBrainz nach.
+
+    AcoustID liefert mit ``meta=recordings`` keine Releasegroup-Infos. Diese
+    Funktion holt über die Recording-ID das erste Releasegroup (Album, Jahr,
+    Releasegroup-ID), damit Genre/Cover/Tags trotzdem angereichert werden.
+    Liefert ``(album, releasegroup_id, year)`` — alle leer/None wenn nicht
+    auflösbar.
+    """
+    if not recording_id:
+        return "", "", None
+    data = await _mb_get(client, f"{_MUSICBRAINZ_API}/recording/{recording_id}", {"inc": "releases"})
+    if not isinstance(data, dict):
+        return "", "", None
+    releases = data.get("releases") or []
+    for release in releases:
+        if release.get("primary-type") == "Single":
+            continue
+        rg = release.get("release-group") or {}
+        rg_id = (rg.get("id") or "").strip()
+        album = (rg.get("title") or "").strip()
+        if not album:
+            album = (release.get("title") or "").strip()
+        year: int | None = None
+        date = (release.get("date") or "").strip()
+        if date[:4].isdigit():
+            year = int(date[:4])
+        return album, rg_id, year
+    # Fallback: erster Release (auch Single, falls keine anderen da sind)
+    for release in releases:
+        rg = release.get("release-group") or {}
+        album = (rg.get("title") or release.get("title") or "").strip()
+        year = None
+        date = (release.get("date") or "").strip()
+        if date[:4].isdigit():
+            year = int(date[:4])
+        return album, (rg.get("id") or "").strip(), year
+    return "", "", None
+
+
 async def enrich_musicbrainz(match: AcoustidMatch, client: httpx.AsyncClient) -> MusicBrainzEnrichment:
-    """Holt Genre, Cover, Artist-Bild und Lyrics für einen AcoustID-Treffer (parallel)."""
-    genres_task = asyncio.create_task(_fetch_genres(client, match.releasegroup_id))
-    cover_task = asyncio.create_task(_fetch_cover_art(client, match.releasegroup_id))
+    """Holt Genre, Cover, Artist-Bild und Lyrics für einen AcoustID-Treffer (parallel).
+
+    Da der AcoustID-Lookup nur ``recordings`` liefert (kein Releasegroup),
+    wird das Releasegroup (Album, Jahr, ID) zuerst aus MusicBrainz nachgeladen.
+    Erst danach laufen die parallelen Anreicherungs-Requests.
+    """
+    album, releasegroup_id, year = match.album, match.releasegroup_id, match.year
+    if not releasegroup_id:
+        # AcoustID liefert mit meta=recordings kein Releasegroup — aus MB nachladen.
+        album, releasegroup_id, year = await _fetch_releasegroup(client, match.recording_id)
+    if releasegroup_id:
+        match = dataclasses.replace(match, album=album, releasegroup_id=releasegroup_id, year=year)
+    genres_task = asyncio.create_task(_fetch_genres(client, releasegroup_id))
+    cover_task = asyncio.create_task(_fetch_cover_art(client, releasegroup_id))
     artist_task = asyncio.create_task(_fetch_artist_image(client, match.artist_id))
     lyrics_task = asyncio.create_task(_fetch_lyrics(client, match.artist, match.title))
     genres, cover, artist, (lyrics, synced) = await asyncio.gather(genres_task, cover_task, artist_task, lyrics_task)
@@ -341,6 +411,9 @@ async def enrich_musicbrainz(match: AcoustidMatch, client: httpx.AsyncClient) ->
         artist_image=artist,
         lyrics=lyrics,
         synced_lyrics=synced,
+        album=album,
+        year=year,
+        releasegroup_id=releasegroup_id,
     )
 
 
@@ -532,14 +605,29 @@ async def finalize_acoustid(final_path: Path, settings: Settings) -> None:
         _move_to_unmatched(final_path, settings.work_dir)
         return
 
-    target = build_target_path(
-        settings.destination,
-        match.artist,
-        match.title,
-        match.album,
-    )
+    # Früher Kollisionscheck (ohne Album, da AcoustID kein Releasegroup liefert):
+    # Wenn am Zielort schon eine bessere Datei liegt, wird die neue verworfen —
+    # OHNE MusicBrainz-Requests zu verschwenden.
+    early_target = build_target_path(settings.destination, match.artist, match.title, "")
+    with _FINALIZE_LOCK:
+        if early_target.exists():
+            existing_score = read_mp3_score(early_target)
+            if existing_score is not None and existing_score >= match.score:
+                _LOGGER.info(
+                    "[acoustid] Kollision: %s behalten (Score %.2f >= %.2f) — verwerfe %s",
+                    early_target.name,
+                    existing_score,
+                    match.score,
+                    final_path.name,
+                )
+                with contextlib.suppress(OSError):
+                    final_path.unlink(missing_ok=True)
+                return
 
-    # MusicBrainz-Anreicherung: Genre, Cover, Artist-Bild, Lyrics (fehlertolerant)
+    # MusicBrainz-Anreicherung (Genre, Cover, Artist-Bild, Lyrics) erst NACH
+    # der Schwelle + dem frühen Kollisionscheck. Liefert auch Album/Jahr/
+    # Releasegroup-ID nach, da AcoustID mit meta=recordings keine Releasegroups
+    # liefert.
     enrichment = MusicBrainzEnrichment(genres=[], cover_data=None, artist_image=None)
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
@@ -547,23 +635,31 @@ async def finalize_acoustid(final_path: Path, settings: Settings) -> None:
     except Exception as exc:
         _LOGGER.warning("[acoustid] MusicBrainz-Anreicherung fehlgeschlagen für %s: %s", final_path.name, exc)
 
-    # Tags zuerst schreiben, damit Kollision via ACOUSTID_SCORE vergleichbar ist
+    # Tags schreiben (inkl. aus der Anreicherung gewonnener Album/Jahr-Infos)
     write_mp3_tags(
         final_path,
         artist=match.artist,
         title=match.title,
-        album=match.album,
+        album=enrichment.album or match.album,
         track_number=match.track_number,
-        year=match.year,
+        year=enrichment.year if enrichment.year is not None else match.year,
         score=match.score,
         confirmations=match.confirmations,
         recording_id=match.recording_id,
-        releasegroup_id=match.releasegroup_id,
+        releasegroup_id=enrichment.releasegroup_id or match.releasegroup_id,
         genres=enrichment.genres,
         cover_data=enrichment.cover_data,
         artist_image=enrichment.artist_image,
         lyrics=enrichment.lyrics,
         synced_lyrics=enrichment.synced_lyrics,
+    )
+
+    # Zielpfad mit dem (jetzt ggf. nachgeladenen) Album bauen
+    target = build_target_path(
+        settings.destination,
+        match.artist,
+        match.title,
+        enrichment.album or match.album,
     )
 
     # Kollision: bestehende Datei mit höherem/gleichem Score behalten.

@@ -4,5 +4,5 @@
   "log_level": "INFO",
   "min_file_size_bytes": 1572864,
   "min_file_duration_s": 90,
-  "acoustid_min_score": 0.9
+  "acoustid_min_score": 0.85
 }

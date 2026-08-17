@@ -91,8 +91,20 @@ async def test_finalize_acoustid_match_moves_and_tags(tmp_path: Path) -> None:
         recording_id="rec-id",
         releasegroup_id="rg-id",
     )
-    with patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))):
+    with (
+        patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", new=AsyncMock()) as mock_enrich,
+    ):
+        from radio_ripper.acoustid import MusicBrainzEnrichment
+
+        mock_enrich.return_value = MusicBrainzEnrichment(
+            genres=[],
+            cover_data=None,
+            artist_image=None,
+            album="Album",
+        )
         await finalize_acoustid(mp3, settings)
+    mock_enrich.assert_awaited_once()
 
     target = tmp_path / "dest" / "Queen" / "Album" / "Queen - Bo Rhap.mp3"
     assert target.exists(), "Treffer → Datei verschoben"
@@ -112,8 +124,12 @@ async def test_finalize_acoustid_collision_keeps_better_score(tmp_path: Path) ->
     settings = Settings(work_dir=tmp_path, destination=dest, acoustid_api_key="KEY")
 
     match = AcoustidMatch(artist="Artist", title="Song", album="", score=0.90)
-    with patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))):
+    with (
+        patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", new=AsyncMock()) as mock_enrich,
+    ):
         await finalize_acoustid(mp3, settings)
+    mock_enrich.assert_not_called()  # Kein MB-Request bei verworfenem Treffer
 
     assert target.exists(), "Bessere bestehende Datei bleibt"
     assert not mp3.exists(), "Schlechtere neue Datei wird verworfen"
@@ -392,12 +408,112 @@ async def test_finalize_collision_replaces_lower_score(tmp_path: Path) -> None:
     settings = Settings(work_dir=tmp_path, destination=dest, acoustid_api_key="KEY")
 
     match = AcoustidMatch(artist="Artist", title="Song", album="", score=0.95)
-    with patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))):
+    with (
+        patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", new=AsyncMock()) as mock_enrich,
+    ):
+        from radio_ripper.acoustid import MusicBrainzEnrichment
+
+        mock_enrich.return_value = MusicBrainzEnrichment(genres=[], cover_data=None, artist_image=None)
         await finalize_acoustid(mp3, settings)
 
     assert target.exists(), "Neue Datei ersetzt alte"
     assert read_mp3_score(target) == pytest.approx(0.95)
     assert not mp3.exists(), "Quelldatei verschwunden"
+
+
+@pytest.mark.asyncio
+async def test_finalize_album_from_enrichment_changes_target(tmp_path: Path) -> None:
+    """Album aus der Anreicherung ändert den Zielpfad (ohne Album → mit Album)."""
+    dest = tmp_path / "dest"
+    mp3 = tmp_path / "rec.mp3"
+    mp3.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    settings = Settings(work_dir=tmp_path, destination=dest, acoustid_api_key="KEY")
+
+    match = AcoustidMatch(artist="Artist", title="Song", album="", score=0.95)
+    with (
+        patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", new=AsyncMock()) as mock_enrich,
+    ):
+        from radio_ripper.acoustid import MusicBrainzEnrichment
+
+        mock_enrich.return_value = MusicBrainzEnrichment(
+            genres=[],
+            cover_data=None,
+            artist_image=None,
+            album="Best Of",
+            year=1999,
+            releasegroup_id="rg-best",
+        )
+        await finalize_acoustid(mp3, settings)
+
+    target = dest / "Artist" / "Best Of" / "Artist - Song.mp3"
+    assert target.exists(), "Ziel mit nachgeladenem Album"
+    assert not mp3.exists()
+
+
+@pytest.mark.asyncio
+async def test_finalize_late_collision_replaces(tmp_path: Path) -> None:
+    """Bestehende Datei mit Album + niedrigerem Score wird ersetzt (später Check)."""
+    dest = tmp_path / "dest"
+    target = dest / "Artist" / "Album" / "Artist - Song.mp3"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    write_mp3_tags(target, artist="Artist", title="Song", album="Album", score=0.50)
+
+    mp3 = tmp_path / "rec.mp3"
+    mp3.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    settings = Settings(work_dir=tmp_path, destination=dest, acoustid_api_key="KEY")
+
+    match = AcoustidMatch(artist="Artist", title="Song", album="", score=0.95)
+    with (
+        patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", new=AsyncMock()) as mock_enrich,
+    ):
+        from radio_ripper.acoustid import MusicBrainzEnrichment
+
+        mock_enrich.return_value = MusicBrainzEnrichment(
+            genres=[],
+            cover_data=None,
+            artist_image=None,
+            album="Album",
+        )
+        await finalize_acoustid(mp3, settings)
+
+    assert read_mp3_score(target) == pytest.approx(0.95), "Bestehende Datei ersetzt"
+    assert not mp3.exists()
+
+
+@pytest.mark.asyncio
+async def test_finalize_late_collision_keeps_better(tmp_path: Path) -> None:
+    """Bestehende Datei mit Album + höherem Score wird behalten (später Check)."""
+    dest = tmp_path / "dest"
+    target = dest / "Artist" / "Album" / "Artist - Song.mp3"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    write_mp3_tags(target, artist="Artist", title="Song", album="Album", score=0.99)
+
+    mp3 = tmp_path / "rec.mp3"
+    mp3.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    settings = Settings(work_dir=tmp_path, destination=dest, acoustid_api_key="KEY")
+
+    match = AcoustidMatch(artist="Artist", title="Song", album="", score=0.95)
+    with (
+        patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", new=AsyncMock()) as mock_enrich,
+    ):
+        from radio_ripper.acoustid import MusicBrainzEnrichment
+
+        mock_enrich.return_value = MusicBrainzEnrichment(
+            genres=[],
+            cover_data=None,
+            artist_image=None,
+            album="Album",
+        )
+        await finalize_acoustid(mp3, settings)
+
+    assert read_mp3_score(target) == pytest.approx(0.99), "Bessere bestehende Datei bleibt"
+    assert not mp3.exists(), "Neue Datei verworfen"
 
 
 @pytest.mark.asyncio
@@ -411,9 +527,31 @@ async def test_finalize_move_error_keeps_source(tmp_path: Path) -> None:
     with (
         patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
         patch("radio_ripper.acoustid.move_to_destination", side_effect=OSError("no space")),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", new=AsyncMock()) as mock_enrich,
     ):
+        from radio_ripper.acoustid import MusicBrainzEnrichment
+
+        mock_enrich.return_value = MusicBrainzEnrichment(genres=[], cover_data=None, artist_image=None)
         await finalize_acoustid(mp3, settings)
     assert mp3.exists(), "Quelldatei bleibt bei Move-Fehler"
+
+
+@pytest.mark.asyncio
+async def test_finalize_enrichment_error_still_moves(tmp_path: Path) -> None:
+    """Fehler bei der MusicBrainz-Anreicherung → Datei wird trotzdem verschoben."""
+    mp3 = tmp_path / "rec.mp3"
+    mp3.write_bytes(b"\xff\xe0\x90\x00" + b"\x00" * 200)
+    settings = Settings(work_dir=tmp_path, destination=tmp_path / "dest", acoustid_api_key="KEY")
+
+    match = AcoustidMatch(artist="Artist", title="Song", album="", score=0.95)
+    with (
+        patch("radio_ripper.acoustid.acoustid_lookup", new=AsyncMock(return_value=(match, "ok"))),
+        patch("radio_ripper.acoustid.enrich_musicbrainz", side_effect=RuntimeError("mb down")),
+    ):
+        await finalize_acoustid(mp3, settings)
+
+    target = tmp_path / "dest" / "Artist" / "Artist - Song.mp3"
+    assert target.exists(), "Datei trotz MB-Fehler verschoben"
 
 
 @pytest.mark.asyncio
@@ -745,6 +883,197 @@ async def test_enrich_musicbrainz(tmp_path: Path) -> None:
                 return_value=httpx.Response(200, json=[{"plainLyrics": "l", "syncedLyrics": ""}])
             )
             e = await enrich_musicbrainz(match, client)
+    assert e.genres == ["rock"]
+    assert e.lyrics == "l"
+
+
+@pytest.mark.asyncio
+async def test_fetch_releasegroup(tmp_path: Path) -> None:
+    """_fetch_releasegroup lädt Album/Jahr/Releasegroup aus MB nach."""
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_releasegroup
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/recording/rec-1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "releases": [
+                            {
+                                "title": "Some Single",
+                                "primary-type": "Single",
+                                "date": "2020-01-01",
+                                "release-group": {"id": "rg-single", "title": "Some Single"},
+                            },
+                            {
+                                "title": "A Night at the Opera",
+                                "date": "1975-11-21",
+                                "release-group": {"id": "rg-opera", "title": "A Night at the Opera"},
+                            },
+                        ]
+                    },
+                )
+            )
+            album, rg_id, year = await _fetch_releasegroup(client, "rec-1")
+    assert album == "A Night at the Opera"
+    assert rg_id == "rg-opera"
+    assert year == 1975
+
+
+@pytest.mark.asyncio
+async def test_fetch_releasegroup_no_recording(tmp_path: Path) -> None:
+    """Ohne recording_id → leer."""
+    import httpx
+
+    from radio_ripper.acoustid import _fetch_releasegroup
+
+    async with httpx.AsyncClient() as client:
+        album, rg_id, year = await _fetch_releasegroup(client, "")
+    assert (album, rg_id, year) == ("", "", None)
+
+
+@pytest.mark.asyncio
+async def test_fetch_releasegroup_only_singles(tmp_path: Path) -> None:
+    """Nur Singles → Fallback nimmt den ersten Release."""
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_releasegroup
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/recording/rec-1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "releases": [
+                            {
+                                "title": "Bo Rhap",
+                                "primary-type": "Single",
+                                "date": "1975-10-31",
+                                "release-group": {"id": "rg-single", "title": "Bo Rhap"},
+                            }
+                        ]
+                    },
+                )
+            )
+            album, rg_id, year = await _fetch_releasegroup(client, "rec-1")
+    assert album == "Bo Rhap"
+    assert rg_id == "rg-single"
+    assert year == 1975
+
+
+@pytest.mark.asyncio
+async def test_fetch_releasegroup_no_releases(tmp_path: Path) -> None:
+    """Keine Releases → leer."""
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_releasegroup
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/recording/rec-1").mock(
+                return_value=httpx.Response(200, json={"releases": []})
+            )
+            album, rg_id, year = await _fetch_releasegroup(client, "rec-1")
+    assert (album, rg_id, year) == ("", "", None)
+
+
+@pytest.mark.asyncio
+async def test_fetch_releasegroup_mb_error(tmp_path: Path) -> None:
+    """MusicBrainz-Fehler → leer (kein Crash)."""
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_releasegroup
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/recording/rec-1").mock(
+                return_value=httpx.Response(500, text="boom")
+            )
+            album, rg_id, year = await _fetch_releasegroup(client, "rec-1")
+    assert (album, rg_id, year) == ("", "", None)
+
+
+@pytest.mark.asyncio
+async def test_fetch_releasegroup_album_from_release_title(tmp_path: Path) -> None:
+    """Release ohne Releasegroup-Titel → Album aus dem Release-Titel."""
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import _fetch_releasegroup
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/recording/rec-1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "releases": [
+                            {
+                                "title": "Album Title Here",
+                                "primary-type": "Album",
+                                "date": "1980-05-01",
+                                "release-group": {"id": "rg-x", "title": ""},
+                            }
+                        ]
+                    },
+                )
+            )
+            album, rg_id, year = await _fetch_releasegroup(client, "rec-1")
+    assert album == "Album Title Here"
+    assert rg_id == "rg-x"
+    assert year == 1980
+
+
+@pytest.mark.asyncio
+async def test_enrich_musicbrainz_no_releasegroup(tmp_path: Path) -> None:
+    """Ohne releasegroup_id wird das Releasegroup nachgeladen (MB-Request)."""
+    import httpx
+    import respx
+
+    from radio_ripper.acoustid import enrich_musicbrainz
+    from radio_ripper.models import AcoustidMatch
+
+    match = AcoustidMatch(artist="Queen", title="Bo Rhap", recording_id="rec-1", artist_id="ar-1")
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        with respx.mock:
+            respx.get("https://musicbrainz.org/ws/2/recording/rec-1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "releases": [
+                            {
+                                "title": "A Night at the Opera",
+                                "primary-type": "Album",
+                                "date": "1975-11-21",
+                                "release-group": {"id": "rg-opera", "title": "A Night at the Opera"},
+                            }
+                        ]
+                    },
+                )
+            )
+            respx.get("https://musicbrainz.org/ws/2/release-group/rg-opera").mock(
+                return_value=httpx.Response(200, json={"genres": [{"name": "rock"}]})
+            )
+            respx.get("https://coverartarchive.org/release-group/rg-opera").mock(
+                return_value=httpx.Response(200, json={"images": []})
+            )
+            respx.get("https://musicbrainz.org/ws/2/artist/ar-1").mock(
+                return_value=httpx.Response(200, json={"relations": []})
+            )
+            respx.get("https://lrclib.net/api/search").mock(
+                return_value=httpx.Response(200, json=[{"plainLyrics": "l", "syncedLyrics": ""}])
+            )
+            e = await enrich_musicbrainz(match, client)
+    assert e.album == "A Night at the Opera"
+    assert e.year == 1975
+    assert e.releasegroup_id == "rg-opera"
     assert e.genres == ["rock"]
     assert e.lyrics == "l"
 

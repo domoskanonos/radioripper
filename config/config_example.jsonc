@@ -9,5 +9,5 @@
   "min_file_duration_s": 90, // Aufnahmen kürzer als diese Dauer verwerfen.
 
   // AcoustID-Identifikation (API-Key kommt aus der Umgebungsvariable ACOUST_ID).
-  "acoustid_min_score": 0.9 // Mindest-Score (0.0–1.0) für einen Treffer.
+  "acoustid_min_score": 0.85 // Mindest-Score (0.0–1.0) für einen Treffer.
 }
