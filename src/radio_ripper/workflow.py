@@ -39,7 +39,6 @@ async def _start_recorders(
 ) -> list[StreamRecorder]:
     """Startet einen Recorder pro aktiver Station."""
     stations = await load_stations(settings)
-    stations = stations[: settings.max_concurrent_streams]
     recorders: list[StreamRecorder] = []
     for station in stations:
         rec = StreamRecorder(
@@ -61,18 +60,14 @@ async def run_stations(settings: Settings) -> None:
 
     # ThreadPool-Größe = Anzahl der Sender (nur für ffprobe Länge/Größen-Test)
     stations = await load_stations(settings)
-    pool_size = max(1, min(len(stations), settings.max_concurrent_streams))
+    pool_size = max(1, len(stations))
     executor = ThreadPoolExecutor(max_workers=pool_size)
 
     # AcoustID-Singleton-Worker (sequenziell, eigener asyncio-Task)
     acoustid_worker = AcoustidWorker(settings)
     acoustid_worker.start()
 
-    async with HttpxClient(
-        user_agent=settings.user_agent,
-        max_pool_size=settings.max_concurrent_streams,
-        total_timeout=settings.request_timeout,
-    ) as client:
+    async with HttpxClient(max_pool_size=pool_size) as client:
         recorders = await _start_recorders(settings, client, executor, acoustid_worker)
 
         stop_event = asyncio.Event()

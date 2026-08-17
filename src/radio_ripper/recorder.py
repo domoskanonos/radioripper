@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import logging
 import random
-import re
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,6 +21,11 @@ from radio_ripper.validation import validate_file
 from radio_ripper.writer import TrackWriter, sanitize_filename
 
 _LOGGER = logging.getLogger("radio_ripper.recorder")
+
+_RECONNECT_BASE_DELAY = 1.0
+_RECONNECT_MAX_DELAY = 60.0
+_REQUEST_TIMEOUT = 30.0
+_NO_ICY_DISABLE_AFTER = 10
 
 
 def cleanup_stale_parts(work_dir: Path) -> int:
@@ -63,8 +67,6 @@ class StreamRecorder:
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        pats = settings.ignore_title_patterns or []
-        self._ignore_patterns: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in pats]
         self._no_icy_failures = 0
         self._connect_failures = 0
 
@@ -93,7 +95,7 @@ class StreamRecorder:
             self.station.name,
             self.station.url,
         )
-        delay = self.settings.reconnect_base_delay
+        delay = _RECONNECT_BASE_DELAY
         while not self._stop_event.is_set():
             try:
                 ok = await self._run_once()
@@ -102,14 +104,14 @@ class StreamRecorder:
                 ok = False
             if self._stop_event.is_set():
                 break
-            if self._no_icy_failures >= self.settings.no_icy_disable_after:
+            if self._no_icy_failures >= _NO_ICY_DISABLE_AFTER:
                 self._log.error(
                     "[%s] Deaktiviert: kein ICY-Metadaten nach %d Versuchen. Stream unterstützt vermutlich kein ICY.",
                     self.station.name,
                     self._no_icy_failures,
                 )
                 break
-            if self._connect_failures >= self.settings.no_icy_disable_after:
+            if self._connect_failures >= _NO_ICY_DISABLE_AFTER:
                 self._log.error(
                     "[%s] Deaktiviert: %d Verbindungsfehler in Folge.",
                     self.station.name,
@@ -117,17 +119,17 @@ class StreamRecorder:
                 )
                 break
             if ok:
-                delay = self.settings.reconnect_base_delay
+                delay = _RECONNECT_BASE_DELAY
             else:
                 self._log.info(
                     "[%s] Reconnect in %.1fs (max %.1fs)",
                     self.station.name,
                     delay,
-                    self.settings.reconnect_max_delay,
+                    _RECONNECT_MAX_DELAY,
                 )
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
-                delay = min(delay * 2.0, self.settings.reconnect_max_delay)
+                delay = min(delay * 2.0, _RECONNECT_MAX_DELAY)
                 delay *= 1.0 + random.random() * 0.5  # noqa: S311  -- Jitter gegen Thundering-Herd
         self._log.info("Recorder '%s' gestoppt.", self.station.name)
 
@@ -136,7 +138,7 @@ class StreamRecorder:
             urls = await resolve_playlist(
                 self._client,
                 str(self.station.url),
-                timeout=self.settings.request_timeout,
+                timeout=_REQUEST_TIMEOUT,
             )
         except Exception as exc:
             self._log.error("[%s] Playlist-Fehler: %s", self.station.name, exc)
@@ -167,7 +169,7 @@ class StreamRecorder:
         agen = self._client.stream_binary(
             stream_url,
             headers=headers,
-            timeout=self.settings.request_timeout,
+            timeout=_REQUEST_TIMEOUT,
         )
         try:
             first_chunk = await agen.__anext__()
@@ -192,7 +194,7 @@ class StreamRecorder:
                 "[%s] Kein icy-metaint-Header; schließe. (Fehler %d/%d)",
                 self.station.name,
                 self._no_icy_failures,
-                self.settings.no_icy_disable_after,
+                _NO_ICY_DISABLE_AFTER,
             )
             with contextlib.suppress(Exception):
                 await agen.aclose()
@@ -221,14 +223,7 @@ class StreamRecorder:
             return None
 
     def _should_record_title(self, title: str) -> bool:
-        clean = title.strip()
-        if not clean:
-            self._log.info("[%s] Leerer Titel, übersprungen", self.station.name)
-            return False
-        if self._ignore_patterns and any(p.search(clean) for p in self._ignore_patterns):
-            self._log.info("[%s] Ignorierter Titel (Werbung?): %s", self.station.name, clean)
-            return False
-        return True
+        return bool(title.strip())
 
     # ------------------------------------------------------------------ main stream loop
 

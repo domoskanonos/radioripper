@@ -5,30 +5,32 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import HttpUrl
 
 from radio_ripper.config import Settings
 from radio_ripper.recorder import StreamRecorder, cleanup_stale_parts
+from radio_ripper.models import StreamConfig
 
 
-def _make_settings(tmp_path: Path, **overrides) -> Settings:
-    base = dict(
+def _make_settings(tmp_path: Path, **overrides: Any) -> Settings:
+    base: dict[str, Any] = dict(
         work_dir=tmp_path,
         destination=tmp_path / "dest",
-        max_concurrent_streams=5,
         acoustid_api_key="KEY",
     )
     base.update(overrides)
     return Settings(**base)
 
 
-def _make_recorder(tmp_path: Path, settings: Settings | None = None, client=None):
-    from radio_ripper.models import StreamConfig
-
+def _make_recorder(
+    tmp_path: Path, settings: Settings | None = None, client: Any = None
+) -> StreamRecorder:
     settings = settings or _make_settings(tmp_path)
-    station = StreamConfig(name="Test", url="http://x.example/stream.mp3")
+    station = StreamConfig(name="Test", url=HttpUrl("http://x.example/stream.mp3"))
     return StreamRecorder(
         station=station,
         settings=settings,
@@ -72,9 +74,9 @@ def test_recorder_make_writer_invalid_title(tmp_path: Path) -> None:
 
 
 def test_should_record_title(tmp_path: Path) -> None:
-    rec = _make_recorder(tmp_path, _make_settings(tmp_path, ignore_title_patterns=["^Werbung"]))
+    rec = _make_recorder(tmp_path)
     assert rec._should_record_title("   ") is False
-    assert rec._should_record_title("Werbung im Radio") is False
+    assert rec._should_record_title("Werbung im Radio") is True  # alles wird aufgenommen
     assert rec._should_record_title("Artist - Song") is True
 
 
@@ -179,16 +181,6 @@ async def test_run_once_success_resets_failures(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_stream_meta_test(rec: StreamRecorder, chunks: list[bytes], **kwargs):
-    """Baut einen Fake-Generator, der Chunks liefert, ohne Metadaten-Stripping."""
-
-    async def gen():
-        for c in chunks:
-            yield c
-
-    return gen()
-
-
 @pytest.mark.asyncio
 async def test_stream_meta_title_boundaries(tmp_path: Path) -> None:
     """Titelwechsel: erste Aufnahme wird finalisiert, neue gestartet."""
@@ -226,8 +218,8 @@ async def test_stream_meta_title_boundaries(tmp_path: Path) -> None:
     # _finalize_writer mocken, um nur die Aufnahme-Logik zu testen
     finalized = []
 
-    async def fake_finalize(writer):
-        finalized.append(writer.final_path.name)
+    async def fake_finalize(writer: object) -> None:
+        finalized.append(getattr(writer, "final_path").name)  # type: ignore[attr-defined]
 
     with patch.object(rec, "_finalize_writer", side_effect=fake_finalize):
         ok = await rec._stream_with_meta("http://x.example/stream")
@@ -276,8 +268,8 @@ async def test_stream_meta_stop_discards(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_run_forever_no_icy_disables(tmp_path: Path) -> None:
     """Zu viele ICY-Fehler → Recorder deaktiviert sich."""
-    rec = _make_recorder(tmp_path, _make_settings(tmp_path, no_icy_disable_after=2))
-    rec._no_icy_failures = 2
+    rec = _make_recorder(tmp_path, _make_settings(tmp_path))
+    rec._no_icy_failures = 10
     with patch.object(rec, "_run_once", new=AsyncMock(return_value=False)):
         await rec._run_forever()
     assert rec._stop_event.is_set() is False  # Task beendet normal
@@ -286,8 +278,8 @@ async def test_run_forever_no_icy_disables(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_run_forever_connect_failures_disables(tmp_path: Path) -> None:
     """Zu viele Verbindungsfehler → Recorder deaktiviert sich."""
-    rec = _make_recorder(tmp_path, _make_settings(tmp_path, no_icy_disable_after=2))
-    rec._connect_failures = 2
+    rec = _make_recorder(tmp_path, _make_settings(tmp_path))
+    rec._connect_failures = 10
     with patch.object(rec, "_run_once", new=AsyncMock(return_value=False)):
         await rec._run_forever()
     assert True
@@ -351,16 +343,16 @@ async def test_run_forever_reconnect_and_stop(tmp_path: Path) -> None:
     """Erfolglose Runde → Reconnect-Wartezeit; Stop bricht die Schleife ab."""
     import asyncio as _asyncio
 
-    rec = _make_recorder(tmp_path, _make_settings(tmp_path, reconnect_base_delay=1.0, reconnect_max_delay=1.0))
+    rec = _make_recorder(tmp_path, _make_settings(tmp_path))
     rec._connect_failures = 0
 
     calls = {"n": 0}
 
-    async def fake_run_once():
+    async def fake_run_once() -> bool:
         calls["n"] += 1
         return False
 
-    async def _stop_after():
+    async def _stop_after() -> None:
         await _asyncio.sleep(0.05)
         rec.stop()
 
@@ -376,19 +368,19 @@ async def test_run_forever_reconnect_and_stop(tmp_path: Path) -> None:
 async def test_run_forever_exception_in_run_once(tmp_path: Path) -> None:
     """Exception in _run_once wird gefangen, Schleife läuft weiter."""
 
-    rec = _make_recorder(tmp_path, _make_settings(tmp_path, reconnect_base_delay=1.0, reconnect_max_delay=1.0))
+    rec = _make_recorder(tmp_path, _make_settings(tmp_path))
     rec._connect_failures = 0
 
     calls = {"n": 0}
 
-    async def fake_run_once():
+    async def fake_run_once() -> bool:
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
         rec.stop()
         return True
 
-    async def fake_sleep(*args, **kwargs):
+    async def fake_sleep(*args: Any, **kwargs: Any) -> None:
         await asyncio.sleep(0.01)
 
     with (
@@ -403,12 +395,12 @@ async def test_run_forever_exception_in_run_once(tmp_path: Path) -> None:
 async def test_run_forever_success_resets_delay(tmp_path: Path) -> None:
     """Erfolgreiche Runde setzt das Reconnect-Delay zurück (kein Backoff)."""
 
-    rec = _make_recorder(tmp_path, _make_settings(tmp_path, reconnect_base_delay=1.0, reconnect_max_delay=2.0))
+    rec = _make_recorder(tmp_path, _make_settings(tmp_path))
     rec._connect_failures = 0
 
     calls = {"n": 0}
 
-    async def fake_run_once():
+    async def fake_run_once() -> bool:
         calls["n"] += 1
         if calls["n"] >= 2:
             rec.stop()
@@ -422,8 +414,8 @@ async def test_run_forever_success_resets_delay(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_meta_ignored_title(tmp_path: Path) -> None:
-    """Titel, der ignoriert wird (Werbung), startet keine Aufnahme."""
+async def test_stream_meta_first_title_skipped(tmp_path: Path) -> None:
+    """Der erste eingestiegene Titel wird übersprungen (keine Aufnahme)."""
     client = MagicMock()
     client.response_headers.return_value = {"icy-metaint": "16"}
 
@@ -439,18 +431,19 @@ async def test_stream_meta_ignored_title(tmp_path: Path) -> None:
     ]
     client.stream_binary.return_value = _FakeAsyncGen(chunks)
 
-    rec = _make_recorder(tmp_path, _make_settings(tmp_path, ignore_title_patterns=["^Werbung"]))
+    rec = _make_recorder(tmp_path)
     rec._acoustid_worker = None
 
     writers = []
 
-    async def fake_finalize(writer):
-        writers.append(writer.final_path.name)
+    async def fake_finalize(writer: object) -> None:
+        writers.append(getattr(writer, "final_path").name)  # type: ignore[attr-defined]
 
     with patch.object(rec, "_finalize_writer", side_effect=fake_finalize):
         ok = await rec._stream_with_meta("http://x.example/stream")
 
     assert ok is True
-    # "Werbung Test" wird ignoriert; "Artist - Song" startet, endet aber ohne
-    # weiteren Titelwechsel → keine Finalisierung.
+    # "Werbung Test" ist der erste Titel (wird übersprungen); "Artist - Song"
+    # startet eine Aufnahme, endet aber ohne weiteren Titelwechsel → keine
+    # Finalisierung.
     assert writers == []

@@ -11,7 +11,6 @@ standardmäßige Ordnerstruktur verschoben.
 - **Parallel-Recording** – nimmt die konfigurierte Anzahl Streams gleichzeitig auf
 - **ICY-Metadaten** – erkennt Songtitel in Echtzeit, trennt Aufnahmen sauber an Songgrenzen
 - **Auto-Reconnect** – bei Verbindungsabbruch automatische Wiederverbindung mit exponentiellem Backoff + Jitter
-- **Werbefilter** – überspringt Titel per Regex-Muster (`ignore_title_patterns`)
 - **Datei-Validierung** – verwirft zu kurze (< `min_file_duration_s`) und zu kleine (< `min_file_size_bytes`) Dateien
 - **AcoustID-Identifikation** – Fingerprint + Lookup; nur Treffer ≥ `acoustid_min_score` (Standard 0.9) werden behalten
 - **ID3-Tagging** – Artist, Title, Album, Jahr, Tracknummer, MusicBrainz-IDs, Score

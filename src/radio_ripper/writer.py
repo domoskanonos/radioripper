@@ -14,7 +14,7 @@ _ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
-def sanitize_filename(name: str) -> str:
+def sanitize_filename(name: str | None) -> str:
     """Säubert einen Dateinamen (entfernt illegale Zeichen, begrenzt Länge)."""
     if name is None:
         return ""

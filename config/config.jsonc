@@ -2,13 +2,6 @@
   "work_dir": "./work",
   "destination": "/home/laptop/Musik",
   "log_level": "INFO",
-  "max_concurrent_streams": 500,
-  "user_agent": "VLC/3.0.18 LibVLC/3.0.18",
-  "request_timeout": 30,
-  "reconnect_base_delay": 1.0,
-  "reconnect_max_delay": 60.0,
-  "no_icy_disable_after": 10,
-  "ignore_title_patterns": [],
   "min_file_size_bytes": 1572864,
   "min_file_duration_s": 90,
   "acoustid_min_score": 0.9

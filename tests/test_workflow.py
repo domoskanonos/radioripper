@@ -16,7 +16,6 @@ def _make_settings(tmp_path: Path) -> Settings:
     return Settings(
         work_dir=tmp_path,
         destination=tmp_path / "dest",
-        max_concurrent_streams=10,
         acoustid_api_key="KEY",
     )
 
@@ -66,7 +65,6 @@ async def test_start_recorders_creates_recorder_per_station(tmp_path: Path) -> N
         "#EXTM3U\n#EXTINF:-1,A\nhttp://a.example\n#EXTINF:-1,B\nhttp://b.example\n"
     )
     settings = _make_settings(tmp_path)
-    settings = settings.model_copy(update={"max_concurrent_streams": 1})
 
     client = AsyncMock()
     executor = object()
@@ -74,8 +72,8 @@ async def test_start_recorders_creates_recorder_per_station(tmp_path: Path) -> N
     with patch("radio_ripper.workflow.StreamRecorder") as mock_recorder:
         recorders = await _start_recorders(settings, client, executor)
 
-    assert len(recorders) == 1  # max_concurrent_streams=1 begrenzt auf 1
-    mock_recorder.assert_called_once()
+    assert len(recorders) == 2  # alle Sender werden gestartet
+    assert mock_recorder.call_count == 2
 
 
 def test_main_config_missing_returns_2(tmp_path: Path) -> None:
@@ -166,19 +164,19 @@ async def test_run_stations_signal_stops(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_recorders_respects_limit(tmp_path: Path) -> None:
-    """max_concurrent_streams begrenzt die Recorder-Anzahl."""
+async def test_start_recorders_all_stations(tmp_path: Path) -> None:
+    """Alle Sender aus custom.m3u werden gestartet (keine Schranke)."""
     stations_dir = tmp_path / "stations"
     stations_dir.mkdir(parents=True)
     (stations_dir / "custom.m3u").write_text(
         "#EXTM3U\n#EXTINF:-1,A\nhttp://a.example\n#EXTINF:-1,B\nhttp://b.example\n#EXTINF:-1,C\nhttp://c.example\n"
     )
-    settings = _make_settings(tmp_path).model_copy(update={"max_concurrent_streams": 2})
+    settings = _make_settings(tmp_path)
 
     client = AsyncMock()
     executor = object()
 
     with patch("radio_ripper.workflow.StreamRecorder") as mock_recorder:
         recorders = await _start_recorders(settings, client, executor)
-    assert len(recorders) == 2
-    assert mock_recorder.call_count == 2
+    assert len(recorders) == 3
+    assert mock_recorder.call_count == 3

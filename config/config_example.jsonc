@@ -4,15 +4,6 @@
   "destination": "./destination", // Verzeichnis für fertige, getaggte MP3-Dateien.
   "log_level": "INFO", // DEBUG, INFO, WARNING, ERROR oder CRITICAL.
 
-  // Stream-Verhalten.
-  "max_concurrent_streams": 200, // Maximale gleichzeitige Aufnahmen. Minimum: 1.
-  "user_agent": "VLC/3.0.18 LibVLC/3.0.18", // HTTP User-Agent für Radiostreams.
-  "request_timeout": 30, // HTTP-Timeout in Sekunden.
-  "reconnect_base_delay": 1.0, // Initiale Reconnect-Verzögerung in Sekunden.
-  "reconnect_max_delay": 60.0, // Maximale Reconnect-Verzögerung in Sekunden.
-  "no_icy_disable_after": 10, // Sender nach so vielen Verbindungen ohne ICY deaktivieren.
-  "ignore_title_patterns": [], // Reguläre Ausdrücke für Titel, die ignoriert werden.
-
   // Validierung der Aufnahmen.
   "min_file_size_bytes": 1572864, // Aufnahmen kleiner als diese Größe verwerfen.
   "min_file_duration_s": 90, // Aufnahmen kürzer als diese Dauer verwerfen.

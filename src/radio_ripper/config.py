@@ -56,15 +56,6 @@ class Settings(BaseModel):
     destination: Path = Field(default=Path("./destination"))
     log_level: str = "INFO"
 
-    # Stream
-    max_concurrent_streams: int = Field(default=500, ge=1)
-    user_agent: str = "VLC/3.0.18 LibVLC/3.0.18"
-    request_timeout: float = Field(default=30.0, ge=1.0)
-    reconnect_base_delay: float = Field(default=1.0, ge=0.1)
-    reconnect_max_delay: float = Field(default=60.0, ge=1.0)
-    no_icy_disable_after: int = Field(default=10, ge=1)
-    ignore_title_patterns: list[str] = Field(default_factory=list)
-
     # Die 2 Validierungs-Tests
     min_file_size_bytes: int = Field(default=1_572_864, ge=0)  # 1.5 MB
     min_file_duration_s: float = Field(default=90.0, ge=0)  # 90 Sekunden
