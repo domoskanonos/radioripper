@@ -14,7 +14,6 @@ from pydantic import HttpUrl
 from radio_ripper.config import Settings
 from radio_ripper.models import StreamConfig
 from radio_ripper.recorder import StreamRecorder, cleanup_stale_parts
-from radio_ripper.writer import TrackWriter
 
 
 def _make_settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -57,26 +56,39 @@ def test_cleanup_stale_parts_no_dir(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_recorder_make_writer(tmp_path: Path) -> None:
+async def test_commit_buffered_song(tmp_path: Path) -> None:
+    """_commit_buffered_song schreibt das Audio als MP3 + validiert."""
+    from radio_ripper.recorder import _SongBuffer
+
     rec = _make_recorder(tmp_path)
-    writer = rec._make_writer("Test Song")
-    assert writer is not None
-    assert writer.final_path.parent == tmp_path / "recordings"
-    assert writer.final_path.name == "Test Song.mp3"
-    writer.discard()
+    rec._acoustid_worker = None
+    buffer = _SongBuffer()
+    buffer.write(b"\xff\xe0\x90\x00" + b"\x00" * (1_572_864 + 100))
+    await rec._commit_buffered_song(buffer, "Test Song")
+    expected = tmp_path / "recordings" / "Test Song.mp3"
+    assert expected.exists()
 
 
-def test_recorder_make_writer_invalid_title(tmp_path: Path) -> None:
-    rec = _make_recorder(tmp_path)
-    assert rec._make_writer("") is None
-    assert rec._make_writer("///") is None
+def test_song_buffer_slice_from_last_boundary() -> None:
+    """slice_from_last_boundary liefert ab der letzten Grenze."""
+    from radio_ripper.recorder import _SongBuffer
+
+    buf = _SongBuffer()
+    buf.write(b"AAAA")
+    buf.write(b"BBBB")
+    buf.mark_boundary(4)
+    buf.write(b"CCCC")
+    assert buf.slice_from_last_boundary() == b"BBBBCCCC"
 
 
-def test_should_record_title(tmp_path: Path) -> None:
-    rec = _make_recorder(tmp_path)
-    assert rec._should_record_title("   ") is False
-    assert rec._should_record_title("Werbung im Radio") is True  # alles wird aufgenommen
-    assert rec._should_record_title("Artist - Song") is True
+def test_song_buffer_overflow() -> None:
+    """Overflow verwirft älteste Bytes und passt Grenzen an."""
+    from radio_ripper.recorder import _SongBuffer
+
+    buf = _SongBuffer(max_bytes=10)
+    buf.write(b"ABCDEFGHIJKLMNO")  # 15 bytes > 10
+    assert buf.size == 10
+    assert buf.slice_from_last_boundary() == b"FGHIJKLMNO"
 
 
 def test_station_name(tmp_path: Path) -> None:
@@ -182,16 +194,10 @@ async def test_run_once_success_resets_failures(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_stream_meta_title_boundaries(tmp_path: Path) -> None:
-    """Titelwechsel: erste Aufnahme wird finalisiert, neue gestartet."""
+    """Titelwechsel: vorheriger Song wird aus dem Puffer committet."""
     rec = _make_recorder(tmp_path)
     rec._acoustid_worker = None
 
-    # Simuliere Stream: Audio + Titelwechsel + Audio + Titelwechsel (EOF)
-    # Wir nutzen echte ICY-Chunks über den Parser.
-    parser_metaint = 16
-
-    # Simuliere Stream: Audio + Titelwechsel + Audio + Titelwechsel (EOF).
-    # metaint=16: jeder Block = 16 Audio-Bytes, dann optional 1 Längenbyte + Meta.
     parser_metaint = 16
 
     def title_meta(title: str) -> bytes:
@@ -203,10 +209,9 @@ async def test_stream_meta_title_boundaries(tmp_path: Path) -> None:
         b"A" * 16 + title_meta("Artist One - Song One"),
         b"B" * 16 + title_meta("Artist Two - Song Two"),
         b"C" * 16 + title_meta("Artist Three - Song Three"),
-        b"D" * 16,  # nur Audio
+        b"D" * 16,
     ]
 
-    # Fake-Client mit passendem metaint und echtem async-Generator
     client = MagicMock()
     client.response_headers.return_value = {"icy-metaint": str(parser_metaint)}
     agen = _FakeAsyncGen(chunks)
@@ -214,20 +219,26 @@ async def test_stream_meta_title_boundaries(tmp_path: Path) -> None:
 
     rec = _make_recorder(tmp_path, client=client)
 
-    # _finalize_writer mocken, um nur die Aufnahme-Logik zu testen
-    finalized = []
+    # LiveRmsSource mocken (kein echter ffmpeg-Prozess)
+    with patch("radio_ripper.recorder.LiveRmsSource") as mock_rms:
+        mock_rms.return_value.start.return_value = None
+        mock_rms.return_value.stop = AsyncMock()
+        # _commit_buffered_song mocken, um nur die Aufnahme-Logik zu testen
+        committed = []
 
-    async def fake_finalize(writer: TrackWriter) -> None:
-        finalized.append(writer.final_path.name)
+        async def fake_commit(buffer: Any, title: str) -> None:
+            committed.append(title)
 
-    with patch.object(rec, "_finalize_writer", side_effect=fake_finalize):
-        ok = await rec._stream_with_meta("http://x.example/stream")
+        with patch.object(rec, "_commit_buffered_song", side_effect=fake_commit):
+            ok = await rec._stream_with_meta("http://x.example/stream")
 
     assert ok is True
-    # "Artist One" = first seen (übersprungen); "Artist Two" wird aufgenommen und
-    # beim Wechsel zu "Artist Three" finalisiert.
-    assert len(finalized) == 1
-    assert finalized[0] == "Artist Two - Song Two.mp3"
+    # "Artist One" = erster Titel (first_seen, wird nicht committet — kein
+    # bekannter Start). Beim Wechsel zu "Artist Two" wird "Artist One" ... nein:
+    # pending_title ist beim ersten Wechsel noch None (noch nie committet).
+    # Also: nichts beim ersten Wechsel. Beim Wechsel zu "Artist Three" wird
+    # "Artist Two" committet, und beim EOF der letzte "Artist Three".
+    assert committed == ["Artist Two - Song Two", "Artist Three - Song Three"]
 
 
 class _FakeAsyncGen:
@@ -252,7 +263,7 @@ class _FakeAsyncGen:
 
 @pytest.mark.asyncio
 async def test_stream_meta_stop_discards(tmp_path: Path) -> None:
-    """Stop während der Aufnahme → Writer wird verworfen."""
+    """Stop während des Streams → True, kein ffmpeg-Prozess bleibt offen."""
     client = MagicMock()
     client.response_headers.return_value = {"icy-metaint": "16"}
     agen = _FakeAsyncGen([b"A" * 16])
@@ -260,7 +271,10 @@ async def test_stream_meta_stop_discards(tmp_path: Path) -> None:
 
     rec = _make_recorder(tmp_path, client=client)
     rec._stop_event.set()
-    ok = await rec._stream_with_meta("http://x.example/stream")
+    with patch("radio_ripper.recorder.LiveRmsSource") as mock_rms:
+        mock_rms.return_value.start.return_value = None
+        mock_rms.return_value.stop = AsyncMock()
+        ok = await rec._stream_with_meta("http://x.example/stream")
     assert ok is True
 
 
@@ -333,7 +347,10 @@ async def test_stream_meta_exception_discards(tmp_path: Path) -> None:
     client.stream_binary.return_value = _BoomGen()
 
     rec = _make_recorder(tmp_path, client=client)
-    ok = await rec._stream_with_meta("http://x.example/stream")
+    with patch("radio_ripper.recorder.LiveRmsSource") as mock_rms:
+        mock_rms.return_value.start.return_value = None
+        mock_rms.return_value.stop = AsyncMock()
+        ok = await rec._stream_with_meta("http://x.example/stream")
     assert ok is False
 
 
@@ -430,19 +447,21 @@ async def test_stream_meta_first_title_skipped(tmp_path: Path) -> None:
     ]
     client.stream_binary.return_value = _FakeAsyncGen(chunks)
 
-    rec = _make_recorder(tmp_path)
+    rec = _make_recorder(tmp_path, client=client)
     rec._acoustid_worker = None
 
-    writers = []
+    committed = []
 
-    async def fake_finalize(writer: TrackWriter) -> None:
-        writers.append(writer.final_path.name)
+    async def fake_commit(buffer: Any, title: str) -> None:
+        committed.append(title)
 
-    with patch.object(rec, "_finalize_writer", side_effect=fake_finalize):
-        ok = await rec._stream_with_meta("http://x.example/stream")
+    with patch("radio_ripper.recorder.LiveRmsSource") as mock_rms:
+        mock_rms.return_value.start.return_value = None
+        mock_rms.return_value.stop = AsyncMock()
+        with patch.object(rec, "_commit_buffered_song", side_effect=fake_commit):
+            ok = await rec._stream_with_meta("http://x.example/stream")
 
     assert ok is True
-    # "Werbung Test" ist der erste Titel (wird übersprungen); "Artist - Song"
-    # startet eine Aufnahme, endet aber ohne weiteren Titelwechsel → keine
-    # Finalisierung.
-    assert writers == []
+    # "Werbung Test" = erster Titel (first_seen, übersprungen); "Artist - Song"
+    # läuft weiter und wird beim EOF als letzter Song committet.
+    assert committed == ["Artist - Song"]
