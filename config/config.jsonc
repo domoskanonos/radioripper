@@ -11,15 +11,5 @@
   "ignore_title_patterns": [],
   "min_file_size_bytes": 1572864,
   "min_file_duration_s": 90,
-  "max_files_inbox": 100000,
-  "acoustid_min_score": 0.9,
-  "acoustid_api_url": "https://api.acoustid.org/v2/lookup",
-  "acoustid_requests_per_minute": 170,
-  "acoustid_retry_max_attempts": 5,
-  "acoustid_retry_base_delay": 30.0,
-  "acoustid_retry_max_delay": 3600.0,
-  "max_unchecked_files": 5000,
-  "max_unchecked_bytes": 10737418240,
-  "log_file_max_bytes": 5242880,
-  "log_file_backup_count": 5
+  "acoustid_min_score": 0.9
 }

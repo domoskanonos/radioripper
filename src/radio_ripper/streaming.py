@@ -2,14 +2,13 @@
 
 Diese Datei enthält die gesamte Streaming-Logik in einer einzigen Datei:
 Stationen laden (custom.m3u), Playlist-Auflösung, ICY-Metadaten-Parsing,
-Aufnahme in .part-Dateien, Validierung (Größe + Dauer) und Config-Reload.
+Aufnahme in .part-Dateien und Validierung (Größe + Dauer).
 
 Nur 2 Validierungs-Tests werden gemacht:
   1. Datei ist groß genug (min_file_size_bytes)
   2. Track ist länger als min_file_duration_s (Default: 90 s)
 
-AcoustID, Backpressure und Destination-Collision sind absichtlich noch NICHT
-enthalten — kommen später dazu.
+Fertige Aufnahmen landen in work_dir/recordings/.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,38 +33,24 @@ from typing import Any, AsyncGenerator
 import httpx
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
 _LOGGER = logging.getLogger("radio_ripper.streaming")
 
 
 def configure_logging(level: str, log_file: Path | None = None) -> None:
-    """Konfiguriert Konsolen- und optionale Datei-Logausgabe (idempotent)."""
+    """Konfiguriert Konsolen- und optionale Datei-Logausgabe."""
     root = logging.getLogger()
-    level_name = level.upper()
-    root.setLevel(getattr(logging, level_name, logging.INFO))
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    # Bestehende Handler des Streaming-Moduls entfernen, um Duplikate zu vermeiden
-    for handler in list(root.handlers):
-        if getattr(handler, "_streaming_handler", False):
-            root.removeHandler(handler)
-            handler.close()
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    root.addHandler(stream_handler)
 
-    def _make_handler(target: Any) -> logging.Handler:
-        if target == "stream":
-            handler: logging.Handler = logging.StreamHandler()
-        else:
-            handler = logging.FileHandler(target, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-        handler._streaming_handler = True  # type: ignore[attr-defined]
-        return handler
-
-    root.addHandler(_make_handler("stream"))
     if log_file is not None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        root.addHandler(_make_handler(log_file))
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
 
 
 # ---------------------------------------------------------------------------
@@ -135,11 +119,9 @@ class Settings(BaseModel):
     min_file_size_bytes: int = Field(default=1_572_864, ge=0)  # 1.5 MB
     min_file_duration_s: float = Field(default=90.0, ge=0)  # 90 Sekunden
 
-    # ThreadPool
-    worker_threads: int = Field(default=4, ge=1)
-
-    # Config-Reload
-    config_path: str | None = None
+    # AcoustID (Fingerprinting + Tagging)
+    acoustid_api_key: str = ""
+    acoustid_min_score: float = Field(default=0.9, ge=0.0, le=1.0)
 
     @field_validator("log_level")
     @classmethod
@@ -167,51 +149,6 @@ def load_settings(path: str | Path | None = None) -> Settings:
     return Settings.model_validate(raw)
 
 
-class LiveConfig:
-    """Beobachtet eine Config-Datei und lädt Settings bei Änderungen neu."""
-
-    def __init__(self, path: str | Path, initial: Settings) -> None:
-        self._path = Path(path).expanduser()
-        self._mtime = self._path.stat().st_mtime
-        self._current = initial
-
-    @property
-    def settings(self) -> Settings:
-        return self._current
-
-    @property
-    def path(self) -> Path:
-        return self._path
-
-    async def check_reload(self) -> dict[str, tuple[Any, Any]]:
-        """Prüft mtime; bei Änderung neu laden und Settings in-place aktualisieren."""
-        try:
-            mtime = self._path.stat().st_mtime
-        except OSError:
-            return {}
-        if mtime <= self._mtime:
-            return {}
-        try:
-            new = load_settings(self._path)
-        except Exception:
-            return {}
-
-        self._mtime = mtime
-        diff: dict[str, tuple[Any, Any]] = {}
-        updates: dict[str, Any] = {}
-        for field in Settings.model_fields:
-            old_val = getattr(self._current, field)
-            new_val = getattr(new, field)
-            if old_val != new_val:
-                diff[field] = (old_val, new_val)
-                updates[field] = new_val
-
-        if updates:
-            self._current = self._current.model_copy(update=updates)
-
-        return diff
-
-
 # ---------------------------------------------------------------------------
 # Data Classes & M3U Parsing
 # ---------------------------------------------------------------------------
@@ -224,7 +161,21 @@ class M3uEntry:
     name: str
     url: str
     source: str = ""
-    extinf: str = ""
+
+
+@dataclass(frozen=True)
+class AcoustidMatch:
+    """Ergebnis eines AcoustID-Lookups."""
+
+    artist: str
+    title: str
+    album: str = ""
+    track_number: int | None = None
+    year: int | None = None
+    score: float = 0.0
+    confirmations: int = 0
+    recording_id: str = ""
+    releasegroup_id: str = ""
 
 
 class StreamConfig(BaseModel):
@@ -232,17 +183,12 @@ class StreamConfig(BaseModel):
 
     name: str = Field(min_length=1, max_length=64)
     url: HttpUrl
-    enabled: bool = True
-    bitrate: int = 0
-    icy: bool = True
-    source: str = ""
 
 
 def parse_m3u_entries(text: str, source: str = "") -> list[M3uEntry]:
     """Parst M3U-Text in strukturierte Einträge."""
     entries: list[M3uEntry] = []
     current_name = ""
-    current_extinf = ""
 
     for line in text.splitlines():
         line = line.strip()
@@ -250,7 +196,6 @@ def parse_m3u_entries(text: str, source: str = "") -> list[M3uEntry]:
             continue
 
         if line.startswith("#EXTINF:"):
-            current_extinf = line
             after_comma = line.split(",", 1)
             current_name = after_comma[1].strip() if len(after_comma) > 1 else ""
             continue
@@ -259,43 +204,10 @@ def parse_m3u_entries(text: str, source: str = "") -> list[M3uEntry]:
             continue
 
         if current_name and "://" in line:
-            entries.append(
-                M3uEntry(
-                    name=current_name,
-                    url=line,
-                    source=source,
-                    extinf=current_extinf,
-                )
-            )
+            entries.append(M3uEntry(name=current_name, url=line, source=source))
             current_name = ""
-            current_extinf = ""
 
     return entries
-
-
-def parse_m3u_urls(text: str) -> list[str]:
-    """Parst M3U-Text und gibt nur URLs zurück."""
-    urls: list[str] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "://" in line:
-            urls.append(line)
-    return urls
-
-
-def parse_pls(text: str) -> list[str]:
-    """Parst PLS-Text und gibt nur gültige ``FileN``-URLs zurück."""
-    urls: list[str] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line.lower().startswith("file") and "=" in line:
-            _, _, value = line.partition("=")
-            value = value.strip()
-            if "://" in value:
-                urls.append(value)
-    return urls
 
 
 async def resolve_playlist(
@@ -306,16 +218,18 @@ async def resolve_playlist(
 ) -> list[str]:
     """Löst eine Playlist-URL in eine Liste von Stream-URLs auf.
 
-    Ist die URL keine Playlist (kein .m3u/.pls/.m3u8), wird sie direkt
-    als Stream-URL zurückgegeben.
+    Ist die URL keine M3U-Playlist, wird sie direkt als Stream-URL
+    zurückgegeben.
     """
-    lower = playlist_url.lower()
-    if not (lower.endswith(".m3u") or lower.endswith(".pls") or lower.endswith(".m3u8")):
+    if not playlist_url.lower().endswith((".m3u", ".m3u8")):
         return [playlist_url]
     text = await client.get_text(playlist_url, timeout=timeout)
-    if lower.endswith(".pls") or "file" in text[:200].lower():
-        return parse_pls(text)
-    return parse_m3u_urls(text)
+    urls: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "://" in line:
+            urls.append(line)
+    return urls
 
 
 # ---------------------------------------------------------------------------
@@ -462,19 +376,14 @@ def sanitize_filename(name: str) -> str:
 
 
 class TrackWriter:
-    """Schreibt Audio in eine ``.part``-Datei und committet sie atomar.
-
-    Test 1 (Größe) wird hier beim ``commit()`` geprüft: Ist die Datei
-    kleiner als ``min_size``, wird sie verworfen.
-    """
+    """Schreibt Audio in eine ``.part``-Datei und committet sie atomar."""
 
     _OPEN = "open"
     _COMMITTED = "committed"
     _DISCARDED = "discarded"
 
-    def __init__(self, final_path: Path, *, min_size: int = 1024) -> None:
+    def __init__(self, final_path: Path) -> None:
         self.final_path = final_path
-        self.min_size = min_size
         self._tmp_path = final_path.with_suffix(".part")
         self._tmp_path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = self._tmp_path.open("xb")
@@ -494,11 +403,7 @@ class TrackWriter:
         self._size += len(data)
 
     def commit(self) -> bool:
-        """Schließt die Datei. Gibt True zurück, wenn sie committet wurde.
-
-        Test 1 (Mindestgröße) wird hier geprüft — zu kleine Dateien werden
-        gelöscht und False zurückgegeben.
-        """
+        """Schließt die Datei und benennt sie atomar zu ``.mp3`` um."""
         if self._state != self._OPEN:
             return False
         self._state = self._COMMITTED
@@ -507,11 +412,6 @@ class TrackWriter:
             self._fh.close()
         except Exception as exc:
             _LOGGER.warning("Fehler beim Schließen von %s: %s", self._tmp_path, exc)
-            with contextlib.suppress(OSError):
-                self._tmp_path.unlink(missing_ok=True)
-            return False
-        if self._size < self.min_size:
-            _LOGGER.info("Zu klein (%d < %d): %s", self._size, self.min_size, self.final_path.name)
             with contextlib.suppress(OSError):
                 self._tmp_path.unlink(missing_ok=True)
             return False
@@ -673,28 +573,395 @@ async def _validate_file(path: Path, settings: Settings, executor: ThreadPoolExe
 
 
 # ---------------------------------------------------------------------------
+# AcoustID — Fingerprint, Lookup, Tagging
+# ---------------------------------------------------------------------------
+
+
+def _fpcalc_sync(path: Path) -> dict[str, Any] | None:
+    """Führt fpcalc aus (blockierend) und liefert Fingerprint + Dauer."""
+    fpcalc = shutil.which("fpcalc")
+    if fpcalc is None:
+        _LOGGER.warning("fpcalc nicht gefunden — AcoustID-Fingerprint nicht möglich.")
+        return None
+    try:
+        proc = subprocess.run(
+            [fpcalc, "-json", str(path)],
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception as exc:
+        _LOGGER.warning("fpcalc fehlgeschlagen für %s: %s", path.name, exc)
+        return None
+    if proc.returncode:
+        _LOGGER.warning("fpcalc konnte %s nicht dekodieren (exit %d)", path.name, proc.returncode)
+        return None
+    try:
+        return json.loads(proc.stdout.decode())
+    except Exception as exc:
+        _LOGGER.warning("fpcalc-Ausgabe nicht lesbar für %s: %s", path.name, exc)
+        return None
+
+
+def acoustid_lookup(
+    path: Path,
+    *,
+    api_key: str,
+    min_score: float,
+) -> tuple[AcoustidMatch | None, str]:
+    """Fragt AcoustID ab.
+
+    Gibt ``(match, status)`` zurück:
+    - ``status == "ok"``      — API antwortete, ``match`` ist der beste Treffer
+      (oder ``None``, wenn keiner den Mindest-Score erreicht).
+    - ``status == "error"``   — API nicht erreichbar / ungültiger Key / fpcalc
+      fehlgeschlagen. ``match`` ist ``None``. Die Datei soll NICHT gelöscht werden.
+    """
+    import urllib.parse
+    import urllib.request
+
+    fp = _fpcalc_sync(path)
+    if fp is None:
+        return None, "error"
+
+    duration = int(float(fp.get("duration", 0)))
+
+    params = urllib.parse.urlencode(
+        {
+            "client": api_key,
+            "format": "json",
+            "meta": "recordings+releasegroups",
+            "duration": duration,
+            "fingerprint": fp.get("fingerprint", ""),
+        }
+    )
+    url = f"https://api.acoustid.org/v2/lookup?{params}"
+
+    try:
+        resp = urllib.request.urlopen(url, timeout=15)
+        api = json.loads(resp.read().decode())
+    except Exception as exc:
+        _LOGGER.warning("AcoustID-API-Fehler für %s: %s", path.name, exc)
+        return None, "error"
+    if not isinstance(api, dict) or api.get("status") != "ok":
+        _LOGGER.warning("AcoustID unerwartete Antwort für %s", path.name)
+        return None, "error"
+
+    best: AcoustidMatch | None = None
+
+    for result in api.get("results") or []:
+        try:
+            score = float(result.get("score", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if score < min_score:
+            continue
+        for recording in result.get("recordings") or []:
+            artists = [a.get("name", "").strip() for a in recording.get("artists") or [] if a.get("name")]
+            artist = ", ".join(artists)
+            title = (recording.get("title") or "").strip()
+            if not artist or not title:
+                continue
+            recording_id = (recording.get("id") or "").strip()
+            # Bevorzugt das erste Releasegroup als Album (single → ohne Album)
+            album = ""
+            year: int | None = None
+            releasegroup_id = ""
+            for rg in recording.get("releasegroups") or []:
+                rg_title = (rg.get("title") or "").strip()
+                if not album and rg_title:
+                    album = rg_title
+                if not releasegroup_id:
+                    releasegroup_id = (rg.get("id") or "").strip()
+                if year is None:
+                    date = (rg.get("firstreleasedate") or "").strip()
+                    if date[:4].isdigit():
+                        year = int(date[:4])
+            try:
+                confirmations = int(recording.get("confirmations", 0) or 0)
+            except (TypeError, ValueError):
+                confirmations = 0
+            try:
+                track_number = int(recording.get("track_number") or 0) or None
+            except (TypeError, ValueError):
+                track_number = None
+
+            match = AcoustidMatch(
+                artist=artist,
+                title=title,
+                album=album,
+                track_number=track_number,
+                year=year,
+                score=score,
+                confirmations=confirmations,
+                recording_id=recording_id,
+                releasegroup_id=releasegroup_id,
+            )
+            # Besserer Score gewinnt; bei Gleichstand mehr Bestätigungen
+            if best is None or (score, confirmations) > (best.score, best.confirmations):
+                best = match
+
+    if best is None:
+        _LOGGER.info("AcoustID: kein Treffer ≥ %.2f für %s", min_score, path.name)
+    return best, "ok"
+
+
+def write_mp3_tags(
+    path: Path,
+    *,
+    artist: str,
+    title: str,
+    album: str = "",
+    track_number: int | None = None,
+    year: int | None = None,
+    score: float,
+    confirmations: int = 0,
+    recording_id: str = "",
+    releasegroup_id: str = "",
+) -> None:
+    """Schreibt Artist/Title/Album/Track/Jahr/Score + MB-IDs als ID3-Tags (mutagen)."""
+    try:
+        from mutagen.id3 import ID3, TALB, TDRC, TIT2, TPE1, TRCK, TXXX, ID3NoHeaderError
+    except ImportError:
+        _LOGGER.warning("mutagen nicht installiert — Tags werden nicht geschrieben für %s", path.name)
+        return
+    try:
+        try:
+            audio = ID3(path)  # type: ignore[no-untyped-call]
+        except ID3NoHeaderError:
+            audio = ID3()  # type: ignore[no-untyped-call]
+        if artist:
+            audio.add(TPE1(encoding=3, text=[artist]))  # type: ignore[no-untyped-call]
+        if title:
+            audio.add(TIT2(encoding=3, text=[title]))  # type: ignore[no-untyped-call]
+        if album:
+            audio.add(TALB(encoding=3, text=[album]))  # type: ignore[no-untyped-call]
+        if track_number:
+            audio.add(TRCK(encoding=3, text=[str(track_number)]))  # type: ignore[no-untyped-call]
+        if year:
+            audio.add(TDRC(encoding=3, text=[str(year)]))  # type: ignore[no-untyped-call]
+        audio.add(TXXX(encoding=3, desc="ACOUSTID_SCORE", text=[f"{score:.6f}"]))  # type: ignore[no-untyped-call]
+        if confirmations:
+            audio.add(TXXX(encoding=3, desc="ACOUSTID_CONFIRMATIONS", text=[str(confirmations)]))  # type: ignore[no-untyped-call]
+        if recording_id:
+            audio.add(TXXX(encoding=3, desc="MUSICBRAINZ_TRACKID", text=[recording_id]))  # type: ignore[no-untyped-call]
+        if releasegroup_id:
+            audio.add(TXXX(encoding=3, desc="MUSICBRAINZ_RELEASEGROUPID", text=[releasegroup_id]))  # type: ignore[no-untyped-call]
+        audio.save(path)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        _LOGGER.warning("ID3-Tags für %s fehlgeschlagen: %s", path.name, exc)
+
+
+def _build_metadata_filename(artist: str, title: str) -> str:
+    """Baut ``Artist - Title.mp3`` (säuberter Dateiname)."""
+    raw = f"{artist} - {title}".strip(" -")
+    safe = sanitize_filename(raw)
+    return safe + ".mp3" if safe else ""
+
+
+def _build_target_path(destination: Path, artist: str, title: str, album: str = "") -> Path:
+    """Baut den Zielpfad mit standardmäßiger MP3-Ordnerstruktur.
+
+    Struktur: ``Artist/Album/Artist - Title.mp3``
+    Fallback ohne Album: ``Artist/Artist - Title.mp3``
+    """
+    safe_artist = sanitize_filename(artist)
+    if not safe_artist:
+        safe_artist = "Unknown Artist"
+    filename = _build_metadata_filename(artist, title)
+    if not filename:
+        return destination / safe_artist / f"{safe_artist}.mp3"
+
+    safe_album = sanitize_filename(album)
+    if safe_album:
+        return destination / safe_artist / safe_album / filename
+    return destination / safe_artist / filename
+
+
+def _read_mp3_score(path: Path) -> float | None:
+    """Liest den gespeicherten ``ACOUSTID_SCORE``-Tag einer MP3, oder None."""
+    try:
+        from mutagen.id3 import ID3, TXXX
+
+        tags = ID3(path)  # type: ignore[no-untyped-call]
+        for frame in tags.values():  # type: ignore[no-untyped-call]
+            if isinstance(frame, TXXX) and frame.desc == "ACOUSTID_SCORE":  # type: ignore[attr-defined]
+                return float(frame.text[0])  # type: ignore[attr-defined]
+    except Exception:
+        return None
+    return None
+
+
+def _move_to_destination(path: Path, target: Path) -> None:
+    """Verschiebt path nach target (mit Cross-Device-Fallback)."""
+    try:
+        os.replace(str(path), str(target))
+        return
+    except OSError as exc:
+        if exc.errno != 18:  # EXDEV
+            raise
+    import shutil as _shutil
+
+    _shutil.copy2(path, target)
+    with contextlib.suppress(OSError):
+        path.unlink(missing_ok=True)
+
+
+def _finalize_acoustid(final_path: Path, settings: Settings) -> None:
+    """Läuft nach der Validierung: AcoustID-Lookup, Tagging, Verschieben.
+
+    - Treffer ≥ min_score: Tags schreiben, nach destination/ verschieben
+      (Ordnerstruktur Artist/Album/), bei Kollision gewinnt der höhere Score.
+    - Kein Treffer: Datei löschen.
+    - Fehler: Datei bleibt in recordings/ liegen.
+    """
+    if not settings.acoustid_api_key:
+        _LOGGER.info(
+            "[acoustid] Kein API-Key — Datei bleibt in recordings/: %s",
+            final_path.name,
+        )
+        return
+
+    match, status = acoustid_lookup(
+        final_path,
+        api_key=settings.acoustid_api_key,
+        min_score=settings.acoustid_min_score,
+    )
+    if status == "error":
+        _LOGGER.info(
+            "[acoustid] API-Fehler — Datei bleibt in recordings/: %s",
+            final_path.name,
+        )
+        return
+    if match is None:
+        _LOGGER.info("[acoustid] Kein Treffer — lösche: %s", final_path.name)
+        with contextlib.suppress(OSError):
+            final_path.unlink(missing_ok=True)
+        return
+
+    target = _build_target_path(
+        settings.destination,
+        match.artist,
+        match.title,
+        match.album,
+    )
+
+    # Tags zuerst schreiben, damit Kollision via ACOUSTID_SCORE vergleichbar ist
+    write_mp3_tags(
+        final_path,
+        artist=match.artist,
+        title=match.title,
+        album=match.album,
+        track_number=match.track_number,
+        year=match.year,
+        score=match.score,
+        confirmations=match.confirmations,
+        recording_id=match.recording_id,
+        releasegroup_id=match.releasegroup_id,
+    )
+
+    # Kollision: bestehende Datei mit höherem/gleichem Score behalten
+    if target.exists():
+        existing_score = _read_mp3_score(target)
+        if existing_score is not None and existing_score >= match.score:
+            _LOGGER.info(
+                "[acoustid] Kollision: %s behalten (Score %.2f >= %.2f) — verwerfe %s",
+                target.name,
+                existing_score,
+                match.score,
+                final_path.name,
+            )
+            with contextlib.suppress(OSError):
+                final_path.unlink(missing_ok=True)
+            return
+        if existing_score is not None:
+            _LOGGER.info(
+                "[acoustid] Kollision: ersetze %s (Score %.2f < %.2f)",
+                target.name,
+                existing_score,
+                match.score,
+            )
+        else:
+            _LOGGER.info(
+                "[acoustid] Kollision: bestehende %s ohne Score — ersetze (Score %.2f)",
+                target.name,
+                match.score,
+            )
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _move_to_destination(final_path, target)
+    except OSError as exc:
+        _LOGGER.error("[acoustid] Verschieben fehlgeschlagen für %s: %s", final_path.name, exc)
+        return
+
+    _LOGGER.info(
+        "[acoustid] Accepted: %s (score=%.2f)",
+        target,
+        match.score,
+    )
+
+
+class AcoustidWorker:
+    """Singleton-Worker für AcoustID — verarbeitet fertige Aufnahmen sequenziell.
+
+    Recorder legen fertige, validierte Dateien per ``enqueue()`` in eine Queue
+    und streamen sofort weiter. Ein einzelner asyncio-Task verarbeitet die
+    Dateien nacheinander (fpcalc + API + Tagging + Verschieben), was zugleich
+    ein natürliches Rate-Limit für die AcoustID-API darstellt. Die blockierenden
+    Aufrufe laufen via ``asyncio.to_thread`` im Default-Executor — getrennt vom
+    ffprobe-ThreadPool.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._queue: asyncio.Queue[Path] = asyncio.Queue()
+        self._task: asyncio.Task[None] | None = None
+        self._stopped = False
+
+    def enqueue(self, path: Path) -> None:
+        """Reicht eine fertige Datei zur Verarbeitung ein (blockiert nie)."""
+        if self._stopped:
+            return
+        self._queue.put_nowait(path)
+
+    def start(self) -> None:
+        """Startet den Worker-Task (muss in einer laufenden Event-Loop sein)."""
+        if self._task is None or self._task.done():
+            self._stopped = False
+            self._task = asyncio.create_task(self._run(), name="AcoustidWorker")
+
+    async def stop(self) -> None:
+        """Stoppt den Worker nach dem Abarbeiten der Reste der Queue."""
+        self._stopped = True
+        self._queue.put_nowait(Path("__stop__"))
+        if self._task is not None:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(self._task, timeout=30.0)
+            self._task = None
+
+    @property
+    def pending(self) -> int:
+        return self._queue.qsize()
+
+    async def _run(self) -> None:
+        while True:
+            path = await self._queue.get()
+            if path.name == "__stop__":
+                break
+            try:
+                await asyncio.to_thread(_finalize_acoustid, path, self._settings)
+            except Exception:
+                _LOGGER.exception("AcoustidWorker: unerwarteter Fehler für %s", path.name)
+
+
+# ---------------------------------------------------------------------------
 # StreamRecorder
 # ---------------------------------------------------------------------------
 
 
-def _parse_metaint(headers: dict[str, str]) -> int | None:
-    for key in ("icy-metaint", "Icy-Metaint", "ICY-METAINT"):
-        val = headers.get(key)
-        if val:
-            try:
-                return int(val)
-            except ValueError:
-                return None
-    return None
-
-
 def cleanup_stale_parts(work_dir: Path) -> int:
-    """Entfernt übrig gebliebene ``.part``-Dateien aus abgebrochenen Läufen.
-
-    ``.part``-Dateien sind unvollständige Aufnahmen (der atomare Rename zu
-    ``.mp3`` fand nie statt) und werden nie weiterverarbeitet.
-    """
-    staging = work_dir / "unchecked_mp3"
+    """Entfernt übrig gebliebene ``.part``-Dateien aus abgebrochenen Läufen."""
+    staging = work_dir / "recordings"
     if not staging.is_dir():
         return 0
     parts = sorted(staging.glob("*.part"))
@@ -716,12 +983,14 @@ class StreamRecorder:
         settings: Settings,
         client: HttpxClient,
         executor: ThreadPoolExecutor,
+        acoustid_worker: AcoustidWorker | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.station = station
         self.settings = settings
         self._client = client
         self._executor = executor
+        self._acoustid_worker = acoustid_worker
         self._log = logger or _LOGGER
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -729,19 +998,12 @@ class StreamRecorder:
         self._ignore_patterns: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in pats]
         self._no_icy_failures = 0
         self._connect_failures = 0
-        self._paused = asyncio.Event()
 
     @property
     def station_name(self) -> str:
         return self.station.name
 
     # ------------------------------------------------------------------ lifecycle
-
-    def pause(self) -> None:
-        self._paused.set()
-
-    def resume(self) -> None:
-        self._paused.clear()
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -764,20 +1026,6 @@ class StreamRecorder:
         )
         delay = self.settings.reconnect_base_delay
         while not self._stop_event.is_set():
-            if self._paused.is_set():
-                self._log.info("[%s] Pausiert — warte auf Resume.", self.station.name)
-                while not self._stop_event.is_set():
-                    with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(
-                            asyncio.gather(self._paused.wait(), self._stop_event.wait()),
-                            timeout=5,
-                        )
-                    if not self._paused.is_set():
-                        break
-                if self._stop_event.is_set():
-                    break
-                self._log.info("[%s] Fortgesetzt.", self.station.name)
-                delay = self.settings.reconnect_base_delay
             try:
                 ok = await self._run_once()
             except Exception:
@@ -866,7 +1114,10 @@ class StreamRecorder:
             )
             raise
         resp_headers = self._client.response_headers()
-        metaint = _parse_metaint(resp_headers)
+        try:
+            metaint = int(resp_headers.get("icy-metaint", 0))
+        except (TypeError, ValueError):
+            metaint = 0
         if not metaint or metaint <= 0:
             self._no_icy_failures += 1
             self._log.info(
@@ -885,21 +1136,18 @@ class StreamRecorder:
         return agen, parser
 
     def _make_writer(self, icy_title: str) -> TrackWriter | None:
-        """Erstellt einen TrackWriter im work_dir/unchecked_mp3."""
-        unchecked_dir = self.settings.work_dir / "unchecked_mp3"
-        unchecked_dir.mkdir(parents=True, exist_ok=True)
+        """Erstellt einen TrackWriter im work_dir/recordings."""
+        recordings_dir = self.settings.work_dir / "recordings"
+        recordings_dir.mkdir(parents=True, exist_ok=True)
 
         safe_name = sanitize_filename(icy_title)
         if not safe_name:
             self._log.error("[%s] Kein Dateiname für Titel=%r", self.station.name, icy_title)
             return None
 
-        file_path = unchecked_dir / f"{safe_name}.{uuid.uuid4().hex}.mp3"
+        file_path = recordings_dir / f"{safe_name}.mp3"
         try:
-            return TrackWriter(
-                file_path,
-                min_size=self.settings.min_file_size_bytes,
-            )
+            return TrackWriter(file_path)
         except OSError as exc:
             self._log.error("[%s] Konnte %s nicht öffnen: %s", self.station.name, file_path, exc)
             return None
@@ -933,10 +1181,6 @@ class StreamRecorder:
                     if writer is not None:
                         writer.discard()
                     return True
-                if self._paused.is_set():
-                    if writer is not None:
-                        writer.discard()
-                    return True
                 if not chunk:
                     continue
                 parser.feed(chunk)
@@ -962,8 +1206,6 @@ class StreamRecorder:
                             writer = None
                             recording = False
                         current_title = new_title
-                        if self._paused.is_set():
-                            continue
                         if not self._should_record_title(new_title):
                             continue
                         writer = self._make_writer(new_title.strip())
@@ -993,7 +1235,6 @@ class StreamRecorder:
         """Committet den Track und führt beide Validierungs-Tests aus."""
         committed = writer.commit()
         if not committed:
-            # Test 1 (Größe) ist in commit() bereits gelaufen
             return
 
         final_path = writer.final_path
@@ -1008,7 +1249,15 @@ class StreamRecorder:
             final_path.stat().st_size,
         )
 
-
+        # AcoustID-Verarbeitung an den Singleton-Worker abgeben (blockiert nie)
+        if self._acoustid_worker is not None:
+            self._acoustid_worker.enqueue(final_path)
+        else:
+            self._log.info(
+                "[%s] Kein AcoustID-Worker — Datei bleibt in recordings/: %s",
+                self.station.name,
+                final_path.name,
+            )
 # ---------------------------------------------------------------------------
 # Stationen laden
 # ---------------------------------------------------------------------------
@@ -1027,16 +1276,7 @@ async def load_stations(settings: Settings) -> list[StreamConfig]:
     stations: list[StreamConfig] = []
     for e in entries:
         try:
-            stations.append(
-                StreamConfig(
-                    name=e.name[:64],
-                    url=e.url,
-                    enabled=True,
-                    bitrate=0,
-                    icy=True,
-                    source=e.source,
-                )
-            )
+            stations.append(StreamConfig(name=e.name[:64], url=e.url))
         except Exception as exc:
             _LOGGER.warning("Ungültiger Eintrag %s: %s", e.name, exc)
 
@@ -1045,43 +1285,16 @@ async def load_stations(settings: Settings) -> list[StreamConfig]:
 
 
 # ---------------------------------------------------------------------------
-# Config-Reload Housekeeping
+# Recorder starten
 # ---------------------------------------------------------------------------
 
 
-async def _housekeeping_loop(
-    live_config: LiveConfig,
+async def _start_recorders(
+    settings: Settings,
     client: HttpxClient,
     executor: ThreadPoolExecutor,
-    recorders: list[StreamRecorder],
-    cancel_event: asyncio.Event,
-    *,
-    interval: float = 60.0,
-) -> None:
-    """Prüft die Config in Intervallen und startet Recorder bei Änderungen neu."""
-    while not cancel_event.is_set():
-        try:
-            await asyncio.wait_for(cancel_event.wait(), timeout=interval)
-        except asyncio.TimeoutError:
-            pass
-        if cancel_event.is_set():
-            break
-        try:
-            diff = await live_config.check_reload()
-        except Exception:
-            continue
-        if not diff:
-            continue
-        _LOGGER.info("Config-Änderung erkannt: %s", ", ".join(diff.keys()))
-        for rec in recorders:
-            rec.stop()
-        await asyncio.gather(*(rec.join() for rec in recorders), return_exceptions=True)
-        recorders.clear()
-        recorders.extend(await _start_recorders(live_config.settings, client, executor))
-        _LOGGER.info("Recorder nach Config-Reload neu gestartet: %d", len(recorders))
-
-
-async def _start_recorders(settings: Settings, client: HttpxClient, executor: ThreadPoolExecutor) -> list[StreamRecorder]:
+    acoustid_worker: AcoustidWorker | None = None,
+) -> list[StreamRecorder]:
     """Startet einen Recorder pro aktiver Station."""
     stations = await load_stations(settings)
     stations = stations[: settings.max_concurrent_streams]
@@ -1092,6 +1305,7 @@ async def _start_recorders(settings: Settings, client: HttpxClient, executor: Th
             settings=settings,
             client=client,
             executor=executor,
+            acoustid_worker=acoustid_worker,
         )
         rec.start()
         recorders.append(rec)
@@ -1108,37 +1322,27 @@ async def run_stations(settings: Settings) -> None:
     """Startet das Streaming-Modul mit den übergebenen Settings."""
     cleanup_stale_parts(settings.work_dir)
 
-    executor = ThreadPoolExecutor(max_workers=settings.worker_threads)
+    # ThreadPool-Größe = Anzahl der Sender (nur für ffprobe Länge/Größen-Test)
+    stations = await load_stations(settings)
+    pool_size = max(1, min(len(stations), settings.max_concurrent_streams))
+    executor = ThreadPoolExecutor(max_workers=pool_size)
+
+    # AcoustID-Singleton-Worker (sequenziell, eigener asyncio-Task)
+    acoustid_worker = AcoustidWorker(settings)
+    acoustid_worker.start()
 
     async with HttpxClient(
         user_agent=settings.user_agent,
         max_pool_size=settings.max_concurrent_streams,
         total_timeout=settings.request_timeout,
     ) as client:
-        recorders: list[StreamRecorder] = []
-        recorders.extend(await _start_recorders(settings, client, executor))
+        recorders = await _start_recorders(settings, client, executor, acoustid_worker)
 
-        live_config: LiveConfig | None = None
-        if settings.config_path:
-            live_config = LiveConfig(settings.config_path, settings)
-
-        cancel_event = asyncio.Event()
-        housekeeping: asyncio.Task[None] | None = None
-        if live_config is not None:
-            housekeeping = asyncio.create_task(
-                _housekeeping_loop(
-                    live_config,
-                    client,
-                    executor,
-                    recorders,
-                    cancel_event,
-                ),
-                name="Housekeeping-Config-Reload",
-            )
+        stop_event = asyncio.Event()
 
         def _signal_handler(signum: int, _frame: object | None) -> None:
             _LOGGER.info("Signal %s empfangen — fahre herunter...", signum)
-            cancel_event.set()
+            stop_event.set()
             for rec in recorders:
                 rec.stop()
 
@@ -1148,16 +1352,14 @@ async def run_stations(settings: Settings) -> None:
                 loop.add_signal_handler(sig, _signal_handler, sig, None)
 
         try:
-            await cancel_event.wait()
+            await stop_event.wait()
         finally:
             for rec in recorders:
                 rec.stop()
             await asyncio.gather(*(rec.join() for rec in recorders), return_exceptions=True)
-            if housekeeping is not None:
-                housekeeping.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await housekeeping
 
+    # AcoustID-Worker beenden (wartet auf Queue-Reste)
+    await acoustid_worker.stop()
     executor.shutdown(wait=True)
     _LOGGER.info("Alle Recorder gestoppt. Tschüss!")
 
@@ -1182,9 +1384,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Konnte Config nicht laden: {exc}", file=sys.stderr)
         return 2
 
-    settings = settings.model_copy(update={"config_path": args.config})
     if args.log_level:
         settings = settings.model_copy(update={"log_level": args.log_level})
+
+    # AcoustID-Key aus der Umgebung (ACOUST_ID) übernehmen, falls in Config nicht gesetzt
+    api_key = os.environ.get("ACOUST_ID", "").strip()
+    if api_key and not settings.acoustid_api_key:
+        settings = settings.model_copy(update={"acoustid_api_key": api_key})
 
     configure_logging(settings.log_level, settings.work_dir / "streaming.log")
 

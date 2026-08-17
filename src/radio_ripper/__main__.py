@@ -1,3 +1,4 @@
-from radio_ripper.cli import main
+from radio_ripper.streaming import main
 
-main()
+if __name__ == "__main__":
+    raise SystemExit(main())
